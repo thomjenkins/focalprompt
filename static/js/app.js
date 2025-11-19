@@ -7,8 +7,64 @@ let batchPairs = []; // Store input-output pairs for batch analysis
 let currentTab = 'documentation'; // Track current tab (defaults to documentation)
 
 // Settings management
+let userProvider = localStorage.getItem('focalprompt_provider') || 'openai';
 let userApiKey = localStorage.getItem('focalprompt_api_key') || '';
 let userModel = localStorage.getItem('focalprompt_model') || 'gpt-4o-mini';
+
+// Model lists for each provider
+const providerModels = {
+    openai: [
+        { value: 'gpt-4o-mini', label: 'gpt-4o-mini (Fast, Cheap)' },
+        { value: 'gpt-4o', label: 'gpt-4o (Balanced)' },
+        { value: 'gpt-4-turbo', label: 'gpt-4-turbo (High Quality)' },
+        { value: 'gpt-3.5-turbo', label: 'gpt-3.5-turbo (Legacy)' }
+    ],
+    anthropic: [
+        { value: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet (Recommended)' },
+        { value: 'claude-3-5-haiku-20241022', label: 'Claude 3.5 Haiku (Fast)' },
+        { value: 'claude-3-opus-20240229', label: 'Claude 3 Opus (High Quality)' },
+        { value: 'claude-3-sonnet-20240229', label: 'Claude 3 Sonnet' },
+        { value: 'claude-3-haiku-20240307', label: 'Claude 3 Haiku' }
+    ],
+    google: [
+        { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro (Recommended)' },
+        { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash (Fast)' },
+        { value: 'gemini-pro', label: 'Gemini Pro' }
+    ],
+    grok: [
+        { value: 'grok-beta', label: 'Grok Beta' },
+        { value: 'grok-2', label: 'Grok 2' }
+    ]
+};
+
+// Default models for each provider
+const defaultModels = {
+    openai: 'gpt-4o-mini',
+    anthropic: 'claude-3-5-sonnet-20241022',
+    google: 'gemini-1.5-pro',
+    grok: 'grok-beta'
+};
+
+// Helper function to update model selector based on provider
+function updateModelSelector(provider) {
+    const modelSelect = document.getElementById('model-select');
+    if (!modelSelect) return;
+    
+    const models = providerModels[provider] || providerModels.openai;
+    modelSelect.innerHTML = models.map(m => 
+        `<option value="${m.value}">${m.label}</option>`
+    ).join('');
+    
+    // Set default model for provider if current model not available
+    const currentModel = userModel;
+    const availableModels = models.map(m => m.value);
+    if (!availableModels.includes(currentModel)) {
+        userModel = defaultModels[provider] || models[0].value;
+        modelSelect.value = userModel;
+    } else {
+        modelSelect.value = currentModel;
+    }
+}
 
 // Helper function to get API request headers
 function getApiHeaders() {
@@ -17,13 +73,14 @@ function getApiHeaders() {
     };
 }
 
-// Helper function to get API request body with API key and model
+// Helper function to get API request body with API key, model, and provider
 function getApiBody(additionalData = {}) {
     const body = { ...additionalData };
     if (userApiKey) {
         body.api_key = userApiKey;
     }
     body.model = userModel;
+    body.provider = userProvider;
     return body;
 }
 
@@ -350,6 +407,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     }
     
     // Initialize settings UI
+    const providerSelect = document.getElementById('provider-select');
     const apiKeyInput = document.getElementById('api-key-input');
     const modelSelect = document.getElementById('model-select');
     const saveSettingsBtn = document.getElementById('save-settings-btn');
@@ -357,6 +415,19 @@ window.addEventListener('DOMContentLoaded', async () => {
     const toggleSettingsBtn = document.getElementById('toggle-settings-btn');
     const settingsContent = document.getElementById('settings-content');
     const apiKeyStatus = document.getElementById('api-key-status');
+    
+    if (providerSelect) {
+        providerSelect.value = userProvider;
+        updateModelSelector(userProvider);
+        
+        // Update model list when provider changes
+        providerSelect.addEventListener('change', () => {
+            const newProvider = providerSelect.value;
+            userProvider = newProvider;
+            updateModelSelector(newProvider);
+            userModel = modelSelect.value;
+        });
+    }
     
     if (apiKeyInput) {
         apiKeyInput.value = userApiKey;
@@ -384,8 +455,12 @@ window.addEventListener('DOMContentLoaded', async () => {
     // Save settings
     if (saveSettingsBtn) {
         saveSettingsBtn.addEventListener('click', () => {
+            const provider = providerSelect.value;
             const apiKey = apiKeyInput.value.trim();
             const model = modelSelect.value;
+            
+            localStorage.setItem('focalprompt_provider', provider);
+            userProvider = provider;
             
             if (apiKey) {
                 localStorage.setItem('focalprompt_api_key', apiKey);
@@ -419,10 +494,14 @@ window.addEventListener('DOMContentLoaded', async () => {
             apiKeyStatus.style.color = '#666';
             
             try {
+                const provider = providerSelect.value;
                 const response = await fetch('/api/test-api-key', {
                     method: 'POST',
                     headers: getApiHeaders(),
-                    body: JSON.stringify({ api_key: apiKey })
+                    body: JSON.stringify({ 
+                        api_key: apiKey,
+                        provider: provider
+                    })
                 });
                 
                 const data = await response.json();

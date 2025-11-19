@@ -23,6 +23,7 @@ CORS(app)
 assessor = None
 assessor_api_key = None
 assessor_model = None
+assessor_provider = None
 
 # Checkpoint directory
 CHECKPOINT_DIR = "checkpoints"
@@ -31,32 +32,47 @@ os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 # Thread pool for parallel processing
 executor = ThreadPoolExecutor(max_workers=10)  # Process up to 10 pairs concurrently
 
-def get_assessor(api_key=None, model=None):
+def get_assessor(api_key=None, model=None, provider=None):
     """Get or create the assessor instance."""
-    global assessor, assessor_api_key, assessor_model
+    global assessor, assessor_api_key, assessor_model, assessor_provider
+    
+    # Use provided provider, or default to openai
+    provider = provider or "openai"
     
     # Use provided API key, or fall back to environment variable
     api_key = api_key or os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise ValueError("API key not provided and OPENAI_API_KEY environment variable not set")
     
-    # Use provided model, or default
-    model = model or "gpt-4o-mini"
+    # Use provided model, or default based on provider
+    if not model:
+        from llm_providers import defaultModels
+        model = defaultModels.get(provider, "gpt-4o-mini")
     
-    # Create a new assessor if API key or model changed
-    if assessor is None or assessor_api_key != api_key or assessor_model != model:
-        assessor = FocalAssessor(api_key=api_key, model=model)
+    # Create a new assessor if API key, model, or provider changed
+    if (assessor is None or assessor_api_key != api_key or 
+        assessor_model != model or assessor_provider != provider):
+        assessor = FocalAssessor(api_key=api_key, model=model, provider=provider)
         assessor_api_key = api_key
         assessor_model = model
+        assessor_provider = provider
     
     return assessor
 
 
 def get_api_key_and_model(data):
-    """Extract API key and model from request data, with fallbacks."""
+    """Extract API key, model, and provider from request data, with fallbacks."""
+    provider = data.get('provider', 'openai')
     api_key = data.get('api_key') or os.getenv("OPENAI_API_KEY")
-    model = data.get('model', 'gpt-4o-mini')
-    return api_key, model
+    
+    # Get default model for provider if not specified
+    if not data.get('model'):
+        from llm_providers import defaultModels
+        model = defaultModels.get(provider, 'gpt-4o-mini')
+    else:
+        model = data.get('model', 'gpt-4o-mini')
+    
+    return api_key, model, provider
 
 
 @app.route('/')
@@ -67,19 +83,21 @@ def index():
 
 @app.route('/api/test-api-key', methods=['POST'])
 def test_api_key():
-    """Test if an API key is valid."""
+    """Test if an API key is valid for the specified provider."""
     try:
         data = request.json
         api_key = data.get('api_key', '')
+        provider = data.get('provider', 'openai')
         
         if not api_key:
             return jsonify({'valid': False, 'error': 'No API key provided'}), 400
         
-        # Try to create a client and make a simple request
+        # Try to create a provider and make a simple request
         try:
-            test_client = OpenAI(api_key=api_key)
-            # Make a minimal test call
-            test_client.models.list()
+            from llm_providers import get_provider
+            test_provider = get_provider(provider, api_key)
+            # Make a minimal test call (list models or simple completion)
+            test_provider.list_models()
             return jsonify({'valid': True})
         except Exception as e:
             return jsonify({'valid': False, 'error': str(e)}), 400
@@ -111,16 +129,16 @@ def detect_foci():
         if not prompt:
             return jsonify({'error': 'Prompt is required'}), 400
         
-        # Get API key and model from request
-        api_key, model = get_api_key_and_model(data)
+        # Get API key, model, and provider from request
+        api_key, model, provider = get_api_key_and_model(data)
         if not api_key:
             return jsonify({'error': 'API key is required. Please provide it in settings or set OPENAI_API_KEY environment variable.'}), 500
         
-        assessor = get_assessor(api_key=api_key, model=model)
-        client = assessor.client
+        assessor = get_assessor(api_key=api_key, model=model, provider=provider)
+        provider = assessor.provider
         
         # Use LLM to detect foci from the prompt structure
-        response = client.chat.completions.create(
+        response = provider.chat_completion(
             model=assessor.model,
             messages=[
                 {
@@ -157,7 +175,7 @@ Identify all distinct structural components of the prompt."""
             temperature=0.3
         )
         
-        result = json.loads(response.choices[0].message.content)
+        result = json.loads(response['content'])
         return jsonify(result)
         
     except Exception as e:
@@ -180,13 +198,13 @@ def detect_dynamic_foci():
         if not pairs or len(pairs) == 0:
             return jsonify({'error': 'At least one pair is required to detect dynamic patterns'}), 400
         
-        # Get API key and model from request
-        api_key, model = get_api_key_and_model(data)
+        # Get API key, model, and provider from request
+        api_key, model, provider = get_api_key_and_model(data)
         if not api_key:
             return jsonify({'error': 'API key is required. Please provide it in settings or set OPENAI_API_KEY environment variable.'}), 500
         
-        assessor = get_assessor(api_key=api_key, model=model)
-        client = assessor.client
+        assessor = get_assessor(api_key=api_key, model=model, provider=provider)
+        provider = assessor.provider
         
         # Extract input patterns from pairs
         input_samples = []
@@ -205,7 +223,7 @@ def detect_dynamic_foci():
         ])
         
         # Use LLM to analyze which foci correspond to dynamic inputs
-        response = client.chat.completions.create(
+        response = provider.chat_completion(
             model=assessor.model,
             messages=[
                 {
@@ -258,7 +276,7 @@ Only mark as dynamic if confidence > 0.6."""
             temperature=0.3
         )
         
-        result = json.loads(response.choices[0].message.content)
+        result = json.loads(response['content'])
         
         # Apply suggestions to foci
         suggestions = result.get('dynamic_suggestions', [])
@@ -331,13 +349,13 @@ def rewrite_prompt():
         if not foci_weights:
             return jsonify({'error': 'Foci with weights are required'}), 400
         
-        # Get API key and model from request
-        api_key, model = get_api_key_and_model(data)
+        # Get API key, model, and provider from request
+        api_key, model, provider = get_api_key_and_model(data)
         if not api_key:
             return jsonify({'error': 'API key is required. Please provide it in settings or set OPENAI_API_KEY environment variable.'}), 500
         
-        assessor = get_assessor(api_key=api_key, model=model)
-        client = assessor.client
+        assessor = get_assessor(api_key=api_key, model=model, provider=provider)
+        provider = assessor.provider
         
         # Build the rewrite instruction
         weights_text = '\n'.join([
@@ -369,7 +387,7 @@ INSTRUCTIONS:
 
 Return only the rewritten prompt, without any additional explanation or formatting."""
 
-        response = client.chat.completions.create(
+        response = provider.chat_completion(
             model=assessor.model,
             messages=[
                 {
@@ -384,7 +402,7 @@ Return only the rewritten prompt, without any additional explanation or formatti
             temperature=0.7
         )
         
-        rewritten = response.choices[0].message.content.strip()
+        rewritten = response['content'].strip()
         
         return jsonify({'rewritten_prompt': rewritten})
         
@@ -407,12 +425,12 @@ def assess():
         if not output:
             return jsonify({'error': 'Output is required'}), 400
         
-        # Get API key and model from request
-        api_key, model = get_api_key_and_model(data)
+        # Get API key, model, and provider from request
+        api_key, model, provider = get_api_key_and_model(data)
         if not api_key:
             return jsonify({'error': 'API key is required. Please provide it in settings or set OPENAI_API_KEY environment variable.'}), 500
         
-        assessor = get_assessor(api_key=api_key, model=model)
+        assessor = get_assessor(api_key=api_key, model=model, provider=provider)
         
         # If user provided foci, use them for assessment
         if user_foci and len(user_foci) > 0:
@@ -421,8 +439,7 @@ def assess():
                 prompt, output, user_foci, max_foci
             )
             
-            response = assessor.client.chat.completions.create(
-                model=assessor.model,
+            response = assessor.provider.chat_completion(
                 messages=[
                     {
                         "role": "system",
@@ -433,11 +450,12 @@ def assess():
                         "content": assessment_prompt
                     }
                 ],
+                model=assessor.model,
                 response_format={"type": "json_object"},
                 temperature=0.3
             )
             
-            result = json.loads(response.choices[0].message.content)
+            result = json.loads(response['content'])
             
             # Parse the response
             from focal_assessor import FocusScore, FocusAssessment
@@ -508,13 +526,13 @@ def ablation_analysis():
         if not foci_list or len(foci_list) == 0:
             return jsonify({'error': 'Foci are required for ablation analysis'}), 400
         
-        # Get API key and model from request
-        api_key, model = get_api_key_and_model(data)
+        # Get API key, model, and provider from request
+        api_key, model, provider = get_api_key_and_model(data)
         if not api_key:
             return jsonify({'error': 'API key is required. Please provide it in settings or set OPENAI_API_KEY environment variable.'}), 500
         
-        assessor = get_assessor(api_key=api_key, model=model)
-        client = assessor.client
+        assessor = get_assessor(api_key=api_key, model=model, provider=provider)
+        provider = assessor.provider
         
         # Pricing per million tokens (as of 2024)
         # gpt-4o-mini: $0.15/$0.60 per million tokens (input/output)
@@ -543,17 +561,17 @@ def ablation_analysis():
         # Step 1: Generate baseline output (full prompt)
         baseline_outputs = []
         for _ in range(num_samples):
-            response = client.chat.completions.create(
+            response = provider.chat_completion(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.7 if num_samples > 1 else 0.7
             )
-            baseline_outputs.append(response.choices[0].message.content)
+            baseline_outputs.append(response['content'])
             
             # Track token usage
-            if hasattr(response, 'usage'):
-                total_input_tokens += response.usage.prompt_tokens
-                total_output_tokens += response.usage.completion_tokens
+            if 'usage' in response:
+                total_input_tokens += response['usage']['prompt_tokens']
+                total_output_tokens += response['usage']['completion_tokens']
         
         baseline_output = baseline_outputs[0]  # Use first as primary baseline
         
@@ -589,17 +607,17 @@ def ablation_analysis():
                     ablated_prompt = '\n\n'.join(ablated_prompt_parts)
             
             # Generate output for ablated prompt
-            response = client.chat.completions.create(
+            response = provider.chat_completion(
                 model=model,
                 messages=[{"role": "user", "content": ablated_prompt}],
                 temperature=0.7
             )
-            ablated_output = response.choices[0].message.content
+            ablated_output = response['content']
             
             # Track token usage
-            if hasattr(response, 'usage'):
-                total_input_tokens += response.usage.prompt_tokens
-                total_output_tokens += response.usage.completion_tokens
+            if 'usage' in response:
+                total_input_tokens += response['usage']['prompt_tokens']
+                total_output_tokens += response['usage']['completion_tokens']
             
             ablation_results.append({
                 'focus_index': i,
@@ -611,14 +629,17 @@ def ablation_analysis():
         # Step 3: Compute embeddings and similarities
         def get_embedding(text):
             """Get embedding for text using OpenAI."""
-            response = client.embeddings.create(
+            # Embeddings only supported by OpenAI, create client if needed
+            from openai import OpenAI
+            embedding_client = OpenAI(api_key=api_key)
+            response = embedding_client.embeddings.create(
                 model="text-embedding-3-small",
                 input=text
             )
             # Track embedding token usage
             if hasattr(response, 'usage'):
                 nonlocal total_embedding_tokens
-                total_embedding_tokens += response.usage.total_tokens
+                total_embedding_tokens += response['usage']['total_tokens'] if 'usage' in response else 0
             return np.array(response.data[0].embedding)
         
         # Step 3: Calculate baseline noise/variance from multiple samples FIRST
@@ -770,13 +791,13 @@ def assess_chat_foci():
         if not foci_list or len(foci_list) == 0:
             return jsonify({'error': 'Foci are required'}), 400
         
-        # Get API key and model from request
-        api_key, model = get_api_key_and_model(data)
+        # Get API key, model, and provider from request
+        api_key, model, provider = get_api_key_and_model(data)
         if not api_key:
             return jsonify({'error': 'API key is required. Please provide it in settings or set OPENAI_API_KEY environment variable.'}), 500
         
-        assessor = get_assessor(api_key=api_key, model=model)
-        client = assessor.client
+        assessor = get_assessor(api_key=api_key, model=model, provider=provider)
+        provider = assessor.provider
         
         # Pricing per million tokens
         PRICING = {
@@ -799,7 +820,7 @@ def assess_chat_foci():
         ])
         
         # Use LLM to assess relevance of each focus
-        response = client.chat.completions.create(
+        response = provider.chat_completion(
             model=assessor.model,
             messages=[
                 {
@@ -844,11 +865,11 @@ CRITICAL: You must include ALL {len(foci_list)} foci from the list above, even i
         )
         
         # Track token usage
-        if hasattr(response, 'usage'):
-            total_input_tokens += response.usage.prompt_tokens
-            total_output_tokens += response.usage.completion_tokens
+        if 'usage' in response:
+            total_input_tokens += response['usage']['prompt_tokens']
+            total_output_tokens += response['usage']['completion_tokens']
         
-        result = json.loads(response.choices[0].message.content)
+        result = json.loads(response['content'])
         
         # Calculate costs
         chat_input_cost = total_input_tokens * model_pricing['input']
@@ -1047,13 +1068,13 @@ def generate_agent_response():
         if not constructed_prompt:
             return jsonify({'error': 'Constructed prompt is required'}), 400
         
-        # Get API key and model from request
-        api_key, model = get_api_key_and_model(data)
+        # Get API key, model, and provider from request
+        api_key, model, provider = get_api_key_and_model(data)
         if not api_key:
             return jsonify({'error': 'API key is required. Please provide it in settings or set OPENAI_API_KEY environment variable.'}), 500
         
-        assessor = get_assessor(api_key=api_key, model=model)
-        client = assessor.client
+        assessor = get_assessor(api_key=api_key, model=model, provider=provider)
+        provider = assessor.provider
         
         # Pricing per million tokens
         PRICING = {
@@ -1070,17 +1091,17 @@ def generate_agent_response():
         total_output_tokens = 0
         
         # Generate output
-        response = client.chat.completions.create(
+        response = provider.chat_completion(
             model=model,
             messages=[{"role": "user", "content": constructed_prompt}],
             temperature=temperature
         )
-        output = response.choices[0].message.content
+        output = response['content']
         
         # Track token usage
-        if hasattr(response, 'usage'):
-            total_input_tokens += response.usage.prompt_tokens
-            total_output_tokens += response.usage.completion_tokens
+        if 'usage' in response:
+            total_input_tokens += response['usage']['prompt_tokens']
+            total_output_tokens += response['usage']['completion_tokens']
         
         # Calculate costs
         chat_input_cost = total_input_tokens * model_pricing['input']
@@ -1518,7 +1539,7 @@ def build_prompt_with_dynamic_foci(relevant_foci, foci_list, inputs, chat_weight
     
     return constructed_prompt
 
-def process_single_pair(pair_data, pair_idx, foci_list, model, batch_noise_threshold, baseline_variance, baseline_std, baseline_mean_similarity, client, get_embedding_func):
+def process_single_pair(pair_data, pair_idx, foci_list, model, batch_noise_threshold, baseline_variance, baseline_std, baseline_mean_similarity, provider, get_embedding_func):
     """Process a single pair - designed to run in parallel."""
     try:
         prompt = pair_data.get('prompt', '')
@@ -1526,12 +1547,12 @@ def process_single_pair(pair_data, pair_idx, foci_list, model, batch_noise_thres
         chat_content = inputs['chat_content']
         
         # Generate baseline output
-        response = client.chat.completions.create(
+        response = provider.chat_completion(
             model=model,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.7
         )
-        baseline_output = response.choices[0].message.content
+        baseline_output = response['content']
         
         input_tokens = response.usage.prompt_tokens if hasattr(response, 'usage') else 0
         output_tokens = response.usage.completion_tokens if hasattr(response, 'usage') else 0
@@ -1582,15 +1603,15 @@ def process_single_pair(pair_data, pair_idx, foci_list, model, batch_noise_thres
                     ablated_prompt = prompt  # Fallback to original if no dynamic inputs
             
             # Generate ablated output
-            response = client.chat.completions.create(
+            response = provider.chat_completion(
                 model=model,
                 messages=[{"role": "user", "content": ablated_prompt}],
                 temperature=0.7
             )
-            ablated_output = response.choices[0].message.content
+            ablated_output = response['content']
             
-            input_tokens += response.usage.prompt_tokens if hasattr(response, 'usage') else 0
-            output_tokens += response.usage.completion_tokens if hasattr(response, 'usage') else 0
+            input_tokens += response['usage']['prompt_tokens'] if 'usage' in response else 0
+            output_tokens += response['usage']['completion_tokens'] if 'usage' in response else 0
             
             # Calculate similarity and influence
             ablated_embedding = get_embedding_func(ablated_output)
@@ -1611,15 +1632,15 @@ def process_single_pair(pair_data, pair_idx, foci_list, model, batch_noise_thres
         ablated_prompt_no_chat = prompt.replace(chat_content, '').strip()
         ablated_prompt_no_chat = '\n'.join([line for line in ablated_prompt_no_chat.split('\n') if line.strip()])
         
-        response = client.chat.completions.create(
+        response = provider.chat_completion(
             model=model,
             messages=[{"role": "user", "content": ablated_prompt_no_chat}],
             temperature=0.7
         )
-        ablated_output_no_chat = response.choices[0].message.content
+        ablated_output_no_chat = response['content']
         
-        input_tokens += response.usage.prompt_tokens if hasattr(response, 'usage') else 0
-        output_tokens += response.usage.completion_tokens if hasattr(response, 'usage') else 0
+        input_tokens += response['usage']['prompt_tokens'] if 'usage' in response else 0
+        output_tokens += response['usage']['completion_tokens'] if 'usage' in response else 0
         
         ablated_embedding_no_chat = get_embedding_func(ablated_output_no_chat)
         similarity_chat = np.dot(baseline_embedding, ablated_embedding_no_chat) / (
@@ -1689,7 +1710,7 @@ def batch_ablation_analysis_stream():
                 return
             
             assessor = get_assessor()
-            client = assessor.client
+            provider = assessor.provider
             
             # Pricing
             PRICING = {
@@ -1708,13 +1729,16 @@ def batch_ablation_analysis_stream():
             
             # Helper for embeddings with token tracking
             def get_embedding(text):
-                response = client.embeddings.create(
+                # Embeddings only supported by OpenAI, create client if needed
+                from openai import OpenAI
+                embedding_client = OpenAI(api_key=api_key)
+                response = embedding_client.embeddings.create(
                     model="text-embedding-3-small",
                     input=text
                 )
                 nonlocal total_embedding_tokens
                 if hasattr(response, 'usage'):
-                    total_embedding_tokens += response.usage.total_tokens
+                    total_embedding_tokens += response['usage']['total_tokens'] if 'usage' in response else 0
                 return np.array(response.data[0].embedding)
             
             # Initialize variables for emergency checkpoint saving
@@ -1750,16 +1774,16 @@ def batch_ablation_analysis_stream():
                 
                 baseline_outputs = []
                 for i in range(num_samples):
-                    response = client.chat.completions.create(
+                    response = provider.chat_completion(
                         model=model,
                         messages=[{"role": "user", "content": representative_prompt}],
                         temperature=0.7
                     )
-                    baseline_outputs.append(response.choices[0].message.content)
+                    baseline_outputs.append(response['content'])
                     
                     if hasattr(response, 'usage'):
-                        total_input_tokens += response.usage.prompt_tokens
-                        total_output_tokens += response.usage.completion_tokens
+                        total_input_tokens += response['usage']['prompt_tokens'] if 'usage' in response else 0
+                        total_output_tokens += response['usage']['completion_tokens'] if 'usage' in response else 0
                     
                     yield f"data: {json.dumps({'type': 'progress', 'stage': 'noise_calculation', 'sample': i+1, 'total': num_samples})}\n\n"
                 
@@ -1808,7 +1832,7 @@ def batch_ablation_analysis_stream():
                         process_single_pair,
                         pair, pair_idx, foci_list, model,
                         batch_noise_threshold, baseline_variance, baseline_std, baseline_mean_similarity,
-                        client, get_embedding
+                        provider, get_embedding
                     )
                     futures[future] = pair_idx
                 
@@ -2089,13 +2113,13 @@ def batch_ablation_analysis():
         if not foci_list or len(foci_list) == 0:
             return jsonify({'error': 'Foci are required'}), 400
         
-        # Get API key and model from request
-        api_key, model = get_api_key_and_model(data)
+        # Get API key, model, and provider from request
+        api_key, model, provider = get_api_key_and_model(data)
         if not api_key:
             return jsonify({'error': 'API key is required. Please provide it in settings or set OPENAI_API_KEY environment variable.'}), 500
         
-        assessor = get_assessor(api_key=api_key, model=model)
-        client = assessor.client
+        assessor = get_assessor(api_key=api_key, model=model, provider=provider)
+        provider = assessor.provider
         
         # Pricing per million tokens
         PRICING = {
@@ -2116,13 +2140,16 @@ def batch_ablation_analysis():
         # Helper function for embeddings
         def get_embedding(text):
             """Get embedding for text using OpenAI."""
-            response = client.embeddings.create(
+            # Embeddings only supported by OpenAI, create client if needed
+            from openai import OpenAI
+            embedding_client = OpenAI(api_key=api_key)
+            response = embedding_client.embeddings.create(
                 model="text-embedding-3-small",
                 input=text
             )
             nonlocal total_embedding_tokens
             if hasattr(response, 'usage'):
-                total_embedding_tokens += response.usage.total_tokens
+                total_embedding_tokens += response['usage']['total_tokens'] if 'usage' in response else 0
             return np.array(response.data[0].embedding)
         
         # Store results for each pair
@@ -2149,12 +2176,12 @@ def batch_ablation_analysis():
             print(f"Calculating baseline noise from {num_samples} samples using system prompt only (applied to all {len(pairs)} pairs)...")
             baseline_outputs = []
             for _ in range(num_samples):
-                response = client.chat.completions.create(
+                response = provider.chat_completion(
                     model=model,
                     messages=[{"role": "user", "content": representative_prompt}],
                     temperature=0.7
                 )
-                baseline_outputs.append(response.choices[0].message.content)
+                baseline_outputs.append(response['content'])
                 
                 if hasattr(response, 'usage'):
                     total_input_tokens += response.usage.prompt_tokens
@@ -2190,16 +2217,16 @@ def batch_ablation_analysis():
             provided_output = pair.get('output', '')
             
             # Step 2: Generate ONE baseline output for this pair (not 20)
-            response = client.chat.completions.create(
+            response = provider.chat_completion(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.7
             )
             baseline_output = response.choices[0].message.content
             
-            if hasattr(response, 'usage'):
-                total_input_tokens += response.usage.prompt_tokens
-                total_output_tokens += response.usage.completion_tokens
+            if 'usage' in response:
+                total_input_tokens += response['usage']['prompt_tokens']
+                total_output_tokens += response['usage']['completion_tokens']
             
             # Use the batch-wide noise threshold for all pairs
             noise_threshold = batch_noise_threshold
@@ -2221,12 +2248,12 @@ def batch_ablation_analysis():
                     ablated_prompt = prompt
                 
                 # Generate ablated output
-                response = client.chat.completions.create(
+                response = provider.chat_completion(
                     model=model,
                     messages=[{"role": "user", "content": ablated_prompt}],
                     temperature=0.7
                 )
-                ablated_output = response.choices[0].message.content
+                ablated_output = response['content']
                 
                 if hasattr(response, 'usage'):
                     total_input_tokens += response.usage.prompt_tokens
@@ -2259,16 +2286,16 @@ def batch_ablation_analysis():
             ablated_prompt_no_chat = prompt.replace(chat_content, '').strip()
             ablated_prompt_no_chat = '\n'.join([line for line in ablated_prompt_no_chat.split('\n') if line.strip()])
             
-            response = client.chat.completions.create(
+            response = provider.chat_completion(
                 model=model,
                 messages=[{"role": "user", "content": ablated_prompt_no_chat}],
                 temperature=0.7
             )
             ablated_output_no_chat = response.choices[0].message.content
             
-            if hasattr(response, 'usage'):
-                total_input_tokens += response.usage.prompt_tokens
-                total_output_tokens += response.usage.completion_tokens
+            if 'usage' in response:
+                total_input_tokens += response['usage']['prompt_tokens']
+                total_output_tokens += response['usage']['completion_tokens']
             
             ablated_embedding_no_chat = get_embedding(ablated_output_no_chat)
             similarity_chat = np.dot(baseline_embedding, ablated_embedding_no_chat) / (
@@ -2383,13 +2410,13 @@ def build_batch_agents():
         if not foci_list or len(foci_list) == 0:
             return jsonify({'error': 'Foci are required'}), 400
         
-        # Get API key and model from request
-        api_key, model = get_api_key_and_model(data)
+        # Get API key, model, and provider from request
+        api_key, model, provider = get_api_key_and_model(data)
         if not api_key:
             return jsonify({'error': 'API key is required. Please provide it in settings or set OPENAI_API_KEY environment variable.'}), 500
         
-        assessor = get_assessor(api_key=api_key, model=model)
-        client = assessor.client
+        assessor = get_assessor(api_key=api_key, model=model, provider=provider)
+        provider = assessor.provider
         
         # Pricing per million tokens
         PRICING = {
@@ -2424,7 +2451,7 @@ def build_batch_agents():
             ])
             
             # Use LLM to assess relevance (same as /api/assess-chat-foci)
-            assess_response = client.chat.completions.create(
+            assess_response = provider.chat_completion(
                 model=model,
                 messages=[
                     {
@@ -2469,10 +2496,10 @@ CRITICAL: You must include ALL {len(foci_list)} foci from the list above, even i
             )
             
             if hasattr(assess_response, 'usage'):
-                total_input_tokens += assess_response.usage.prompt_tokens
-                total_output_tokens += assess_response.usage.completion_tokens
+                total_input_tokens += assess_response['usage']['prompt_tokens'] if 'usage' in assess_response else 0
+                total_output_tokens += assess_response['usage']['completion_tokens'] if 'usage' in assess_response else 0
             
-            assess_result = json.loads(assess_response.choices[0].message.content)
+            assess_result = json.loads(assess_response['content'])
             
             # Build foci_weights list (same as /api/assess-chat-foci)
             foci_weights = []
@@ -2514,17 +2541,17 @@ CRITICAL: You must include ALL {len(foci_list)} foci from the list above, even i
             constructed_prompt = build_prompt_with_dynamic_foci(relevant_foci, foci_list, inputs, chat_weight)
             
             # Step 3: Generate response (same as /api/generate-agent-response)
-            gen_response = client.chat.completions.create(
+            gen_response = provider.chat_completion(
                 model=model,
                 messages=[{"role": "user", "content": constructed_prompt}],
                 temperature=0.7
             )
             
-            new_output = gen_response.choices[0].message.content
+            new_output = gen_response['content']
             
-            if hasattr(gen_response, 'usage'):
-                total_input_tokens += gen_response.usage.prompt_tokens
-                total_output_tokens += gen_response.usage.completion_tokens
+            if 'usage' in gen_response:
+                total_input_tokens += gen_response['usage']['prompt_tokens']
+                total_output_tokens += gen_response['usage']['completion_tokens']
             
             # Get selected foci names
             selected_foci = [f['focus'] for f in relevant_foci]
@@ -2562,7 +2589,7 @@ CRITICAL: You must include ALL {len(foci_list)} foci from the list above, even i
         return jsonify({'error': str(e)}), 500
 
 
-def process_single_agent_pair(pair, pair_idx, foci_list, model, client):
+def process_single_agent_pair(pair, pair_idx, foci_list, model, provider):
     """Process a single pair for agent building - designed to run in parallel."""
     try:
         # Extract input and original output
@@ -2583,7 +2610,7 @@ def process_single_agent_pair(pair, pair_idx, foci_list, model, client):
             for i, f in enumerate(foci_list)
         ])
         
-        assess_response = client.chat.completions.create(
+        assess_response = provider.chat_completion(
             model=model,
             messages=[
                 {
@@ -2627,11 +2654,11 @@ CRITICAL: You must include ALL {len(foci_list)} foci from the list above, even i
             temperature=0.3
         )
         
-        assess_result = json.loads(assess_response.choices[0].message.content)
+        assess_result = json.loads(assess_response['content'])
         
         # Track tokens
-        input_tokens = assess_response.usage.prompt_tokens if hasattr(assess_response, 'usage') else 0
-        output_tokens = assess_response.usage.completion_tokens if hasattr(assess_response, 'usage') else 0
+        input_tokens = assess_response['usage']['prompt_tokens'] if 'usage' in assess_response else 0
+        output_tokens = assess_response['usage']['completion_tokens'] if 'usage' in assess_response else 0
         
         # Build foci_weights list
         foci_weights = []
@@ -2671,7 +2698,7 @@ CRITICAL: You must include ALL {len(foci_list)} foci from the list above, even i
         constructed_prompt = build_prompt_with_dynamic_foci(relevant_foci, foci_list, inputs, chat_weight)
         
         # Step 3: Generate response
-        gen_response = client.chat.completions.create(
+        gen_response = provider.chat_completion(
             model=model,
             messages=[{"role": "user", "content": constructed_prompt}],
             temperature=0.7
@@ -2737,7 +2764,7 @@ def build_batch_agents_stream():
                 return
             
             assessor = get_assessor()
-            client = assessor.client
+            provider = assessor.provider
             
             # Pricing per million tokens
             PRICING = {
@@ -2776,7 +2803,7 @@ def build_batch_agents_stream():
                     for pair_idx, pair in batch:
                         future = executor.submit(
                             process_single_agent_pair,
-                            pair, pair_idx, foci_list, model, client
+                            pair, pair_idx, foci_list, model, provider
                         )
                         futures[future] = pair_idx
                     
@@ -2875,7 +2902,7 @@ def build_batch_agents_stream():
     return Response(generate(), mimetype='text/event-stream')
 
 
-def process_single_evaluation(result, result_idx, model, client):
+def process_single_evaluation(result, result_idx, model, provider):
     """Process a single evaluation - designed to run in parallel."""
     try:
         input_text = result.get('input', '')
@@ -2890,7 +2917,7 @@ def process_single_evaluation(result, result_idx, model, client):
             }
         
         # Use LLM to evaluate which output is better
-        response = client.chat.completions.create(
+        response = provider.chat_completion(
             model=model,
             messages=[
                 {
@@ -2983,7 +3010,7 @@ def llm_evaluate_batch_agents_stream():
                 return
             
             assessor = get_assessor()
-            client = assessor.client
+            provider = assessor.provider
             
             # Pricing per million tokens
             PRICING = {
@@ -3019,7 +3046,7 @@ def llm_evaluate_batch_agents_stream():
                     for result_idx, result in batch:
                         future = executor.submit(
                             process_single_evaluation,
-                            result, result_idx, model, client
+                            result, result_idx, model, provider
                         )
                         futures[future] = result_idx
                     
@@ -3262,7 +3289,7 @@ def analyze_prompt_optimization():
             return jsonify({'error': 'OPENAI_API_KEY not set'}), 500
         
         assessor = get_assessor()
-        client = assessor.client
+        provider = assessor.provider
         
         # Build comprehensive analysis summary
         analysis_summary = build_comprehensive_analysis_summary(
@@ -3347,7 +3374,7 @@ Return a JSON object with this structure:
   "optimized_prompt": "A complete, optimized version of the prompt that incorporates all the recommendations. This should be a ready-to-use prompt that the user can copy and use directly. Include all high and medium priority foci, remove or consolidate low priority ones based on recommendations, and organize it according to the suggested structure. For dynamic foci (chat, RAG, tools), use placeholders like {{CHAT_CONTENT}}, {{RAG_CONTEXT}}, {{TOOL_RESULTS}} where appropriate. The optimized prompt should be well-structured, clear, and implement the key recommendations."
 }}"""
         
-        response = client.chat.completions.create(
+        response = provider.chat_completion(
             model=model,
             messages=[
                 {
@@ -3403,13 +3430,13 @@ def llm_evaluate_batch_agents():
         if not results or len(results) == 0:
             return jsonify({'error': 'Results are required'}), 400
         
-        # Get API key and model from request
-        api_key, model = get_api_key_and_model(data)
+        # Get API key, model, and provider from request
+        api_key, model, provider = get_api_key_and_model(data)
         if not api_key:
             return jsonify({'error': 'API key is required. Please provide it in settings or set OPENAI_API_KEY environment variable.'}), 500
         
-        assessor = get_assessor(api_key=api_key, model=model)
-        client = assessor.client
+        assessor = get_assessor(api_key=api_key, model=model, provider=provider)
+        provider = assessor.provider
         
         # Pricing per million tokens
         PRICING = {
@@ -3433,7 +3460,7 @@ def llm_evaluate_batch_agents():
             new_output = result.get('new_output', '')
             
             # Use LLM to evaluate which output is better
-            response = client.chat.completions.create(
+            response = provider.chat_completion(
                 model=model,
                 messages=[
                     {
@@ -3479,9 +3506,9 @@ If the new output is better, score should be > 0.5. If original is better, score
             )
             
             # Track token usage
-            if hasattr(response, 'usage'):
-                total_input_tokens += response.usage.prompt_tokens
-                total_output_tokens += response.usage.completion_tokens
+            if 'usage' in response:
+                total_input_tokens += response['usage']['prompt_tokens']
+                total_output_tokens += response['usage']['completion_tokens']
             
             eval_result = json.loads(response.choices[0].message.content)
             evaluations.append({

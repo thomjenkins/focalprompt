@@ -68,19 +68,24 @@ class FocalAssessor:
         self,
         api_key: Optional[str] = None,
         model: str = "gpt-4o-mini",
-        agent_model: Optional[str] = None
+        agent_model: Optional[str] = None,
+        provider: str = "openai"
     ):
         """
         Initialize the FocalAssessor.
         
         Args:
-            api_key: OpenAI API key. If None, will try to get from environment.
+            api_key: API key for the provider. If None, will try to get from environment.
             model: The model to use for assessment (default: gpt-4o-mini)
             agent_model: The model to use for generating output (default: same as model)
+            provider: The LLM provider to use ('openai', 'anthropic', 'google', 'grok')
         """
-        self.client = OpenAI(api_key=api_key)
+        from llm_providers import get_provider
+        self.provider = get_provider(provider, api_key)
         self.model = model
         self.agent_model = agent_model or model
+        # Keep client for backward compatibility (will be provider instance)
+        self.client = self.provider
     
     def generate_output(
         self,
@@ -97,18 +102,18 @@ class FocalAssessor:
         Returns:
             Generated output string
         """
-        response = self.client.chat.completions.create(
-            model=self.agent_model,
+        response = self.provider.chat_completion(
             messages=[
                 {
                     "role": "user",
                     "content": prompt
                 }
             ],
+            model=self.agent_model,
             temperature=temperature
         )
         
-        return response.choices[0].message.content
+        return response['content']
     
     def assess(
         self,
@@ -131,8 +136,7 @@ class FocalAssessor:
             prompt, output, max_foci
         )
         
-        response = self.client.chat.completions.create(
-            model=self.model,
+        response = self.provider.chat_completion(
             messages=[
                 {
                     "role": "system",
@@ -143,11 +147,12 @@ class FocalAssessor:
                     "content": assessment_prompt
                 }
             ],
+            model=self.model,
             response_format={"type": "json_object"},
             temperature=0.3
         )
         
-        result = json.loads(response.choices[0].message.content)
+        result = json.loads(response['content'])
         
         # Parse the response
         foci = [
