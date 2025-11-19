@@ -1,0 +1,37 @@
+# Virtual environment
+venv/
+env/
+ENV/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment variables
+.env
+.env.local
+
+# Results/output files
+*.json
+!package.json
+!package-lock.json
+
+# Checkpoints and processed data
+checkpoints/
+processed_*.json
+processed_*.csv
+
+# Large data files
+*.csv
+!requirements.txt
+
+

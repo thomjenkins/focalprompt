@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FocalPrompt - Focus Assessment Tool</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <img src="{{ url_for('static', filename='focalpromptlogo.png') }}" alt="FocalPrompt Logo" style="max-width: 800px; max-height: 160px; width: auto; height: auto; display: block; margin: 0 auto;">
+            <p class="subtitle">Building AI agents with focus</p>
+        </header>
+
+        <!-- Tab Navigation -->
+        <div class="tab-navigation">
+            <button class="tab-btn active" data-tab="documentation">📚 Documentation</button>
+            <button class="tab-btn" data-tab="prompt-analysis">Prompt Analysis</button>
+            <button class="tab-btn" data-tab="batch-analysis">Batch Analysis</button>
+            <button class="tab-btn" data-tab="agent-builder">Agent Builder</button>
+        </div>
+
+        <div class="main-content">
+            <!-- Documentation Tab Content -->
+            <div id="documentation-tab" class="tab-content active">
+                <section class="card">
+                    <div class="card-header">
+                        <h2>How to Use FocalPrompt</h2>
+                    </div>
+                    <div class="card-body" style="max-width: 900px; margin: 0 auto;">
+                        <div style="line-height: 1.8; color: var(--text-color);">
+                            
+                            <h3 style="margin-top: 0; color: var(--primary-color);">Getting Started</h3>
+                            
+                            <p><strong>1. Tag Your Prompt into Foci</strong></p>
+                            <p>
+                                Start by tagging your prompt into points of focus or "foci". You want to aim for as close to <strong>100% coverage</strong> as possible for a comprehensive analysis. Our model can help you detect foci in your prompt but is unlikely to take you to full coverage.
+                            </p>
+                            
+                            <p><strong>2. Define Dynamic Inputs</strong></p>
+                            <p>
+                                Dynamic parts of your prompt, where the input will vary, can be tagged as "dynamic" in section 2 "Define Foci". Dynamic inputs include:
+                            </p>
+                            <ul style="margin-left: 24px; margin-bottom: 20px;">
+                                <li><strong>Chat inputs</strong> - Variable conversation content</li>
+                                <li><strong>RAG</strong> - Retrieval-Augmented Generation context</li>
+                                <li><strong>Tools</strong> - Tool execution results</li>
+                            </ul>
+                            <p>
+                                This will allow you to provide matched inputs and outputs in the batch analysis section.
+                            </p>
+                            
+                            <p><strong>3. Generate Output</strong></p>
+                            <p>
+                                You can then generate a single output for the prompt as provided. This will use the individual instance of any dynamic inputs currently provided in the prompt.
+                            </p>
+                            
+                            <h3 style="margin-top: 32px; color: var(--primary-color);">Prompt Analysis</h3>
+                            
+                            <p><strong>4. Assess Focus Distribution</strong></p>
+                            <p>
+                                Section 4 will then assess the single output and your prompt foci to determine where the LLM paid most attention in producing that output.
+                            </p>
+                            
+                            <p><strong>5. Adjust Intended Focus</strong></p>
+                            <p>
+                                You can use sliders to adjust the intended focus, and our model will attempt to rewrite your prompt to reflect the intended focus. You can generate an output using the new suggested prompt to test it.
+                            </p>
+                            
+                            <p><strong>6. Ablation Analysis</strong></p>
+                            <p>
+                                Next you can run an "Ablation Analysis" where we sequentially remove individual prompt foci to see how this changes the output. We also run the prompt as it is <strong>20 times</strong> to take a "noise" measurement. Given LLMs are non-deterministic, we select a temperature of 0.7 to assess the relative variance of output with no change in input. We then see whether removing an individual point of focus from your prompt changes the output more than just the random noise in your prompt.
+                            </p>
+                            <p style="background: #fff3cd; padding: 12px; border-radius: 6px; border-left: 4px solid #ffc107; margin: 16px 0;">
+                                <strong>💡 Tip:</strong> You may wish to reconsider prompt foci that do not have an impact above the prompt's background noise level.
+                            </p>
+                            <p style="background: #fee; padding: 12px; border-radius: 6px; border-left: 4px solid #ef4444; margin: 16px 0;">
+                                <strong>⚠️ Note:</strong> The cost of the ablation analysis and the length of time it runs will increase with the number of prompt foci you have identified.
+                            </p>
+                            
+                            <h3 style="margin-top: 32px; color: var(--primary-color);">Batch Analysis</h3>
+                            
+                            <p><strong>7. Batch Analysis</strong></p>
+                            <p>
+                                In the Batch Analysis tab we can assess dynamic inputs and outputs, and how the different parts of the prompt input are influencing the output.
+                            </p>
+                            <p>
+                                You can manually add dynamic input, output combinations or upload in bulk in a CSV file with the appropriate format.
+                            </p>
+                            
+                            <h3 style="margin-top: 32px; color: var(--primary-color);">Agent Builder</h3>
+                            
+                            <p><strong>8. Build Optimized Agents</strong></p>
+                            <p>
+                                The Agent Builder tab allows you to build optimized agents for specific inputs. The system uses LLM assessment to select relevant foci and generate new outputs for comparison.
+                            </p>
+                            
+                            <h3 style="margin-top: 32px; color: var(--primary-color);">Best Practices</h3>
+                            
+                            <ul style="margin-left: 24px;">
+                                <li>Aim for <strong>100% coverage</strong> of your prompt with foci</li>
+                                <li>Tag dynamic inputs appropriately to enable batch analysis</li>
+                                <li>Use ablation analysis to identify which foci actually matter</li>
+                                <li>Remove or reconsider foci that don't impact output above noise level</li>
+                                <li>Test prompt adjustments with the focus sliders before finalizing</li>
+                            </ul>
+                            
+                        </div>
+                    </div>
+                </section>
+            </div>
+            
+            <!-- Prompt Analysis Tab Content -->
+            <div id="prompt-analysis-tab" class="tab-content">
+            <!-- Prompt Section -->
+            <section class="card">
+                    <div class="card-header">
+                        <h2>1. Enter Your Prompt</h2>
+                        <div style="display: flex; gap: 8px; align-items: center;">
+                            <div id="coverage-indicator" class="coverage-indicator hidden">
+                                <span id="coverage-text">Coverage: <strong id="coverage-percent">0%</strong></span>
+                            </div>
+                            <button id="save-prompt-btn" class="btn btn-outline btn-small" title="Save prompt and foci">
+                                💾 Save
+                            </button>
+                            <button id="load-prompt-btn" class="btn btn-outline btn-small" title="Load saved prompt and foci">
+                                📂 Load
+                            </button>
+                        </div>
+                    </div>
+                <div class="card-body">
+                    <div class="prompt-input-wrapper">
+                        <div class="selection-toolbar hidden" id="selection-toolbar">
+                            <button id="tag-selection-btn" class="btn btn-primary btn-small">
+                                ➕ Tag as Focus
+                            </button>
+                            <button id="cancel-selection-btn" class="btn btn-outline btn-small">
+                                ✕ Cancel
+                            </button>
+                            <span id="selection-text" class="selection-text"></span>
+                        </div>
+                        <textarea 
+                            id="prompt-input" 
+                            class="textarea-large" 
+                            placeholder="Enter your prompt here..."
+                            rows="8"
+                        ></textarea>
+                    </div>
+                    <div id="prompt-visualization" class="prompt-visualization hidden">
+                        <div class="prompt-visualization-header">
+                            <h3>Prompt Coverage Visualization</h3>
+                            <button id="toggle-visualization" class="btn btn-outline btn-small">Show</button>
+                        </div>
+                        <div id="prompt-highlighted" class="prompt-highlighted"></div>
+                        <div class="coverage-legend">
+                            <div class="legend-title">Focus Coverage:</div>
+                            <div id="legend-items" class="legend-items"></div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Foci Section -->
+            <section class="card">
+                <div class="card-header">
+                    <h2>2. Define Foci</h2>
+                    <div class="button-group">
+                        <button id="detect-foci-btn" class="btn btn-primary">
+                            🤖 Auto-Detect Foci
+                        </button>
+                        <button id="clear-foci-btn" class="btn btn-outline">
+                            🗑️ Clear All
+                        </button>
+                    </div>
+                    <p class="info-text" style="margin-top: 12px;">
+                        💡 Tip: Select text in the prompt above and click "Tag as Focus" to manually add focus points.
+                    </p>
+                </div>
+                <div class="card-body">
+                    <div id="coverage-warning" class="coverage-warning hidden">
+                        ⚠️ Some parts of the prompt are not covered by any focus. Please add foci to cover all sections.
+                    </div>
+                    <div id="foci-container" class="foci-container">
+                        <p class="empty-state">No foci defined yet. Click "Auto-Detect Foci" or "Add Focus Manually" to get started.</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Output Section -->
+            <section class="card">
+                <div class="card-header">
+                    <h2>3. Enter or Generate Output</h2>
+                    <div class="button-group">
+                        <button id="generate-output-btn" class="btn btn-primary">
+                            ✨ Generate Output
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <textarea 
+                        id="output-input" 
+                        class="textarea-large" 
+                        placeholder="Enter LLM output here, or click 'Generate Output' to create one..."
+                        rows="8"
+                    ></textarea>
+                </div>
+            </section>
+
+            <!-- Assessment Section -->
+            <section class="card">
+                <div class="card-header">
+                    <h2>4. Assess Focus Distribution</h2>
+                    <div class="button-group">
+                        <button id="load-assessment-checkpoint-btn" class="btn btn-outline">
+                            📂 Load Assessment Checkpoint
+                        </button>
+                        <button id="assess-btn" class="btn btn-success">
+                            📊 Assess Focus
+                        </button>
+                        <button id="compare-intent-btn" class="btn btn-primary hidden" title="Compare the assessed output to your intended focus distribution (only available after generating output from adjusted prompt)">
+                            📈 Compare to Intended Focus
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div id="assessment-results" class="assessment-results">
+                        <p class="empty-state">Click "Assess Focus" to see the results.</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Focus Control Section (shown after assessment) -->
+            <section id="focus-control-section" class="card hidden">
+                <div class="card-header">
+                    <h2>5. Adjust Focus Distribution</h2>
+                    <div class="button-group">
+                        <button id="reset-sliders-btn" class="btn btn-outline">
+                            🔄 Reset to Current
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <p class="info-text">Adjust the sliders below to change the desired focus distribution. The total must equal 100%.</p>
+                    <div id="total-budget" class="total-budget">
+                        Total Budget: <strong id="total-budget-value">100%</strong>
+                    </div>
+                    <div id="sliders-container" class="sliders-container">
+                    </div>
+                    <div class="focus-control-actions">
+                        <button id="rewrite-prompt-btn" class="btn btn-primary" disabled>
+                            ✏️ Rewrite Prompt with New Focus
+                        </button>
+                        <button id="generate-focused-output-btn" class="btn btn-success" disabled>
+                            🎯 Generate Output with Adjusted Focus
+                        </button>
+                    </div>
+                    <div id="rewritten-prompt-container" class="rewritten-prompt-container hidden">
+                        <h4>Rewritten Prompt:</h4>
+                        <div id="rewritten-prompt" class="rewritten-prompt"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Ablation Analysis Section -->
+            <section class="card">
+                <div class="card-header">
+                    <h2>6. Ablation Analysis</h2>
+                    <div class="button-group">
+                        <button id="load-ablation-checkpoint-btn" class="btn btn-outline">
+                            📂 Load Ablation Checkpoint
+                        </button>
+                        <button id="run-ablation-btn" class="btn btn-primary" disabled>
+                            🔬 Run Ablation Analysis
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <p class="info-text">
+                        Ablation analysis measures how much each focus section contributes to the output by 
+                        removing one focus at a time and comparing the results to the baseline.
+                    </p>
+                    <div id="ablation-results" class="ablation-results">
+                        <p class="empty-state">Click "Run Ablation Analysis" to see how each focus influences the output.</p>
+                    </div>
+                </div>
+            </section>
+            </div>
+            <!-- End Prompt Analysis Tab -->
+
+            <!-- Batch Analysis Tab Content -->
+            <div id="batch-analysis-tab" class="tab-content">
+                <!-- Data Input Section -->
+                <section class="card">
+                    <div class="card-header">
+                        <h2>1. Data Input</h2>
+                        <div class="button-group">
+                            <label for="csv-upload" class="btn btn-primary" style="cursor: pointer;">
+                                📁 Upload CSV
+                            </label>
+                            <input type="file" id="csv-upload" accept=".csv" style="display: none;">
+                            <button id="clear-pairs-btn" class="btn btn-outline">
+                                🗑️ Clear All Pairs
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <p class="info-text" style="margin-bottom: 16px;">
+                            CSV format: <code>input,output</code> (or <code>chat_content,suggested_message</code>). Case-insensitive column names. The prompt will be defined separately for all pairs.
+                        </p>
+                        
+                        <!-- Manual Entry Form -->
+                        <div class="manual-entry-form" style="margin-bottom: 24px; padding: 16px; background: #f8fafc; border-radius: 6px;">
+                            <h3 style="margin-bottom: 12px;">Add Pair Manually</h3>
+                            <div id="manual-input-fields" style="display: flex; flex-direction: column; gap: 12px;">
+                                <!-- Dynamic input fields will be inserted here based on foci -->
+                            </div>
+                            <textarea 
+                                id="manual-output" 
+                                class="textarea-large" 
+                                placeholder="Output (Suggested Message)..."
+                                rows="3"
+                                style="margin-top: 12px;"
+                            ></textarea>
+                            <button id="add-pair-btn" class="btn btn-primary" style="margin-top: 12px;">
+                                ➕ Add Pair
+                            </button>
+                        </div>
+                        
+                        <!-- Prompt Definition for All Pairs -->
+                        <div class="batch-prompt-section" style="margin-bottom: 24px; padding: 16px; background: #fff3cd; border-radius: 6px; border: 1px solid #ffc107;">
+                            <h3 style="margin-bottom: 12px;">Prompt (Applied to All Pairs)</h3>
+                            <p class="info-text" style="margin-bottom: 12px; font-size: 0.9em;">
+                                Enter the prompt that was used to generate all outputs. This prompt will be applied to all input-output pairs.
+                            </p>
+                            <textarea 
+                                id="batch-prompt-input" 
+                                class="textarea-large" 
+                                placeholder="Enter the prompt that was used for all pairs..."
+                                rows="6"
+                            ></textarea>
+                        </div>
+
+                        <!-- Pairs List -->
+                        <div id="pairs-container" class="pairs-container">
+                            <p class="empty-state">No pairs added yet. Upload a CSV file or add pairs manually.</p>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Define Foci Section -->
+                <section class="card">
+                    <div class="card-header">
+                        <h2>2. Define Foci</h2>
+                        <div class="button-group">
+                        <button id="batch-detect-foci-btn" class="btn btn-primary">
+                            🤖 Auto-Detect from First Prompt
+                        </button>
+                        <button id="batch-detect-dynamic-foci-btn" class="btn btn-primary" style="background: #f59e0b;">
+                            🔍 Auto-Detect Dynamic Foci
+                        </button>
+                        <button id="batch-import-foci-btn" class="btn btn-outline">
+                            📥 Import from Prompt Analysis
+                        </button>
+                        <button id="batch-clear-foci-btn" class="btn btn-outline">
+                            🗑️ Clear All
+                        </button>
+                            <button id="save-batch-btn" class="btn btn-outline" title="Save batch analysis data">
+                                💾 Save
+                            </button>
+                            <button id="load-batch-btn" class="btn btn-outline" title="Load saved batch analysis data">
+                                📂 Load
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div id="batch-foci-container" class="foci-container">
+                            <p class="empty-state">No foci defined yet. Click "Auto-Detect from First Prompt" or "Import from Prompt Analysis" to get started.</p>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Run Analysis Section -->
+                <section class="card">
+                    <div class="card-header">
+                        <h2>3. Run Analysis</h2>
+                        <div class="button-group">
+                            <button id="run-batch-analysis-btn" class="btn btn-primary" disabled>
+                                🔬 Run Batch Analysis
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <!-- Cost Estimate -->
+                        <div id="batch-cost-estimate" class="cost-estimate hidden" style="margin-bottom: 20px; padding: 16px; background: #fff3cd; border-radius: 6px; border: 1px solid #ffc107;">
+                            <h4 style="margin: 0 0 12px 0; color: #856404;">💰 Estimated Cost</h4>
+                            <div id="batch-cost-estimate-content" style="font-size: 0.9em;">
+                                <!-- Cost estimate will be inserted here -->
+                            </div>
+                        </div>
+                        
+                        <div id="batch-progress" class="batch-progress hidden">
+                            <p id="batch-progress-text">Processing...</p>
+                        </div>
+                        <p class="info-text">
+                            This will run ablation analysis on each pair. Noise is calculated once for the entire batch (20 baseline samples) and applied to all pairs, significantly reducing costs. This may take a while.
+                        </p>
+                    </div>
+                </section>
+
+                <!-- Results Section -->
+                <section class="card">
+                    <div class="card-header">
+                        <h2>4. Results</h2>
+                        <div class="button-group">
+                            <button id="load-checkpoint-btn" class="btn btn-outline">
+                                📂 Load Checkpoint
+                            </button>
+                            <button id="export-results-btn" class="btn btn-outline" disabled>
+                                💾 Export to CSV
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div id="checkpoint-list" class="checkpoint-list hidden" style="margin-bottom: 20px;">
+                            <h4 style="margin-bottom: 12px;">Available Checkpoints</h4>
+                            <div id="checkpoint-list-content" style="max-height: 300px; overflow-y: auto;">
+                                <!-- Checkpoints will be listed here -->
+                            </div>
+                        </div>
+                        <div id="batch-results" class="batch-results">
+                            <p class="empty-state">Run batch analysis to see results.</p>
+                        </div>
+                    </div>
+                </section>
+            </div>
+            <!-- End Batch Analysis Tab -->
+
+            <!-- Agent Builder Tab Content -->
+            <div id="agent-builder-tab" class="tab-content">
+                <!-- Chat Input Section -->
+                <section class="card">
+                    <div class="card-header">
+                        <h2>1. Enter Chat Content</h2>
+                    </div>
+                    <div class="card-body">
+                        <textarea 
+                            id="chat-input" 
+                            class="textarea-large" 
+                            placeholder="Enter the chat conversation content that the agent needs to respond to..."
+                            rows="8"
+                        ></textarea>
+                    </div>
+                </section>
+
+                <!-- Foci Section for Agent Builder -->
+                <section class="card">
+                    <div class="card-header">
+                        <h2>2. Define Foci</h2>
+                        <div class="button-group">
+                            <button id="agent-detect-foci-btn" class="btn btn-primary">
+                                🤖 Auto-Detect Foci
+                            </button>
+                            <button id="agent-clear-foci-btn" class="btn btn-outline">
+                                🗑️ Clear All
+                            </button>
+                            <button id="import-foci-btn" class="btn btn-outline">
+                                📥 Import from Prompt Analysis
+                            </button>
+                        </div>
+                        <p class="info-text" style="margin-top: 12px;">
+                            💡 Define the foci that the agent can select from, or import from Prompt Analysis tab.
+                        </p>
+                    </div>
+                    <div class="card-body">
+                        <div id="agent-foci-container" class="foci-container">
+                            <p class="empty-state">No foci defined yet. Click "Auto-Detect Foci" or "Import from Prompt Analysis" to get started.</p>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Assess Chat Section -->
+                <section class="card">
+                    <div class="card-header">
+                        <h2>3. Assess Chat & Select Foci</h2>
+                        <div class="button-group">
+                            <button id="assess-chat-btn" class="btn btn-primary" disabled>
+                                🔍 Assess Chat & Select Foci
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div id="foci-weights-results" class="foci-weights-results">
+                            <p class="empty-state">Enter chat content and define foci, then click "Assess Chat & Select Foci" to see which foci are relevant.</p>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Generate Response Section -->
+                <section class="card">
+                    <div class="card-header">
+                        <h2>4. Generate Response</h2>
+                        <div class="button-group">
+                            <button id="generate-agent-response-btn" class="btn btn-success" disabled>
+                                ✨ Generate Response
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div id="agent-response-results" class="agent-response-results">
+                            <p class="empty-state">After assessing chat and selecting foci, click "Generate Response" to see the constructed prompt and agent output.</p>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Batch Agent Building Section -->
+                <section class="card" style="margin-top: 24px; border-top: 3px solid var(--primary-color);">
+                    <div class="card-header">
+                        <h2>5. Batch Agent Building</h2>
+                        <div class="button-group">
+                            <button id="import-batch-results-btn" class="btn btn-primary">
+                                📥 Import from Batch Analysis
+                            </button>
+                            <button id="load-agent-checkpoint-btn" class="btn btn-outline">
+                                📂 Load Agent Checkpoint
+                            </button>
+                            <button id="run-batch-agent-btn" class="btn btn-success" disabled>
+                                🚀 Build Agents for All Inputs
+                            </button>
+                            <button id="run-llm-eval-btn" class="btn btn-outline" disabled>
+                                🤖 Run LLM Evaluation
+                            </button>
+                        </div>
+                        <p class="info-text" style="margin-top: 12px;">
+                            💡 Import pairs (input/output) to automatically build optimized agents for each input. The system uses LLM assessment (same as single agent builder) to select relevant foci and generate new outputs for comparison.
+                        </p>
+                    </div>
+                    <div class="card-body">
+                        <div id="batch-agent-status" class="batch-agent-status" style="margin-bottom: 16px;">
+                            <p class="empty-state">No batch data imported yet. Click "Import from Batch Analysis" to get started.</p>
+                        </div>
+                        
+                        <!-- Cost Estimate -->
+                        <div id="batch-agent-cost-estimate" class="batch-agent-cost-estimate" style="margin-bottom: 16px; padding: 12px; background: #fff3cd; border-radius: 6px; border: 1px solid #ffc107; display: none;">
+                            <h4 style="margin-bottom: 8px;">💰 Estimated Cost</h4>
+                            <div id="batch-agent-cost-estimate-content">
+                                <!-- Cost estimate will be displayed here -->
+                            </div>
+                        </div>
+                        
+                        <div id="batch-agent-results" class="batch-agent-results">
+                            <!-- Results will be displayed here -->
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Batch Agent Reporting Section -->
+                <section class="card" id="batch-agent-reporting-section" style="display: none;">
+                    <div class="card-header">
+                        <h2>6. Batch Agent Reporting</h2>
+                        <div class="button-group">
+                            <button id="export-batch-agent-results-btn" class="btn btn-outline" disabled>
+                                💾 Export Results
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div id="batch-agent-reporting" class="batch-agent-reporting">
+                            <!-- Reporting will be displayed here -->
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Prompt Optimization Recommendations Section -->
+                <section class="card" id="prompt-optimization-section" style="display: none;">
+                    <div class="card-header">
+                        <h2>7. Prompt Optimization Recommendations</h2>
+                        <div class="button-group">
+                            <button id="analyze-optimization-btn" class="btn btn-primary">
+                                🤖 Get Optimization Recommendations
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <p style="margin-bottom: 16px; color: var(--text-secondary);">
+                            Analyze all your data (prompt assessment, ablation analysis, batch results, agent building, and evaluations) 
+                            to get AI-powered recommendations for optimizing your prompt structure.
+                        </p>
+                        <div id="optimization-results">
+                            <!-- Recommendations will be displayed here -->
+                        </div>
+                    </div>
+                </section>
+            </div>
+            <!-- End Agent Builder Tab -->
+        </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div id="loading-overlay" class="loading-overlay hidden">
+        <div class="spinner"></div>
+        <p id="loading-text">Processing...</p>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
+
