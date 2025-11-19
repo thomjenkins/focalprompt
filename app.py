@@ -21,6 +21,8 @@ CORS(app)
 
 # Initialize assessor
 assessor = None
+assessor_api_key = None
+assessor_model = None
 
 # Checkpoint directory
 CHECKPOINT_DIR = "checkpoints"
@@ -29,21 +31,61 @@ os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 # Thread pool for parallel processing
 executor = ThreadPoolExecutor(max_workers=10)  # Process up to 10 pairs concurrently
 
-def get_assessor():
+def get_assessor(api_key=None, model=None):
     """Get or create the assessor instance."""
-    global assessor
-    if assessor is None:
-        api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            raise ValueError("OPENAI_API_KEY environment variable not set")
-        assessor = FocalAssessor(api_key=api_key, model="gpt-4o-mini")
+    global assessor, assessor_api_key, assessor_model
+    
+    # Use provided API key, or fall back to environment variable
+    api_key = api_key or os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise ValueError("API key not provided and OPENAI_API_KEY environment variable not set")
+    
+    # Use provided model, or default
+    model = model or "gpt-4o-mini"
+    
+    # Create a new assessor if API key or model changed
+    if assessor is None or assessor_api_key != api_key or assessor_model != model:
+        assessor = FocalAssessor(api_key=api_key, model=model)
+        assessor_api_key = api_key
+        assessor_model = model
+    
     return assessor
+
+
+def get_api_key_and_model(data):
+    """Extract API key and model from request data, with fallbacks."""
+    api_key = data.get('api_key') or os.getenv("OPENAI_API_KEY")
+    model = data.get('model', 'gpt-4o-mini')
+    return api_key, model
 
 
 @app.route('/')
 def index():
     """Serve the main page."""
     return render_template('index.html')
+
+
+@app.route('/api/test-api-key', methods=['POST'])
+def test_api_key():
+    """Test if an API key is valid."""
+    try:
+        data = request.json
+        api_key = data.get('api_key', '')
+        
+        if not api_key:
+            return jsonify({'valid': False, 'error': 'No API key provided'}), 400
+        
+        # Try to create a client and make a simple request
+        try:
+            test_client = OpenAI(api_key=api_key)
+            # Make a minimal test call
+            test_client.models.list()
+            return jsonify({'valid': True})
+        except Exception as e:
+            return jsonify({'valid': False, 'error': str(e)}), 400
+            
+    except Exception as e:
+        return jsonify({'valid': False, 'error': str(e)}), 500
 
 
 @app.route('/api/health', methods=['GET'])
@@ -69,12 +111,12 @@ def detect_foci():
         if not prompt:
             return jsonify({'error': 'Prompt is required'}), 400
         
-        # Check API key first
-        api_key = os.getenv("OPENAI_API_KEY")
+        # Get API key and model from request
+        api_key, model = get_api_key_and_model(data)
         if not api_key:
-            return jsonify({'error': 'OPENAI_API_KEY environment variable not set. Please set it and restart the server.'}), 500
+            return jsonify({'error': 'API key is required. Please provide it in settings or set OPENAI_API_KEY environment variable.'}), 500
         
-        assessor = get_assessor()
+        assessor = get_assessor(api_key=api_key, model=model)
         client = assessor.client
         
         # Use LLM to detect foci from the prompt structure
@@ -138,12 +180,12 @@ def detect_dynamic_foci():
         if not pairs or len(pairs) == 0:
             return jsonify({'error': 'At least one pair is required to detect dynamic patterns'}), 400
         
-        # Check API key first
-        api_key = os.getenv("OPENAI_API_KEY")
+        # Get API key and model from request
+        api_key, model = get_api_key_and_model(data)
         if not api_key:
-            return jsonify({'error': 'OPENAI_API_KEY environment variable not set. Please set it and restart the server.'}), 500
+            return jsonify({'error': 'API key is required. Please provide it in settings or set OPENAI_API_KEY environment variable.'}), 500
         
-        assessor = get_assessor()
+        assessor = get_assessor(api_key=api_key, model=model)
         client = assessor.client
         
         # Extract input patterns from pairs
@@ -256,16 +298,17 @@ def generate_output():
         prompt = data.get('prompt', '')
         model = data.get('model', 'gpt-4o-mini')
         temperature = data.get('temperature', 0.7)
+        api_key = data.get('api_key')  # Get from request
         
         if not prompt:
             return jsonify({'error': 'Prompt is required'}), 400
         
-        # Check API key first
-        api_key = os.getenv("OPENAI_API_KEY")
+        # Use API key from request, or fall back to environment variable
+        api_key = api_key or os.getenv("OPENAI_API_KEY")
         if not api_key:
-            return jsonify({'error': 'OPENAI_API_KEY environment variable not set. Please set it and restart the server.'}), 500
+            return jsonify({'error': 'API key is required. Please provide it in settings or set OPENAI_API_KEY environment variable.'}), 500
         
-        assessor = get_assessor()
+        assessor = get_assessor(api_key=api_key, model=model)
         output = assessor.generate_output(prompt, temperature=temperature)
         
         return jsonify({'output': output})
@@ -288,12 +331,12 @@ def rewrite_prompt():
         if not foci_weights:
             return jsonify({'error': 'Foci with weights are required'}), 400
         
-        # Check API key first
-        api_key = os.getenv("OPENAI_API_KEY")
+        # Get API key and model from request
+        api_key, model = get_api_key_and_model(data)
         if not api_key:
-            return jsonify({'error': 'OPENAI_API_KEY environment variable not set. Please set it and restart the server.'}), 500
+            return jsonify({'error': 'API key is required. Please provide it in settings or set OPENAI_API_KEY environment variable.'}), 500
         
-        assessor = get_assessor()
+        assessor = get_assessor(api_key=api_key, model=model)
         client = assessor.client
         
         # Build the rewrite instruction
@@ -364,12 +407,12 @@ def assess():
         if not output:
             return jsonify({'error': 'Output is required'}), 400
         
-        # Check API key first
-        api_key = os.getenv("OPENAI_API_KEY")
+        # Get API key and model from request
+        api_key, model = get_api_key_and_model(data)
         if not api_key:
-            return jsonify({'error': 'OPENAI_API_KEY environment variable not set. Please set it and restart the server.'}), 500
+            return jsonify({'error': 'API key is required. Please provide it in settings or set OPENAI_API_KEY environment variable.'}), 500
         
-        assessor = get_assessor()
+        assessor = get_assessor(api_key=api_key, model=model)
         
         # If user provided foci, use them for assessment
         if user_foci and len(user_foci) > 0:
@@ -465,12 +508,12 @@ def ablation_analysis():
         if not foci_list or len(foci_list) == 0:
             return jsonify({'error': 'Foci are required for ablation analysis'}), 400
         
-        # Check API key first
-        api_key = os.getenv("OPENAI_API_KEY")
+        # Get API key and model from request
+        api_key, model = get_api_key_and_model(data)
         if not api_key:
-            return jsonify({'error': 'OPENAI_API_KEY environment variable not set. Please set it and restart the server.'}), 500
+            return jsonify({'error': 'API key is required. Please provide it in settings or set OPENAI_API_KEY environment variable.'}), 500
         
-        assessor = get_assessor()
+        assessor = get_assessor(api_key=api_key, model=model)
         client = assessor.client
         
         # Pricing per million tokens (as of 2024)
@@ -727,12 +770,12 @@ def assess_chat_foci():
         if not foci_list or len(foci_list) == 0:
             return jsonify({'error': 'Foci are required'}), 400
         
-        # Check API key first
-        api_key = os.getenv("OPENAI_API_KEY")
+        # Get API key and model from request
+        api_key, model = get_api_key_and_model(data)
         if not api_key:
-            return jsonify({'error': 'OPENAI_API_KEY environment variable not set. Please set it and restart the server.'}), 500
+            return jsonify({'error': 'API key is required. Please provide it in settings or set OPENAI_API_KEY environment variable.'}), 500
         
-        assessor = get_assessor()
+        assessor = get_assessor(api_key=api_key, model=model)
         client = assessor.client
         
         # Pricing per million tokens
@@ -1004,12 +1047,12 @@ def generate_agent_response():
         if not constructed_prompt:
             return jsonify({'error': 'Constructed prompt is required'}), 400
         
-        # Check API key first
-        api_key = os.getenv("OPENAI_API_KEY")
+        # Get API key and model from request
+        api_key, model = get_api_key_and_model(data)
         if not api_key:
-            return jsonify({'error': 'OPENAI_API_KEY environment variable not set. Please set it and restart the server.'}), 500
+            return jsonify({'error': 'API key is required. Please provide it in settings or set OPENAI_API_KEY environment variable.'}), 500
         
-        assessor = get_assessor()
+        assessor = get_assessor(api_key=api_key, model=model)
         client = assessor.client
         
         # Pricing per million tokens
@@ -2046,12 +2089,12 @@ def batch_ablation_analysis():
         if not foci_list or len(foci_list) == 0:
             return jsonify({'error': 'Foci are required'}), 400
         
-        # Check API key first
-        api_key = os.getenv("OPENAI_API_KEY")
+        # Get API key and model from request
+        api_key, model = get_api_key_and_model(data)
         if not api_key:
-            return jsonify({'error': 'OPENAI_API_KEY environment variable not set. Please set it and restart the server.'}), 500
+            return jsonify({'error': 'API key is required. Please provide it in settings or set OPENAI_API_KEY environment variable.'}), 500
         
-        assessor = get_assessor()
+        assessor = get_assessor(api_key=api_key, model=model)
         client = assessor.client
         
         # Pricing per million tokens
@@ -2340,12 +2383,12 @@ def build_batch_agents():
         if not foci_list or len(foci_list) == 0:
             return jsonify({'error': 'Foci are required'}), 400
         
-        # Check API key first
-        api_key = os.getenv("OPENAI_API_KEY")
+        # Get API key and model from request
+        api_key, model = get_api_key_and_model(data)
         if not api_key:
-            return jsonify({'error': 'OPENAI_API_KEY environment variable not set. Please set it and restart the server.'}), 500
+            return jsonify({'error': 'API key is required. Please provide it in settings or set OPENAI_API_KEY environment variable.'}), 500
         
-        assessor = get_assessor()
+        assessor = get_assessor(api_key=api_key, model=model)
         client = assessor.client
         
         # Pricing per million tokens
@@ -3360,12 +3403,12 @@ def llm_evaluate_batch_agents():
         if not results or len(results) == 0:
             return jsonify({'error': 'Results are required'}), 400
         
-        # Check API key first
-        api_key = os.getenv("OPENAI_API_KEY")
+        # Get API key and model from request
+        api_key, model = get_api_key_and_model(data)
         if not api_key:
-            return jsonify({'error': 'OPENAI_API_KEY environment variable not set. Please set it and restart the server.'}), 500
+            return jsonify({'error': 'API key is required. Please provide it in settings or set OPENAI_API_KEY environment variable.'}), 500
         
-        assessor = get_assessor()
+        assessor = get_assessor(api_key=api_key, model=model)
         client = assessor.client
         
         # Pricing per million tokens

@@ -13,6 +13,37 @@
             <p class="subtitle">Building AI agents with focus</p>
         </header>
 
+        <!-- Settings Section -->
+        <div id="settings-section" style="background: var(--card-bg); border-radius: 8px; padding: 16px; margin-bottom: 20px; border: 1px solid var(--border-color);">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                <h3 style="margin: 0; color: var(--primary-color);">⚙️ Settings</h3>
+                <button id="toggle-settings-btn" style="background: var(--primary-color); color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer;">Show</button>
+            </div>
+            <div id="settings-content" style="display: none;">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 12px;">
+                    <div>
+                        <label for="api-key-input" style="display: block; margin-bottom: 6px; font-weight: 500;">OpenAI API Key:</label>
+                        <input type="password" id="api-key-input" placeholder="sk-..." style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px; font-family: monospace;">
+                        <small style="color: #666; font-size: 0.85em;">Stored locally in your browser</small>
+                    </div>
+                    <div>
+                        <label for="model-select" style="display: block; margin-bottom: 6px; font-weight: 500;">Model:</label>
+                        <select id="model-select" style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px;">
+                            <option value="gpt-4o-mini">gpt-4o-mini (Fast, Cheap)</option>
+                            <option value="gpt-4o">gpt-4o (Balanced)</option>
+                            <option value="gpt-4-turbo">gpt-4-turbo (High Quality)</option>
+                            <option value="gpt-3.5-turbo">gpt-3.5-turbo (Legacy)</option>
+                        </select>
+                    </div>
+                </div>
+                <div style="display: flex; gap: 8px; align-items: center;">
+                    <button id="save-settings-btn" style="background: var(--primary-color); color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer;">Save Settings</button>
+                    <button id="test-api-key-btn" style="background: #28a745; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer;">Test API Key</button>
+                    <span id="api-key-status" style="margin-left: 12px; padding: 8px 0; color: #666;"></span>
+                </div>
+            </div>
+        </div>
+
         <!-- Tab Navigation -->
         <div class="tab-navigation">
             <button class="tab-btn active" data-tab="documentation">📚 Documentation</button>

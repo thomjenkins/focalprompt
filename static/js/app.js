@@ -6,6 +6,27 @@ let batchFoci = []; // Separate foci for batch analysis
 let batchPairs = []; // Store input-output pairs for batch analysis
 let currentTab = 'documentation'; // Track current tab (defaults to documentation)
 
+// Settings management
+let userApiKey = localStorage.getItem('focalprompt_api_key') || '';
+let userModel = localStorage.getItem('focalprompt_model') || 'gpt-4o-mini';
+
+// Helper function to get API request headers
+function getApiHeaders() {
+    return {
+        'Content-Type': 'application/json',
+    };
+}
+
+// Helper function to get API request body with API key and model
+function getApiBody(additionalData = {}) {
+    const body = { ...additionalData };
+    if (userApiKey) {
+        body.api_key = userApiKey;
+    }
+    body.model = userModel;
+    return body;
+}
+
 // DOM Elements
 const promptInput = document.getElementById('prompt-input');
 const outputInput = document.getElementById('output-input');
@@ -328,6 +349,97 @@ window.addEventListener('DOMContentLoaded', async () => {
         }
     }
     
+    // Initialize settings UI
+    const apiKeyInput = document.getElementById('api-key-input');
+    const modelSelect = document.getElementById('model-select');
+    const saveSettingsBtn = document.getElementById('save-settings-btn');
+    const testApiKeyBtn = document.getElementById('test-api-key-btn');
+    const toggleSettingsBtn = document.getElementById('toggle-settings-btn');
+    const settingsContent = document.getElementById('settings-content');
+    const apiKeyStatus = document.getElementById('api-key-status');
+    
+    if (apiKeyInput) {
+        apiKeyInput.value = userApiKey;
+    }
+    if (modelSelect) {
+        modelSelect.value = userModel;
+    }
+    
+    // Toggle settings visibility
+    if (toggleSettingsBtn && settingsContent) {
+        let isExpanded = localStorage.getItem('focalprompt_settings_expanded') === 'true';
+        if (isExpanded) {
+            settingsContent.style.display = 'block';
+            toggleSettingsBtn.textContent = 'Hide';
+        }
+        
+        toggleSettingsBtn.addEventListener('click', () => {
+            isExpanded = !isExpanded;
+            settingsContent.style.display = isExpanded ? 'block' : 'none';
+            toggleSettingsBtn.textContent = isExpanded ? 'Hide' : 'Show';
+            localStorage.setItem('focalprompt_settings_expanded', isExpanded.toString());
+        });
+    }
+    
+    // Save settings
+    if (saveSettingsBtn) {
+        saveSettingsBtn.addEventListener('click', () => {
+            const apiKey = apiKeyInput.value.trim();
+            const model = modelSelect.value;
+            
+            if (apiKey) {
+                localStorage.setItem('focalprompt_api_key', apiKey);
+                userApiKey = apiKey;
+                apiKeyStatus.textContent = '✓ Settings saved';
+                apiKeyStatus.style.color = '#28a745';
+                setTimeout(() => {
+                    apiKeyStatus.textContent = '';
+                }, 3000);
+            } else {
+                localStorage.removeItem('focalprompt_api_key');
+                userApiKey = '';
+            }
+            
+            localStorage.setItem('focalprompt_model', model);
+            userModel = model;
+        });
+    }
+    
+    // Test API key
+    if (testApiKeyBtn) {
+        testApiKeyBtn.addEventListener('click', async () => {
+            const apiKey = apiKeyInput.value.trim();
+            if (!apiKey) {
+                apiKeyStatus.textContent = '⚠ Please enter an API key';
+                apiKeyStatus.style.color = '#ffc107';
+                return;
+            }
+            
+            apiKeyStatus.textContent = 'Testing...';
+            apiKeyStatus.style.color = '#666';
+            
+            try {
+                const response = await fetch('/api/test-api-key', {
+                    method: 'POST',
+                    headers: getApiHeaders(),
+                    body: JSON.stringify({ api_key: apiKey })
+                });
+                
+                const data = await response.json();
+                if (data.valid) {
+                    apiKeyStatus.textContent = '✓ API key is valid';
+                    apiKeyStatus.style.color = '#28a745';
+                } else {
+                    apiKeyStatus.textContent = '✗ API key is invalid: ' + (data.error || 'Unknown error');
+                    apiKeyStatus.style.color = '#dc3545';
+                }
+            } catch (error) {
+                apiKeyStatus.textContent = '✗ Error testing API key: ' + error.message;
+                apiKeyStatus.style.color = '#dc3545';
+            }
+        });
+    }
+    
     // Attach save/load button handlers
     const savePromptBtn = document.getElementById('save-prompt-btn');
     const loadPromptBtn = document.getElementById('load-prompt-btn');
@@ -396,10 +508,8 @@ detectFociBtn.addEventListener('click', async () => {
     try {
         const response = await fetch('/api/detect-foci', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ prompt }),
+            headers: getApiHeaders(),
+            body: JSON.stringify(getApiBody({ prompt })),
         });
         
         const data = await response.json();
@@ -793,10 +903,8 @@ generateOutputBtn.addEventListener('click', async () => {
     try {
         const response = await fetch('/api/generate-output', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ prompt }),
+            headers: getApiHeaders(),
+            body: JSON.stringify(getApiBody({ prompt })),
         });
         
         const data = await response.json();
@@ -860,14 +968,12 @@ assessBtn.addEventListener('click', async () => {
     try {
         const response = await fetch('/api/assess', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ 
+            headers: getApiHeaders(),
+            body: JSON.stringify(getApiBody({ 
                 prompt, 
                 output,
                 foci: foci.length > 0 ? foci : undefined
-            }),
+            })),
         });
         
         const data = await response.json();
@@ -1757,10 +1863,8 @@ if (agentDetectFociBtn) {
         try {
             const response = await fetch('/api/detect-foci', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ prompt: prompt }),
+                headers: getApiHeaders(),
+                body: JSON.stringify(getApiBody({ prompt: prompt })),
             });
             
             const data = await response.json();
@@ -1816,13 +1920,11 @@ if (assessChatBtn) {
         try {
             const response = await fetch('/api/assess-chat-foci', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
+                headers: getApiHeaders(),
+                body: JSON.stringify(getApiBody({
                     chat_content: chatContent,
                     foci: agentFoci
-                }),
+                })),
             });
             
             const data = await response.json();
@@ -2456,14 +2558,12 @@ if (batchDetectDynamicFociBtn) {
         try {
             const response = await fetch('/api/detect-dynamic-foci', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
+                headers: getApiHeaders(),
+                body: JSON.stringify(getApiBody({
                     prompt: prompt,
                     foci: batchFoci,
                     pairs: batchPairs
-                }),
+                })),
             });
             
             const data = await response.json();
@@ -2511,10 +2611,8 @@ if (batchDetectFociBtn) {
         try {
             const response = await fetch('/api/detect-foci', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ prompt: prompt }),
+                headers: getApiHeaders(),
+                body: JSON.stringify(getApiBody({ prompt: prompt })),
             });
             
             const data = await response.json();
