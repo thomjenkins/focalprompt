@@ -81,12 +81,11 @@ function getApiHeaders() {
     return headers;
 }
 
-// Helper function to get API request body with API key, model, and provider
+// Helper function to get API request body with model and provider
+// API key no longer needed - we use AI Gateway now
 function getApiBody(additionalData = {}) {
     const body = { ...additionalData };
-    if (userApiKey) {
-        body.api_key = userApiKey;
-    }
+    // API key removed - using AI Gateway
     body.model = userModel;
     body.provider = userProvider;
     return body;

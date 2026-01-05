@@ -25,11 +25,11 @@ usage_service = UsageService(db)
 
 
 def get_api_key_and_model(data):
-    """Extract API key, model, and provider from request data, with fallbacks."""
-    api_key = data.get('api_key') or os.getenv("OPENAI_API_KEY")
+    """Extract model and provider from request data. API key no longer needed (uses AI Gateway)."""
     model = data.get('model', 'gpt-4o-mini')
     provider = data.get('provider', 'openai')
-    return api_key, model, provider
+    # API key is ignored - we use AI Gateway now
+    return None, model, provider
 
 
 @ablation_bp.route('/api/ablation-analysis', methods=['POST'])
@@ -56,16 +56,18 @@ def ablation_analysis():
             if not allowed:
                 return jsonify({'error': error_msg}), 429
         
-        # Get API key, model, and provider from request
-        api_key, model, provider = get_api_key_and_model(data)
-        if not api_key:
-            return jsonify({'error': 'API key is required. Please provide it in settings or set OPENAI_API_KEY environment variable.'}), 500
+        # Get model and provider from request (API key no longer needed - uses AI Gateway)
+        _, model, provider = get_api_key_and_model(data)
         
-        assessor = get_assessor(api_key=api_key, model=model, provider=provider)
+        assessor = get_assessor(api_key=None, model=model, provider=provider)
         provider_instance = assessor.provider
         
-        # Create services
-        embedding_service = EmbeddingService(api_key)
+        # Create services - embedding service needs OpenAI API key from env
+        # For embeddings, we still need direct OpenAI access (or gateway if it supports embeddings)
+        openai_api_key = os.getenv("OPENAI_API_KEY")
+        if not openai_api_key:
+            return jsonify({'error': 'OPENAI_API_KEY environment variable required for embeddings'}), 500
+        embedding_service = EmbeddingService(openai_api_key)
         cost_calculator = CostCalculator()
         ablation_service = AblationService(
             provider_instance,

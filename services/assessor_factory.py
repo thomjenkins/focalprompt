@@ -3,11 +3,13 @@
 Assessor factory for creating and managing FocalAssessor instances.
 
 Replaces global state management with a factory pattern.
+Now uses Vercel AI Gateway for all LLM requests.
 """
 
 import os
 from typing import Optional
 from core.focal_assessor import FocalAssessor
+from core.ai_gateway_provider import AIGatewayProvider
 
 
 class AssessorFactory:
@@ -16,21 +18,24 @@ class AssessorFactory:
     def __init__(self):
         """Initialize the factory."""
         self._assessor = None
-        self._assessor_api_key = None
         self._assessor_model = None
         self._assessor_provider = None
+        self._gateway_api_key = os.getenv("AI_GATEWAY_API_KEY")
+        
+        if not self._gateway_api_key:
+            raise ValueError("AI_GATEWAY_API_KEY environment variable not set")
     
     def get_assessor(
         self,
-        api_key: Optional[str] = None,
+        api_key: Optional[str] = None,  # Ignored - we use gateway
         model: Optional[str] = None,
         provider: Optional[str] = None
     ) -> FocalAssessor:
         """
-        Get or create the assessor instance.
+        Get or create the assessor instance using Vercel AI Gateway.
         
         Args:
-            api_key: API key for the provider
+            api_key: Ignored - we use AI Gateway instead
             model: Model name to use
             provider: Provider name ('openai', 'anthropic', 'google', 'grok')
             
@@ -40,23 +45,20 @@ class AssessorFactory:
         # Use provided provider, or default to openai
         provider = provider or "openai"
         
-        # Use provided API key, or fall back to environment variable
-        api_key = api_key or os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            raise ValueError("API key not provided and OPENAI_API_KEY environment variable not set")
-        
         # Use provided model, or default based on provider
         if not model:
             from core.llm_providers import defaultModels
             model = defaultModels.get(provider, "gpt-4o-mini")
         
-        # Create a new assessor if API key, model, or provider changed
+        # Create a new assessor if model or provider changed
         if (self._assessor is None or 
-            self._assessor_api_key != api_key or 
             self._assessor_model != model or 
             self._assessor_provider != provider):
-            self._assessor = FocalAssessor(api_key=api_key, model=model, provider=provider)
-            self._assessor_api_key = api_key
+            # Create AI Gateway provider
+            gateway_provider = AIGatewayProvider(self._gateway_api_key)
+            
+            # Create assessor with gateway provider
+            self._assessor = FocalAssessor(provider_instance=gateway_provider, model=model, provider=provider)
             self._assessor_model = model
             self._assessor_provider = provider
         

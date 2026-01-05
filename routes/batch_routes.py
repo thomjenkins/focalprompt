@@ -24,11 +24,11 @@ usage_service = UsageService(db)
 
 
 def get_api_key_and_model(data):
-    """Extract API key, model, and provider from request data, with fallbacks."""
-    api_key = data.get('api_key') or os.getenv("OPENAI_API_KEY")
+    """Extract model and provider from request data. API key no longer needed (uses AI Gateway)."""
     model = data.get('model', 'gpt-4o-mini')
     provider = data.get('provider', 'openai')
-    return api_key, model, provider
+    # API key is ignored - we use AI Gateway now
+    return None, model, provider
 
 
 @batch_bp.route('/api/list-checkpoints', methods=['GET'])
@@ -106,17 +106,18 @@ def batch_analysis_stream():
                     yield f"data: {json.dumps({'type': 'error', 'message': error_msg})}\n\n"
                     return
             
-            # Get API key, model, and provider from request
-            api_key, model, provider = get_api_key_and_model(data)
-            if not api_key:
-                yield f"data: {json.dumps({'type': 'error', 'message': 'API key is required'})}\n\n"
-                return
+            # Get model and provider from request (API key no longer needed - uses AI Gateway)
+            _, model, provider = get_api_key_and_model(data)
             
-            assessor = get_assessor(api_key=api_key, model=model, provider=provider)
+            assessor = get_assessor(api_key=None, model=model, provider=provider)
             provider_instance = assessor.provider
             
-            # Create services
-            embedding_service = EmbeddingService(api_key)
+            # Create services - embedding service needs OpenAI API key from env
+            openai_api_key = os.getenv("OPENAI_API_KEY")
+            if not openai_api_key:
+                yield f"data: {json.dumps({'type': 'error', 'message': 'OPENAI_API_KEY environment variable required for embeddings'})}\n\n"
+                return
+            embedding_service = EmbeddingService(openai_api_key)
             cost_calculator = CostCalculator()
             checkpoint_service = CheckpointService()
             

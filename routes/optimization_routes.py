@@ -32,12 +32,10 @@ def analyze_prompt_optimization():
         foci_list = data.get('foci', [])
         original_prompt = data.get('original_prompt', '')
         
-        # Get API key, model, and provider from request
-        api_key, model, provider = get_api_key_and_model(data)
-        if not api_key:
-            return jsonify({'error': 'API key is required'}), 500
+        # Get model and provider from request (API key no longer needed - uses AI Gateway)
+        _, model, provider = get_api_key_and_model(data)
         
-        assessor = get_assessor(api_key=api_key, model=model, provider=provider)
+        assessor = get_assessor(api_key=None, model=model, provider=provider)
         cost_calculator = CostCalculator()
         
         service = OptimizationService(

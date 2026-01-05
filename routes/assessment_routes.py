@@ -32,11 +32,11 @@ usage_service = UsageService(db)
 
 
 def get_api_key_and_model(data):
-    """Extract API key, model, and provider from request data, with fallbacks."""
-    api_key = data.get('api_key') or os.getenv("OPENAI_API_KEY")
+    """Extract model and provider from request data. API key no longer needed (uses AI Gateway)."""
     model = data.get('model', 'gpt-4o-mini')
     provider = data.get('provider', 'openai')
-    return api_key, model, provider
+    # API key is ignored - we use AI Gateway now
+    return None, model, provider
 
 
 @assessment_bp.route('/api/detect-foci', methods=['POST'])
@@ -57,12 +57,10 @@ def detect_foci():
             if not allowed:
                 return jsonify({'error': error_msg}), 429
         
-        # Get API key, model, and provider from request
-        api_key, model, provider = get_api_key_and_model(data)
-        if not api_key:
-            return jsonify({'error': 'API key is required. Please provide it in settings or set OPENAI_API_KEY environment variable.'}), 500
+        # Get model and provider from request (API key no longer needed - uses AI Gateway)
+        _, model, provider = get_api_key_and_model(data)
         
-        assessor = get_assessor(api_key=api_key, model=model, provider=provider)
+        assessor = get_assessor(api_key=None, model=model, provider=provider)
         service = AssessmentService(assessor)
         
         result = service.detect_foci(prompt)
@@ -96,12 +94,10 @@ def detect_dynamic_foci():
         if not pairs or len(pairs) == 0:
             return jsonify({'error': 'At least one pair is required to detect dynamic patterns'}), 400
         
-        # Get API key, model, and provider from request
-        api_key, model, provider = get_api_key_and_model(data)
-        if not api_key:
-            return jsonify({'error': 'API key is required. Please provide it in settings or set OPENAI_API_KEY environment variable.'}), 500
+        # Get model and provider from request (API key no longer needed - uses AI Gateway)
+        _, model, provider = get_api_key_and_model(data)
         
-        assessor = get_assessor(api_key=api_key, model=model, provider=provider)
+        assessor = get_assessor(api_key=None, model=model, provider=provider)
         service = AssessmentService(assessor)
         
         result = service.detect_dynamic_foci(prompt, foci, pairs)
@@ -134,12 +130,10 @@ def assess():
             if not allowed:
                 return jsonify({'error': error_msg}), 429
         
-        # Get API key, model, and provider from request
-        api_key, model, provider = get_api_key_and_model(data)
-        if not api_key:
-            return jsonify({'error': 'API key is required. Please provide it in settings or set OPENAI_API_KEY environment variable.'}), 500
+        # Get model and provider from request (API key no longer needed - uses AI Gateway)
+        _, model, provider = get_api_key_and_model(data)
         
-        assessor = get_assessor(api_key=api_key, model=model, provider=provider)
+        assessor = get_assessor(api_key=None, model=model, provider=provider)
         checkpoint_service = CheckpointService()
         service = AssessmentService(assessor, checkpoint_service=checkpoint_service)
         
@@ -191,12 +185,10 @@ def generate_output():
         if not prompt:
             return jsonify({'error': 'Prompt is required'}), 400
         
-        # Get API key, model, and provider from request
-        api_key, model, provider = get_api_key_and_model(data)
-        if not api_key:
-            return jsonify({'error': 'API key is required. Please provide it in settings or set OPENAI_API_KEY environment variable.'}), 500
+        # Get model and provider from request (API key no longer needed - uses AI Gateway)
+        _, model, provider = get_api_key_and_model(data)
         
-        assessor = get_assessor(api_key=api_key, model=model, provider=provider)
+        assessor = get_assessor(api_key=None, model=model, provider=provider)
         output = assessor.generate_output(prompt, temperature=temperature)
         
         return jsonify({'output': output})
@@ -218,12 +210,10 @@ def rewrite_prompt():
         if not foci_weights:
             return jsonify({'error': 'Foci with weights are required'}), 400
         
-        # Get API key, model, and provider from request
-        api_key, model, provider = get_api_key_and_model(data)
-        if not api_key:
-            return jsonify({'error': 'API key is required. Please provide it in settings or set OPENAI_API_KEY environment variable.'}), 500
+        # Get model and provider from request (API key no longer needed - uses AI Gateway)
+        _, model, provider = get_api_key_and_model(data)
         
-        assessor = get_assessor(api_key=api_key, model=model, provider=provider)
+        assessor = get_assessor(api_key=None, model=model, provider=provider)
         service = PromptRewriteService(assessor)
         
         rewritten = service.rewrite_prompt(prompt, foci_weights)

@@ -26,11 +26,11 @@ usage_service = UsageService(db)
 
 
 def get_api_key_and_model(data):
-    """Extract API key, model, and provider from request data, with fallbacks."""
-    api_key = data.get('api_key') or os.getenv("OPENAI_API_KEY")
+    """Extract model and provider from request data. API key no longer needed (uses AI Gateway)."""
     model = data.get('model', 'gpt-4o-mini')
     provider = data.get('provider', 'openai')
-    return api_key, model, provider
+    # API key is ignored - we use AI Gateway now
+    return None, model, provider
 
 
 @agent_bp.route('/api/assess-chat-foci', methods=['POST'])
@@ -46,12 +46,10 @@ def assess_chat_foci():
         if not foci_list or len(foci_list) == 0:
             return jsonify({'error': 'Foci are required'}), 400
         
-        # Get API key, model, and provider from request
-        api_key, model, provider = get_api_key_and_model(data)
-        if not api_key:
-            return jsonify({'error': 'API key is required'}), 500
+        # Get model and provider from request (API key no longer needed - uses AI Gateway)
+        _, model, provider = get_api_key_and_model(data)
         
-        assessor = get_assessor(api_key=api_key, model=model, provider=provider)
+        assessor = get_assessor(api_key=None, model=model, provider=provider)
         cost_calculator = CostCalculator()
         
         service = AgentBuilderService(
@@ -78,12 +76,10 @@ def generate_agent_response():
         if not constructed_prompt:
             return jsonify({'error': 'Constructed prompt is required'}), 400
         
-        # Get API key, model, and provider from request
-        api_key, model, provider = get_api_key_and_model(data)
-        if not api_key:
-            return jsonify({'error': 'API key is required'}), 500
+        # Get model and provider from request (API key no longer needed - uses AI Gateway)
+        _, model, provider = get_api_key_and_model(data)
         
-        assessor = get_assessor(api_key=api_key, model=model, provider=provider)
+        assessor = get_assessor(api_key=None, model=model, provider=provider)
         service = AgentBuilderService(assessor.provider, model)
         
         output = service.generate_agent_response(constructed_prompt, temperature)
@@ -127,13 +123,10 @@ def build_batch_agents_stream():
                     yield f"data: {json.dumps({'type': 'error', 'message': error_msg})}\n\n"
                     return
             
-            # Get API key, model, and provider from request
-            api_key, model, provider = get_api_key_and_model(data)
-            if not api_key:
-                yield f"data: {json.dumps({'type': 'error', 'message': 'API key is required'})}\n\n"
-                return
+            # Get model and provider from request (API key no longer needed - uses AI Gateway)
+            _, model, provider = get_api_key_and_model(data)
             
-            assessor = get_assessor(api_key=api_key, model=model, provider=provider)
+            assessor = get_assessor(api_key=None, model=model, provider=provider)
             cost_calculator = CostCalculator()
             checkpoint_service = CheckpointService()
             
@@ -208,13 +201,10 @@ def llm_evaluate_batch_agents_stream():
                     yield f"data: {json.dumps({'type': 'error', 'message': error_msg})}\n\n"
                     return
             
-            # Get API key, model, and provider from request
-            api_key, model, provider = get_api_key_and_model(data)
-            if not api_key:
-                yield f"data: {json.dumps({'type': 'error', 'message': 'API key is required'})}\n\n"
-                return
+            # Get model and provider from request (API key no longer needed - uses AI Gateway)
+            _, model, provider = get_api_key_and_model(data)
             
-            assessor = get_assessor(api_key=api_key, model=model, provider=provider)
+            assessor = get_assessor(api_key=None, model=model, provider=provider)
             cost_calculator = CostCalculator()
             
             service = EvaluationService(

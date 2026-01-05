@@ -69,7 +69,8 @@ class FocalAssessor:
         api_key: Optional[str] = None,
         model: str = "gpt-4o-mini",
         agent_model: Optional[str] = None,
-        provider: str = "openai"
+        provider: str = "openai",
+        provider_instance: Optional[object] = None
     ):
         """
         Initialize the FocalAssessor.
@@ -79,9 +80,18 @@ class FocalAssessor:
             model: The model to use for assessment (default: gpt-4o-mini)
             agent_model: The model to use for generating output (default: same as model)
             provider: The LLM provider to use ('openai', 'anthropic', 'google', 'grok')
+            provider_instance: Optional pre-initialized provider instance (e.g., AI Gateway)
         """
-        from core.llm_providers import get_provider
-        self.provider = get_provider(provider, api_key)
+        if provider_instance:
+            # Use provided provider instance (e.g., from AI Gateway)
+            self.provider = provider_instance
+            self.provider_name = provider
+        else:
+            # Create provider from API key
+            from core.llm_providers import get_provider
+            self.provider = get_provider(provider, api_key)
+            self.provider_name = provider
+        
         self.model = model
         self.agent_model = agent_model or model
         # Keep client for backward compatibility (will be provider instance)
@@ -102,16 +112,36 @@ class FocalAssessor:
         Returns:
             Generated output string
         """
-        response = self.provider.chat_completion(
-            messages=[
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            model=self.agent_model,
-            temperature=temperature
-        )
+        # Pass provider name if using AI Gateway
+        if hasattr(self.provider, 'chat_completion'):
+            # Check if provider needs provider parameter (AI Gateway)
+            import inspect
+            sig = inspect.signature(self.provider.chat_completion)
+            if 'provider' in sig.parameters:
+                response = self.provider.chat_completion(
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": prompt
+                        }
+                    ],
+                    model=self.agent_model,
+                    temperature=temperature,
+                    provider=self.provider_name
+                )
+            else:
+                response = self.provider.chat_completion(
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": prompt
+                        }
+                    ],
+                    model=self.agent_model,
+                    temperature=temperature
+                )
+        else:
+            raise ValueError("Provider does not have chat_completion method")
         
         return response['content']
     
