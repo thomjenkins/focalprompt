@@ -4,21 +4,33 @@
 import sys
 import os
 
-print("Testing local setup...")
+print("=" * 60)
+print("Testing Local Setup")
+print("=" * 60)
 print(f"Python: {sys.version}")
-print(f"Working dir: {os.getcwd()}")
+print(f"Working dir: {os.getcwd()}\n")
 
 # Test imports
 try:
-    print("\n1. Testing Flask import...")
+    print("1. Testing Flask import...")
     from flask import Flask
     print("   ✅ Flask OK")
 except ImportError as e:
     print(f"   ❌ Flask import failed: {e}")
+    print("   Fix: pip install flask")
     sys.exit(1)
 
 try:
-    print("\n2. Testing app import...")
+    print("\n2. Testing flask-cors import...")
+    from flask_cors import CORS
+    print("   ✅ flask-cors OK")
+except ImportError as e:
+    print(f"   ❌ flask-cors import failed: {e}")
+    print("   Fix: pip install flask-cors")
+    sys.exit(1)
+
+try:
+    print("\n3. Testing app import...")
     from app_new import app
     print("   ✅ App imported successfully")
 except Exception as e:
@@ -28,7 +40,7 @@ except Exception as e:
     sys.exit(1)
 
 try:
-    print("\n3. Testing route registration...")
+    print("\n4. Testing route registration...")
     with app.test_client() as client:
         response = client.get('/api/test')
         if response.status_code == 200:
@@ -44,7 +56,7 @@ except Exception as e:
     sys.exit(1)
 
 try:
-    print("\n4. Testing health endpoint...")
+    print("\n5. Testing health endpoint...")
     with app.test_client() as client:
         response = client.get('/api/health')
         if response.status_code == 200:
@@ -59,9 +71,9 @@ except Exception as e:
     import traceback
     traceback.print_exc()
 
-print("\n✅ All tests passed! Ready to run locally.")
+print("\n" + "=" * 60)
+print("✅ All critical tests passed! Ready to run locally.")
+print("=" * 60)
 print("\nTo start the app:")
 print("  python3 app_new.py")
-print("\nThen visit:")
-print("  http://localhost:5001")
-
+print("\nThen visit: http://localhost:5001")
