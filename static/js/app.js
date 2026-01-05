@@ -4842,6 +4842,80 @@ async function checkAuthStatus() {
     }
 }
 
+// Account modal functions
+function showAccountModal() {
+    const modal = document.getElementById('account-modal');
+    if (!modal) return;
+    
+    modal.style.display = 'flex';
+    document.body.style.overflow = 'hidden';
+    
+    // Load account data
+    loadAccountData();
+}
+
+function hideAccountModal() {
+    const modal = document.getElementById('account-modal');
+    if (modal) {
+        modal.style.display = 'none';
+        document.body.style.overflow = '';
+    }
+}
+
+async function loadAccountData() {
+    const sessionId = localStorage.getItem('session_id');
+    if (!sessionId) {
+        hideAccountModal();
+        return;
+    }
+    
+    try {
+        // Get user info
+        const userResponse = await fetch('/api/auth/me', {
+            headers: { 'X-Session-ID': sessionId }
+        });
+        
+        if (userResponse.ok) {
+            const user = await userResponse.json();
+            document.getElementById('account-email').textContent = user.email;
+            document.getElementById('account-tier').textContent = user.tier.charAt(0).toUpperCase() + user.tier.slice(1);
+            document.getElementById('account-status').textContent = user.subscription_status;
+        }
+        
+        // Get usage summary
+        const usageResponse = await fetch('/api/usage/summary', {
+            headers: { 'X-Session-ID': sessionId }
+        });
+        
+        if (usageResponse.ok) {
+            const usage = await usageResponse.json();
+            const usageDiv = document.getElementById('account-usage');
+            
+            if (usage && usage.endpoints) {
+                let html = '<div style="display: grid; gap: 8px;">';
+                for (const [endpoint, data] of Object.entries(usage.endpoints)) {
+                    const limit = data.limit === -1 ? 'Unlimited' : data.limit;
+                    const used = data.count || 0;
+                    const remaining = data.limit === -1 ? '∞' : Math.max(0, data.limit - used);
+                    html += `<div style="display: flex; justify-content: space-between; padding: 8px; background: var(--bg-color); border-radius: 4px;">
+                        <span>${endpoint.replace('/api/', '')}</span>
+                        <span><strong>${used}/${limit}</strong> (${remaining} remaining)</span>
+                    </div>`;
+                }
+                html += '</div>';
+                usageDiv.innerHTML = html;
+            } else {
+                usageDiv.innerHTML = '<p style="color: #666;">No usage data available.</p>';
+            }
+        } else {
+            document.getElementById('account-usage').innerHTML = '<p style="color: #666;">Unable to load usage data.</p>';
+        }
+    } catch (error) {
+        console.error('Error loading account data:', error);
+        document.getElementById('account-usage').innerHTML = '<p style="color: #dc3545;">Error loading usage data.</p>';
+    }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     const loginBtn = document.getElementById('login-btn');
     const logoutBtn = document.getElementById('logout-btn');
