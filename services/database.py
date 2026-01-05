@@ -49,8 +49,9 @@ class Database:
         self.use_postgres = bool(self.database_url and POSTGRES_AVAILABLE)
         
         if self.use_postgres:
-            # Use PostgreSQL (Supabase)
-            self._init_postgres_pool()
+            # Use PostgreSQL (Supabase) - initialize pool lazily
+            self.pool = None
+            # Don't initialize pool here - do it on first use
         else:
             # Use SQLite (local development)
             if db_path is None:
@@ -72,17 +73,15 @@ class Database:
                 if not db_path.startswith('/tmp'):
                     self.db_path = "/tmp/focalprompt.db"
         
-        # Initialize database tables (but don't crash if it fails)
-        try:
-            self._init_db()
-        except Exception as e:
-            # Log but don't crash - database might not be available yet
-            import sys
-            print(f"Warning: Database initialization deferred: {e}", file=sys.stderr)
-            # Will retry on first use
+        # Mark as uninitialized - will initialize on first use
+        self._initialized = False
+        # Don't initialize here - defer to first use to avoid import-time crashes
     
     def _init_postgres_pool(self):
         """Initialize PostgreSQL connection pool."""
+        if self.pool is not None:
+            return  # Already initialized
+        
         try:
             # Parse DATABASE_URL and create connection pool
             self.pool = SimpleConnectionPool(
@@ -91,12 +90,30 @@ class Database:
                 dsn=self.database_url
             )
         except Exception as e:
-            print(f"Warning: Failed to create PostgreSQL pool: {e}")
+            import sys
+            print(f"Warning: Failed to create PostgreSQL pool: {e}", file=sys.stderr)
             self.pool = None
+            raise  # Re-raise so caller knows it failed
+    
+    def _ensure_initialized(self):
+        """Ensure database is initialized (lazy initialization)."""
+        if not self._initialized:
+            try:
+                self._init_db()
+                self._initialized = True
+            except Exception as e:
+                # Log but don't crash - database might not be available yet
+                import sys
+                print(f"Warning: Database initialization failed: {e}", file=sys.stderr)
+                # Will retry on next use
+                self._initialized = False
     
     @contextmanager
     def _get_conn(self):
         """Get database connection with context manager."""
+        # Ensure database is initialized before use
+        self._ensure_initialized()
+        
         if self.use_postgres:
             # PostgreSQL connection
             if not self.pool:
