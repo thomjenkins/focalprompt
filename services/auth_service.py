@@ -132,7 +132,11 @@ class AuthService:
             return None
         
         # Check expiration
-        expires_at = datetime.fromisoformat(session['expires_at'])
+        if isinstance(session['expires_at'], str):
+            expires_at = datetime.fromisoformat(session['expires_at'])
+        else:
+            expires_at = session['expires_at']
+        
         if expires_at < datetime.now():
             self.db.delete_session(session_id)
             return None
