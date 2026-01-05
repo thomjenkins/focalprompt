@@ -4816,6 +4816,8 @@ async function checkAuthStatus() {
             // Show logged in state
             if (loginBtn) loginBtn.style.display = 'none';
             if (logoutBtn) logoutBtn.style.display = 'inline-block';
+            const accountBtn = document.getElementById('account-btn');
+            if (accountBtn) accountBtn.style.display = 'inline-block';
             if (userInfo) {
                 userInfo.textContent = `${user.email} (${user.tier})`;
                 userInfo.style.display = 'inline-block';
@@ -4827,6 +4829,8 @@ async function checkAuthStatus() {
             localStorage.removeItem('user');
             if (loginBtn) loginBtn.style.display = 'inline-block';
             if (logoutBtn) logoutBtn.style.display = 'none';
+            const accountBtn = document.getElementById('account-btn');
+            if (accountBtn) accountBtn.style.display = 'none';
             if (userInfo) userInfo.style.display = 'none';
         }
     } catch (error) {
