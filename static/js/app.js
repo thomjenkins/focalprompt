@@ -4886,28 +4886,58 @@ async function loadAccountData() {
             headers: { 'X-Session-ID': sessionId }
         });
         
+        // Get billing info
+        const billingResponse = await fetch('/api/usage/billing', {
+            headers: { 'X-Session-ID': sessionId }
+        });
+        
+        const usageDiv = document.getElementById('account-usage');
+        
         if (usageResponse.ok) {
             const usage = await usageResponse.json();
-            const usageDiv = document.getElementById('account-usage');
             
-            if (usage && usage.endpoints) {
-                let html = '<div style="display: grid; gap: 8px;">';
-                for (const [endpoint, data] of Object.entries(usage.endpoints)) {
-                    const limit = data.limit === -1 ? 'Unlimited' : data.limit;
-                    const used = data.count || 0;
-                    const remaining = data.limit === -1 ? '∞' : Math.max(0, data.limit - used);
+            if (usage && usage.by_endpoint) {
+                let html = '<div style="display: grid; gap: 8px; margin-bottom: 16px;">';
+                html += '<h5 style="margin: 0 0 8px 0;">API Usage</h5>';
+                for (const [endpoint, data] of Object.entries(usage.by_endpoint)) {
+                    const count = data.count || 0;
+                    const tokens = data.tokens || 0;
                     html += `<div style="display: flex; justify-content: space-between; padding: 8px; background: var(--bg-color); border-radius: 4px;">
                         <span>${endpoint.replace('/api/', '')}</span>
-                        <span><strong>${used}/${limit}</strong> (${remaining} remaining)</span>
+                        <span><strong>${count} requests</strong> (${tokens.toLocaleString()} tokens)</span>
                     </div>`;
                 }
                 html += '</div>';
+                
+                // Add billing info if available
+                if (billingResponse.ok) {
+                    const billing = await billingResponse.json();
+                    html += '<div style="border-top: 1px solid var(--border-color); padding-top: 16px;">';
+                    html += '<h5 style="margin: 0 0 8px 0;">Billing</h5>';
+                    html += `<div style="display: grid; gap: 8px;">`;
+                    html += `<div style="display: flex; justify-content: space-between; padding: 8px; background: var(--bg-color); border-radius: 4px;">
+                        <span>Total Spent</span>
+                        <span><strong>$${billing.total_spent_dollars.toFixed(2)}</strong></span>
+                    </div>`;
+                    if (billing.pending_charges_cents > 0) {
+                        html += `<div style="display: flex; justify-content: space-between; padding: 8px; background: #fff3cd; border-radius: 4px;">
+                            <span>Pending Charges</span>
+                            <span><strong>$${billing.pending_charges_dollars.toFixed(2)}</strong></span>
+                        </div>`;
+                    }
+                    html += `<div style="display: flex; justify-content: space-between; padding: 8px; background: var(--bg-color); border-radius: 4px;">
+                        <span>Total Charges</span>
+                        <span><strong>${billing.total_charges}</strong> (${billing.successful_charges} successful)</span>
+                    </div>`;
+                    html += '</div></div>';
+                }
+                
                 usageDiv.innerHTML = html;
             } else {
                 usageDiv.innerHTML = '<p style="color: #666;">No usage data available.</p>';
             }
         } else {
-            document.getElementById('account-usage').innerHTML = '<p style="color: #666;">Unable to load usage data.</p>';
+            usageDiv.innerHTML = '<p style="color: #666;">Unable to load usage data.</p>';
         }
     } catch (error) {
         console.error('Error loading account data:', error);

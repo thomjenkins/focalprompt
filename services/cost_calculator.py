@@ -113,6 +113,10 @@ class CostCalculator:
                 'cost': embedding_cost
             },
             'total_cost': total_cost,
+            'input_tokens': input_tokens,
+            'output_tokens': output_tokens,
+            'embedding_tokens': embedding_tokens,
+            'total_tokens': input_tokens + output_tokens + embedding_tokens,
             'model': model
         }
     
