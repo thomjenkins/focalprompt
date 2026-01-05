@@ -72,7 +72,14 @@ class Database:
                 if not db_path.startswith('/tmp'):
                     self.db_path = "/tmp/focalprompt.db"
         
-        self._init_db()
+        # Initialize database tables (but don't crash if it fails)
+        try:
+            self._init_db()
+        except Exception as e:
+            # Log but don't crash - database might not be available yet
+            import sys
+            print(f"Warning: Database initialization deferred: {e}", file=sys.stderr)
+            # Will retry on first use
     
     def _init_postgres_pool(self):
         """Initialize PostgreSQL connection pool."""
@@ -93,6 +100,13 @@ class Database:
         if self.use_postgres:
             # PostgreSQL connection
             if not self.pool:
+                # Try to reinitialize pool if it failed before
+                try:
+                    self._init_postgres_pool()
+                except Exception as e:
+                    raise Exception(f"PostgreSQL connection pool not available: {e}")
+            
+            if not self.pool:
                 raise Exception("PostgreSQL connection pool not available")
             
             conn = self.pool.getconn()
@@ -106,16 +120,20 @@ class Database:
                 self.pool.putconn(conn)
         else:
             # SQLite connection
-            conn = sqlite3.connect(self.db_path)
-            conn.row_factory = sqlite3.Row  # Return rows as dict-like objects
             try:
-                yield conn
-                conn.commit()
-            except Exception:
-                conn.rollback()
-                raise
-            finally:
-                conn.close()
+                conn = sqlite3.connect(self.db_path)
+                conn.row_factory = sqlite3.Row  # Return rows as dict-like objects
+                try:
+                    yield conn
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+                    raise
+                finally:
+                    conn.close()
+            except Exception as e:
+                # If SQLite fails (e.g., on Vercel read-only filesystem), raise helpful error
+                raise Exception(f"SQLite connection failed: {e}. Consider using PostgreSQL with DATABASE_URL.")
     
     def _execute(self, conn, query: str, params: tuple = None):
         """Execute query with proper cursor handling."""
@@ -154,6 +172,7 @@ class Database:
     def _init_db(self):
         """Initialize database tables."""
         try:
+            # Test connection first
             with self._get_conn() as conn:
                 # Users table
                 if self.use_postgres:

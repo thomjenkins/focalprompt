@@ -5,8 +5,34 @@ Vercel serverless function entry point.
 This is the entry point for Vercel's serverless functions.
 """
 
-from app_new import app
+import sys
+import os
 
-# Export the app for Vercel
-handler = app
+# Add error handling for imports
+try:
+    from app_new import app
+    
+    # Export the app for Vercel
+    handler = app
+except Exception as e:
+    # If app fails to import, create a minimal error handler
+    from flask import Flask, jsonify
+    
+    error_app = Flask(__name__)
+    
+    @error_app.route('/<path:path>')
+    @error_app.route('/')
+    def error_handler(path=''):
+        return jsonify({
+            'error': 'Application initialization failed',
+            'message': str(e),
+            'type': type(e).__name__
+        }), 500
+    
+    handler = error_app
+    
+    # Also print to stderr for Vercel logs
+    print(f"ERROR: Failed to import app: {e}", file=sys.stderr)
+    import traceback
+    traceback.print_exc(file=sys.stderr)
 
