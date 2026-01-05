@@ -237,9 +237,15 @@ class Database:
         try:
             # Test connection first
             with self._get_conn() as conn:
+                # Get cursor for executing SQL
+                if self.use_postgres:
+                    cursor = conn.cursor()
+                else:
+                    cursor = conn
+                
                 # Users table
                 if self.use_postgres:
-                    conn.execute("""
+                    cursor.execute("""
                         CREATE TABLE IF NOT EXISTS users (
                             id VARCHAR(255) PRIMARY KEY,
                             email VARCHAR(255) UNIQUE NOT NULL,
@@ -252,7 +258,7 @@ class Database:
                         )
                     """)
                 else:
-                    conn.execute("""
+                    cursor.execute("""
                         CREATE TABLE IF NOT EXISTS users (
                             id TEXT PRIMARY KEY,
                             email TEXT UNIQUE NOT NULL,
@@ -267,7 +273,7 @@ class Database:
                 
                 # Sessions table
                 if self.use_postgres:
-                    conn.execute("""
+                    cursor.execute("""
                         CREATE TABLE IF NOT EXISTS sessions (
                             session_id VARCHAR(255) PRIMARY KEY,
                             user_id VARCHAR(255) NOT NULL,
@@ -277,7 +283,7 @@ class Database:
                         )
                     """)
                 else:
-                    conn.execute("""
+                    cursor.execute("""
                         CREATE TABLE IF NOT EXISTS sessions (
                             session_id TEXT PRIMARY KEY,
                             user_id TEXT NOT NULL,
@@ -289,7 +295,7 @@ class Database:
                 
                 # Usage tracking table
                 if self.use_postgres:
-                    conn.execute("""
+                    cursor.execute("""
                         CREATE TABLE IF NOT EXISTS usage (
                             id VARCHAR(255) PRIMARY KEY,
                             user_id VARCHAR(255) NOT NULL,
@@ -301,7 +307,7 @@ class Database:
                         )
                     """)
                 else:
-                    conn.execute("""
+                    cursor.execute("""
                         CREATE TABLE IF NOT EXISTS usage (
                             id TEXT PRIMARY KEY,
                             user_id TEXT NOT NULL,
@@ -323,7 +329,11 @@ class Database:
                 ]
                 
                 for index_sql in indexes:
-                    conn.execute(index_sql)
+                    cursor.execute(index_sql)
+                
+                # Close cursor for PostgreSQL
+                if self.use_postgres:
+                    cursor.close()
                     
         except Exception as e:
             # Log error but don't crash - database might not be available
