@@ -22,10 +22,28 @@ def log_error(message, exception=None):
     print(f"Working directory: {os.getcwd()}", file=sys.stderr)
     print(f"VERCEL env: {os.getenv('VERCEL')}", file=sys.stderr)
     print(f"PYTHONPATH: {os.getenv('PYTHONPATH', 'Not set')}", file=sys.stderr)
+    print(f"sys.path: {sys.path}", file=sys.stderr)
+
+# Create a minimal Flask app first for error handling
+from flask import Flask, jsonify
+minimal_app = Flask(__name__)
+
+@minimal_app.route('/api/minimal-test', methods=['GET'])
+def minimal_test():
+    """Minimal test endpoint that works even if app_new fails to import."""
+    return jsonify({
+        'status': 'ok',
+        'message': 'Minimal endpoint works - Flask is functional',
+        'python_version': sys.version,
+        'working_dir': os.getcwd(),
+        'vercel': os.getenv('VERCEL') is not None
+    })
 
 # Try to import app with detailed error handling
 try:
     print("🔄 Attempting to import app_new...", file=sys.stderr)
+    print(f"Current directory: {os.getcwd()}", file=sys.stderr)
+    print(f"Python path: {sys.path}", file=sys.stderr)
     from app_new import app
     print("✅ App imported successfully", file=sys.stderr)
     
@@ -61,7 +79,6 @@ try:
 except ImportError as e:
     log_error("ImportError: Failed to import app_new", e)
     # Create error handler
-    from flask import Flask, jsonify
     error_app = Flask(__name__)
     
     @error_app.route('/api/health', methods=['GET'])
@@ -96,6 +113,16 @@ except ImportError as e:
             'working_dir': os.getcwd(),
             'note': 'This error occurred during app import. Check Vercel Runtime Logs for full traceback.'
         }), 500
+    
+    @error_app.route('/api/minimal-test', methods=['GET'])
+    def minimal_test_error():
+        return jsonify({
+            'status': 'ok',
+            'message': 'Minimal endpoint works - but app_new failed to import',
+            'error': str(e),
+            'error_type': 'ImportError',
+            'python_version': sys.version
+        })
     
     @error_app.route('/<path:path>')
     @error_app.route('/')
@@ -112,7 +139,6 @@ except ImportError as e:
 except Exception as e:
     log_error("Unexpected error importing app", e)
     # Create error handler
-    from flask import Flask, jsonify
     error_app = Flask(__name__)
     
     @error_app.route('/api/health', methods=['GET'])
@@ -148,6 +174,16 @@ except Exception as e:
             'note': 'This error occurred during app import. Check Vercel Runtime Logs for full traceback.'
         }), 500
     
+    @error_app.route('/api/minimal-test', methods=['GET'])
+    def minimal_test_unexpected():
+        return jsonify({
+            'status': 'ok',
+            'message': 'Minimal endpoint works - but app_new failed with unexpected error',
+            'error': str(e),
+            'error_type': type(e).__name__,
+            'python_version': sys.version
+        })
+    
     @error_app.route('/<path:path>')
     @error_app.route('/')
     def error_handler(path=''):
@@ -160,4 +196,3 @@ except Exception as e:
         }), 500
     
     handler = error_app
-
