@@ -9,6 +9,7 @@ from flask import Blueprint, request, jsonify
 from services.database import Database
 from services.usage_service import UsageService
 from services.billing_service import BillingService
+from services.pricing_service import PricingService
 from middleware.auth import require_auth
 
 usage_bp = Blueprint('usage', __name__)
@@ -17,6 +18,7 @@ usage_bp = Blueprint('usage', __name__)
 db = Database()
 billing_service = BillingService(db)
 usage_service = UsageService(db, billing_service)
+pricing_service = PricingService()
 
 
 @usage_bp.route('/api/usage/summary', methods=['GET'])

@@ -463,27 +463,34 @@ window.addEventListener('DOMContentLoaded', async () => {
     if (saveSettingsBtn) {
         saveSettingsBtn.addEventListener('click', () => {
             const provider = providerSelect.value;
-            const apiKey = apiKeyInput.value.trim();
             const model = modelSelect.value;
             
             localStorage.setItem('focalprompt_provider', provider);
             userProvider = provider;
-            
-            if (apiKey) {
-                localStorage.setItem('focalprompt_api_key', apiKey);
-                userApiKey = apiKey;
-                apiKeyStatus.textContent = '✓ Settings saved';
-                apiKeyStatus.style.color = '#28a745';
-                setTimeout(() => {
-                    apiKeyStatus.textContent = '';
-                }, 3000);
-            } else {
-                localStorage.removeItem('focalprompt_api_key');
-                userApiKey = '';
-            }
-            
             localStorage.setItem('focalprompt_model', model);
             userModel = model;
+            
+            apiKeyStatus.textContent = '✓ Model selection saved';
+            apiKeyStatus.style.color = '#28a745';
+            setTimeout(() => {
+                apiKeyStatus.textContent = '';
+            }, 3000);
+            
+            // Update cost display
+            updateCostDisplay();
+        });
+    }
+    
+    // Update cost when provider or model changes
+    if (providerSelect) {
+        providerSelect.addEventListener('change', async () => {
+            await updateModelSelector(providerSelect.value);
+        });
+    }
+    
+    if (modelSelect) {
+        modelSelect.addEventListener('change', () => {
+            updateCostDisplay();
         });
     }
     
