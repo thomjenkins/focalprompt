@@ -157,13 +157,23 @@ def batch_analysis_stream():
                 
                 yield chunk
             
-            # Record usage after streaming completes
+            # Record usage and charge after streaming completes
             if request.user:
+                # Estimate token split from total
+                input_tokens_est = int(total_tokens * 0.7)
+                output_tokens_est = total_tokens - input_tokens_est
+                
                 usage_service.record_usage(
-                    request.user['id'], 
-                    '/api/batch-analysis-stream', 
-                    total_tokens, 
-                    total_cost
+                    user_id=request.user['id'],
+                    endpoint='/api/batch-analysis-stream',
+                    tokens_used=total_tokens,
+                    cost=total_cost,
+                    model=model,
+                    provider=provider,
+                    input_tokens=input_tokens_est,
+                    output_tokens=output_tokens_est,
+                    embedding_tokens=0,
+                    charge_user=True
                 )
                 
         except Exception as e:

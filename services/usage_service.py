@@ -55,14 +55,16 @@ class UsageService:
         '/api/llm-evaluate-batch-agents-stream': 'agent_builds_per_month'
     }
     
-    def __init__(self, db: Database):
+    def __init__(self, db: Database, billing_service: BillingService = None):
         """
         Initialize usage service.
         
         Args:
             db: Database instance
+            billing_service: Optional billing service for pay-as-you-go charges
         """
         self.db = db
+        self.billing_service = billing_service
     
     def check_limit(self, user_id: str, endpoint: str) -> Tuple[bool, Optional[str]]:
         """
