@@ -654,6 +654,23 @@
         <p id="loading-text">Processing...</p>
     </div>
 
+    <!-- Error Modal -->
+    <div id="error-modal" class="modal" style="display: none;">
+        <div class="modal-overlay"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 style="margin: 0; color: var(--danger-color);">⚠️ Error</h3>
+                <button class="modal-close" id="error-modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p id="error-modal-message"></p>
+            </div>
+            <div class="modal-footer">
+                <button id="error-modal-ok" class="btn btn-primary">OK</button>
+            </div>
+        </div>
+    </div>
+
     <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
 </html>

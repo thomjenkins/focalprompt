@@ -573,12 +573,52 @@ function hideLoading() {
     loadingOverlay.classList.add('hidden');
 }
 
+// Error Modal Functions
+function showErrorModal(message) {
+    const modal = document.getElementById('error-modal');
+    const messageEl = document.getElementById('error-modal-message');
+    
+    if (!modal || !messageEl) {
+        // Fallback to old method if modal doesn't exist
+        console.error('Error modal not found, using fallback');
+        showError(message);
+        return;
+    }
+    
+    messageEl.textContent = message;
+    modal.style.display = 'flex';
+    
+    // Prevent body scroll when modal is open
+    document.body.style.overflow = 'hidden';
+}
+
+function hideErrorModal() {
+    const modal = document.getElementById('error-modal');
+    if (modal) {
+        modal.style.display = 'none';
+        document.body.style.overflow = '';
+    }
+}
+
+// Updated showError function - uses modal
 function showError(message) {
+    // Try modal first
+    const modal = document.getElementById('error-modal');
+    if (modal) {
+        showErrorModal(message);
+        return;
+    }
+    
+    // Fallback to old method if modal doesn't exist
     const errorDiv = document.createElement('div');
     errorDiv.className = 'error-message';
     errorDiv.textContent = message;
-    assessmentResults.innerHTML = '';
-    assessmentResults.appendChild(errorDiv);
+    if (assessmentResults) {
+        assessmentResults.innerHTML = '';
+        assessmentResults.appendChild(errorDiv);
+    } else {
+        console.error('Error:', message);
+    }
 }
 
 // Auto-Detect Foci
@@ -586,7 +626,7 @@ detectFociBtn.addEventListener('click', async () => {
     const prompt = promptInput.value.trim();
     
     if (!prompt) {
-        alert('Please enter a prompt first.');
+        showErrorModal('Please enter a prompt first.');
         return;
     }
     
@@ -652,7 +692,7 @@ function handleTextSelection() {
 if (tagSelectionBtn) {
     tagSelectionBtn.addEventListener('click', () => {
         if (!selectedText) {
-            alert('Please select some text first.');
+            showErrorModal('Please select some text first.');
             return;
         }
         
@@ -981,7 +1021,7 @@ generateOutputBtn.addEventListener('click', async () => {
     const prompt = promptInput.value.trim();
     
     if (!prompt) {
-        alert('Please enter a prompt first.');
+        showErrorModal('Please enter a prompt first.');
         return;
     }
     
@@ -1024,7 +1064,7 @@ if (loadAssessmentCheckpointBtn) {
         try {
             const checkpoints = await listCheckpoints('single_assessment');
             if (checkpoints.length === 0) {
-                alert('No assessment checkpoints found. Previous runs before checkpoint saving was implemented were not saved. Future runs will be automatically saved.');
+                showErrorModal('No assessment checkpoints found. Previous runs before checkpoint saving was implemented were not saved. Future runs will be automatically saved.');
                 return;
             }
             await displayCheckpointList('single_assessment');
@@ -1046,7 +1086,7 @@ assessBtn.addEventListener('click', async () => {
     }
     
     if (!output) {
-        alert('Please enter or generate an output.');
+        showErrorModal('Please enter or generate an output.');
         return;
     }
     
@@ -1410,7 +1450,7 @@ if (rewritePromptBtn) {
         const prompt = promptInput.value.trim();
         
         if (!prompt || foci.length === 0) {
-            alert('Please enter a prompt and define foci first.');
+            showErrorModal('Please enter a prompt and define foci first.');
             return;
         }
         
@@ -1467,7 +1507,7 @@ if (rewritePromptBtn) {
 if (generateFocusedOutputBtn) {
     generateFocusedOutputBtn.addEventListener('click', async () => {
         if (!rewrittenPromptText) {
-            alert('Please rewrite the prompt first.');
+            showErrorModal('Please rewrite the prompt first.');
             return;
         }
         
@@ -1511,14 +1551,14 @@ if (generateFocusedOutputBtn) {
 if (compareIntentBtn) {
     compareIntentBtn.addEventListener('click', () => {
         if (Object.keys(intendedDistribution).length === 0) {
-            alert('Please rewrite the prompt and generate output first.');
+            showErrorModal('Please rewrite the prompt and generate output first.');
             return;
         }
         
         // Get the last assessment results
         const assessmentDiv = assessmentResults.querySelector('.assessment-foci');
         if (!assessmentDiv) {
-            alert('Please assess the output first.');
+            showErrorModal('Please assess the output first.');
             return;
         }
         
@@ -1579,7 +1619,7 @@ if (loadAblationCheckpointBtn) {
         try {
             const checkpoints = await listCheckpoints('single_ablation');
             if (checkpoints.length === 0) {
-                alert('No ablation analysis checkpoints found. Previous runs before checkpoint saving was implemented were not saved. Future runs will be automatically saved.');
+                showErrorModal('No ablation analysis checkpoints found. Previous runs before checkpoint saving was implemented were not saved. Future runs will be automatically saved.');
                 return;
             }
             // Show checkpoint list - we'll need to create a temporary display
@@ -1597,12 +1637,12 @@ if (runAblationBtn) {
         const prompt = promptInput.value.trim();
         
         if (!prompt) {
-            alert('Please enter a prompt first.');
+            showErrorModal('Please enter a prompt first.');
             return;
         }
         
         if (foci.length === 0) {
-            alert('Please define foci first.');
+            showErrorModal('Please define foci first.');
             return;
         }
         
@@ -1879,7 +1919,7 @@ window.removeFocus = removeFocus;
 if (importFociBtn) {
     importFociBtn.addEventListener('click', () => {
         if (foci.length === 0) {
-            alert('No foci defined in Prompt Analysis tab. Please define foci there first.');
+            showErrorModal('No foci defined in Prompt Analysis tab. Please define foci there first.');
             return;
         }
         agentFoci = JSON.parse(JSON.stringify(foci)); // Deep copy
@@ -1941,7 +1981,7 @@ if (agentDetectFociBtn) {
     agentDetectFociBtn.addEventListener('click', async () => {
         const prompt = promptInput ? promptInput.value.trim() : '';
         if (!prompt) {
-            alert('Please enter a prompt in the Prompt Analysis tab first, or manually add foci.');
+            showErrorModal('Please enter a prompt in the Prompt Analysis tab first, or manually add foci.');
             return;
         }
         
@@ -1993,12 +2033,12 @@ if (assessChatBtn) {
         const chatContent = chatInput ? chatInput.value.trim() : '';
         
         if (!chatContent) {
-            alert('Please enter chat content first.');
+            showErrorModal('Please enter chat content first.');
             return;
         }
         
         if (agentFoci.length === 0) {
-            alert('Please define foci first.');
+            showErrorModal('Please define foci first.');
             return;
         }
         
@@ -2107,13 +2147,13 @@ function renderFociWeights(data) {
 if (generateAgentResponseBtn) {
     generateAgentResponseBtn.addEventListener('click', async () => {
         if (!window.fociWeightsData) {
-            alert('Please assess chat and select foci first.');
+            showErrorModal('Please assess chat and select foci first.');
             return;
         }
         
         const chatContent = chatInput ? chatInput.value.trim() : '';
         if (!chatContent) {
-            alert('Please enter chat content first.');
+            showErrorModal('Please enter chat content first.');
             return;
         }
         
@@ -2336,7 +2376,7 @@ if (addPairBtn) {
         const output = manualOutput ? manualOutput.value.trim() : '';
         
         if (!output) {
-            alert('Please fill in the Output field.');
+            showErrorModal('Please fill in the Output field.');
             return;
         }
         
@@ -2608,7 +2648,7 @@ if (batchPromptInput) {
 if (batchImportFociBtn) {
     batchImportFociBtn.addEventListener('click', () => {
         if (foci.length === 0) {
-            alert('No foci defined in Prompt Analysis tab. Please define foci there first.');
+            showErrorModal('No foci defined in Prompt Analysis tab. Please define foci there first.');
             return;
         }
         batchFoci = JSON.parse(JSON.stringify(foci)).map(f => ({
@@ -2628,15 +2668,15 @@ if (batchDetectDynamicFociBtn) {
     batchDetectDynamicFociBtn.addEventListener('click', async () => {
         const prompt = batchPromptInput ? batchPromptInput.value.trim() : '';
         if (!prompt) {
-            alert('Please enter the prompt first.');
+            showErrorModal('Please enter the prompt first.');
             return;
         }
         if (batchFoci.length === 0) {
-            alert('Please detect or define foci first.');
+            showErrorModal('Please detect or define foci first.');
             return;
         }
         if (batchPairs.length === 0) {
-            alert('Please add at least one pair to detect dynamic patterns.');
+            showErrorModal('Please add at least one pair to detect dynamic patterns.');
             return;
         }
         
@@ -2689,7 +2729,7 @@ if (batchDetectFociBtn) {
     batchDetectFociBtn.addEventListener('click', async () => {
         const prompt = batchPromptInput ? batchPromptInput.value.trim() : '';
         if (!prompt) {
-            alert('Please enter the prompt first.');
+            showErrorModal('Please enter the prompt first.');
             return;
         }
         
@@ -2813,7 +2853,7 @@ async function handleRunBatchAnalysis(e) {
         } else if (canReconstructFromFoci) {
             promptMsg = 'Can reconstruct from ' + batchFoci.length + ' foci';
         }
-        alert('Please ensure you have:\n- At least one pair (you have ' + batchPairs.length + ')\n- At least one focus (you have ' + batchFoci.length + ')\n- A prompt: ' + promptMsg);
+        showErrorModal('Please ensure you have:\n- At least one pair (you have ' + batchPairs.length + ')\n- At least one focus (you have ' + batchFoci.length + ')\n- A prompt: ' + promptMsg);
         return;
     }
     
@@ -2823,7 +2863,7 @@ async function handleRunBatchAnalysis(e) {
     console.log('Pairs:', batchPairs.length, 'Foci:', batchFoci.length);
     
     if (batchPairs.length === 0) {
-        alert('Please add at least one pair first.');
+        showErrorModal('Please add at least one pair first.');
         return;
     }
     
@@ -2842,7 +2882,7 @@ async function handleRunBatchAnalysis(e) {
     }
     
     if (!prompt) {
-        alert('Please enter the prompt that was used for all pairs, or ensure foci contain prompt sections.');
+        showErrorModal('Please enter the prompt that was used for all pairs, or ensure foci contain prompt sections.');
         return;
     }
     
@@ -3087,7 +3127,7 @@ function attachBatchAnalysisHandler() {
             
             if (clickedBtn.disabled) {
                 console.warn('Button is disabled - showing alert');
-                alert('Please ensure you have:\n- At least one pair\n- At least one focus\n- A prompt entered');
+                showErrorModal('Please ensure you have:\n- At least one pair\n- At least one focus\n- A prompt entered');
                 return;
             }
             
@@ -3153,7 +3193,7 @@ function attachBatchAnalysisHandler() {
             } else if (canReconstructFromFoci) {
                 promptMsg = 'Can reconstruct from ' + batchFoci.length + ' foci';
             }
-            alert('Please ensure you have:\n- At least one pair (you have ' + batchPairs.length + ')\n- At least one focus (you have ' + batchFoci.length + ')\n- A prompt: ' + promptMsg);
+            showErrorModal('Please ensure you have:\n- At least one pair (you have ' + batchPairs.length + ')\n- At least one focus (you have ' + batchFoci.length + ')\n- A prompt: ' + promptMsg);
             return;
         }
         
@@ -3325,7 +3365,7 @@ async function displayCheckpointList(checkpointType = 'batch_analysis') {
     
     if (checkpoints.length === 0) {
         const typeLabel = checkpointType === 'batch_agents' ? 'agent building' : checkpointType === 'single_ablation' ? 'ablation analysis' : checkpointType === 'single_assessment' ? 'assessment' : 'batch analysis';
-        alert(`No ${typeLabel} checkpoints found. Previous runs before checkpoint saving was implemented were not saved. Future runs will be automatically saved.`);
+        showErrorModal(`No ${typeLabel} checkpoints found. Previous runs before checkpoint saving was implemented were not saved. Future runs will be automatically saved.`);
         return;
     }
     
@@ -3535,7 +3575,7 @@ function renderBatchResults(data) {
 if (exportResultsBtn) {
     exportResultsBtn.addEventListener('click', () => {
         if (!window.batchResultsData) {
-            alert('No results to export.');
+            showErrorModal('No results to export.');
             return;
         }
         
@@ -3635,7 +3675,7 @@ if (loadAgentCheckpointBtn) {
         try {
             const checkpoints = await listCheckpoints('batch_agents');
             if (checkpoints.length === 0) {
-                alert('No agent building checkpoints found. Previous runs before checkpoint saving was implemented were not saved. Future runs will be automatically saved.');
+                showErrorModal('No agent building checkpoints found. Previous runs before checkpoint saving was implemented were not saved. Future runs will be automatically saved.');
                 return;
             }
             // Use the batch analysis checkpoint list UI (it's in the same tab)
@@ -3703,12 +3743,12 @@ if (importBatchResultsBtn) {
                 })
             };
         } else {
-            alert('No pairs found. Please add pairs in Batch Analysis tab or run batch analysis first.');
+            showErrorModal('No pairs found. Please add pairs in Batch Analysis tab or run batch analysis first.');
             return;
         }
         
         if (batchFoci.length === 0) {
-            alert('No foci found. Please ensure foci are defined in the Batch Analysis tab.');
+            showErrorModal('No foci found. Please ensure foci are defined in the Batch Analysis tab.');
             return;
         }
         
@@ -3739,12 +3779,12 @@ if (importBatchResultsBtn) {
 if (runBatchAgentBtn) {
     runBatchAgentBtn.addEventListener('click', async () => {
         if (!batchAgentData || !batchAgentData.pairs || batchAgentData.pairs.length === 0) {
-            alert('No batch data imported. Please import pairs first.');
+            showErrorModal('No batch data imported. Please import pairs first.');
             return;
         }
         
         if (batchFoci.length === 0) {
-            alert('No foci available. Please ensure foci are defined.');
+            showErrorModal('No foci available. Please ensure foci are defined.');
             return;
         }
         
@@ -4287,7 +4327,7 @@ function handleLLMEvalStreamEvent(event) {
 if (runLLMEvalBtn) {
     runLLMEvalBtn.addEventListener('click', async () => {
         if (!batchAgentResultsData || batchAgentResultsData.length === 0) {
-            alert('No agent results to evaluate. Please build agents first.');
+            showErrorModal('No agent results to evaluate. Please build agents first.');
             return;
         }
         
@@ -4396,7 +4436,7 @@ if (analyzeOptimizationBtn) {
             (!dataToSend.agent_results || dataToSend.agent_results.length === 0) &&
             (!dataToSend.single_assessment || dataToSend.single_assessment.length === 0) &&
             !dataToSend.single_ablation) {
-            alert('Please run at least one analysis (prompt assessment, ablation analysis, batch analysis, or agent building) first.');
+            showErrorModal('Please run at least one analysis (prompt assessment, ablation analysis, batch analysis, or agent building) first.');
             return;
         }
         
@@ -4682,7 +4722,7 @@ function copyOptimizedPrompt() {
 if (exportBatchAgentResultsBtn) {
     exportBatchAgentResultsBtn.addEventListener('click', () => {
         if (!batchAgentResultsData || batchAgentResultsData.length === 0) {
-            alert('No results to export.');
+            showErrorModal('No results to export.');
             return;
         }
         
