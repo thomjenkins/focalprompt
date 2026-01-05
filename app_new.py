@@ -57,9 +57,16 @@ def health():
     """Health check endpoint."""
     try:
         api_key = os.getenv("OPENAI_API_KEY")
+        database_url = (
+            os.getenv('DATABASE_URL') or
+            os.getenv('DATABASE_POSTGRES_URL') or
+            os.getenv('DATABASE_SUPABASE_URL')
+        )
         return jsonify({
             'status': 'ok',
-            'api_key_set': api_key is not None and len(api_key) > 0
+            'api_key_set': api_key is not None and len(api_key) > 0,
+            'database_configured': database_url is not None,
+            'secret_key_set': os.getenv('SECRET_KEY') is not None
         })
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
