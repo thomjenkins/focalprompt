@@ -10,15 +10,19 @@ import sys
 from flask import Flask, render_template, jsonify
 
 # Load environment variables from .env file (for local development)
+# Note: python-dotenv is optional - not needed for Vercel
 try:
     from dotenv import load_dotenv
     load_dotenv()
 except ImportError:
-    # python-dotenv not installed, skip (fine for production)
+    # python-dotenv not installed, skip (fine for production/Vercel)
     pass
 except (PermissionError, OSError):
     # Can't read .env file (permissions or doesn't exist), skip
     pass
+except Exception as e:
+    # Any other error loading .env, just log and continue
+    print(f"Warning: Could not load .env file: {e}", file=sys.stderr)
 
 # Initialize Flask app first
 app = Flask(__name__)

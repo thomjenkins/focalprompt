@@ -28,6 +28,35 @@ try:
     print("🔄 Attempting to import app_new...", file=sys.stderr)
     from app_new import app
     print("✅ App imported successfully", file=sys.stderr)
+    
+    # Add a diagnostic endpoint that shows import status
+    from flask import jsonify as flask_jsonify
+    @app.route('/api/diagnostic', methods=['GET'])
+    def diagnostic():
+        """Diagnostic endpoint to check app status."""
+        import importlib
+        modules_status = {}
+        try:
+            importlib.import_module('flask')
+            modules_status['flask'] = 'OK'
+        except Exception as e:
+            modules_status['flask'] = f'ERROR: {e}'
+        
+        try:
+            importlib.import_module('flask_cors')
+            modules_status['flask_cors'] = 'OK'
+        except Exception as e:
+            modules_status['flask_cors'] = f'ERROR: {e}'
+        
+        return flask_jsonify({
+            'status': 'ok',
+            'app_imported': True,
+            'modules': modules_status,
+            'python_version': sys.version,
+            'working_dir': os.getcwd(),
+            'vercel': os.getenv('VERCEL') is not None
+        })
+    
     handler = app
 except ImportError as e:
     log_error("ImportError: Failed to import app_new", e)
@@ -51,7 +80,21 @@ except ImportError as e:
             'status': 'error',
             'error': 'Application initialization failed',
             'error_type': 'ImportError',
-            'message': str(e)
+            'message': str(e),
+            'note': 'Check Vercel Runtime Logs for full traceback. Go to: Deployment → Runtime Logs'
+        }), 500
+    
+    @error_app.route('/api/diagnostic', methods=['GET'])
+    def diagnostic():
+        """Diagnostic endpoint that shows the import error."""
+        return jsonify({
+            'status': 'error',
+            'app_imported': False,
+            'error_type': 'ImportError',
+            'error_message': str(e),
+            'python_version': sys.version,
+            'working_dir': os.getcwd(),
+            'note': 'This error occurred during app import. Check Vercel Runtime Logs for full traceback.'
         }), 500
     
     @error_app.route('/<path:path>')
@@ -88,7 +131,21 @@ except Exception as e:
             'status': 'error',
             'error': 'Application initialization failed',
             'error_type': type(e).__name__,
-            'message': str(e)
+            'message': str(e),
+            'note': 'Check Vercel Runtime Logs for full traceback. Go to: Deployment → Runtime Logs'
+        }), 500
+    
+    @error_app.route('/api/diagnostic', methods=['GET'])
+    def diagnostic():
+        """Diagnostic endpoint that shows the import error."""
+        return jsonify({
+            'status': 'error',
+            'app_imported': False,
+            'error_type': type(e).__name__,
+            'error_message': str(e),
+            'python_version': sys.version,
+            'working_dir': os.getcwd(),
+            'note': 'This error occurred during app import. Check Vercel Runtime Logs for full traceback.'
         }), 500
     
     @error_app.route('/<path:path>')
