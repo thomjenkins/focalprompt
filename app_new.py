@@ -9,6 +9,17 @@ import os
 import sys
 from flask import Flask, render_template, jsonify
 
+# Load environment variables from .env file (for local development)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    # python-dotenv not installed, skip (fine for production)
+    pass
+except (PermissionError, OSError):
+    # Can't read .env file (permissions or doesn't exist), skip
+    pass
+
 # Initialize Flask app first
 app = Flask(__name__)
 

@@ -12,4 +12,5 @@ werkzeug>=3.0.0
 itsdangerous>=2.1.2
 stripe>=7.0.0
 psycopg2-binary>=2.9.0
+python-dotenv>=1.0.0
 
