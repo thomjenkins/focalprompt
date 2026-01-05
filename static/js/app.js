@@ -551,12 +551,40 @@ window.addEventListener('DOMContentLoaded', async () => {
         }
     }
     
+    // Error Modal Event Listeners
+    const errorModal = document.getElementById('error-modal');
+    const errorModalClose = document.getElementById('error-modal-close');
+    const errorModalOk = document.getElementById('error-modal-ok');
+
+    if (errorModalClose) {
+        errorModalClose.addEventListener('click', hideErrorModal);
+    }
+
+    if (errorModalOk) {
+        errorModalOk.addEventListener('click', hideErrorModal);
+    }
+
+    // Close modal when clicking overlay
+    if (errorModal) {
+        const overlay = errorModal.querySelector('.modal-overlay');
+        if (overlay) {
+            overlay.addEventListener('click', hideErrorModal);
+        }
+        
+        // Close on Escape key
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && errorModal.style.display !== 'none') {
+                hideErrorModal();
+            }
+        });
+    }
+    
     try {
         const response = await fetch('/api/health');
         const data = await response.json();
         
         if (!data.api_key_set) {
-            showError('⚠️ OPENAI_API_KEY is not set. Please set it in your environment and restart the server.');
+            showErrorModal('⚠️ OPENAI_API_KEY is not set. Please set it in your environment and restart the server.');
         }
     } catch (error) {
         console.error('Health check failed:', error);
