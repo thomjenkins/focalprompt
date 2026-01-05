@@ -66,10 +66,21 @@ def health():
             'status': 'ok',
             'api_key_set': api_key is not None and len(api_key) > 0,
             'database_configured': database_url is not None,
-            'secret_key_set': os.getenv('SECRET_KEY') is not None
+            'secret_key_set': os.getenv('SECRET_KEY') is not None,
+            'vercel': os.getenv('VERCEL') is not None
         })
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/test', methods=['GET'])
+def test():
+    """Minimal test endpoint that doesn't require any services."""
+    return jsonify({
+        'status': 'ok',
+        'message': 'App is running',
+        'python_version': __import__('sys').version
+    })
 
 
 if __name__ == '__main__':
