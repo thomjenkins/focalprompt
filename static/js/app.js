@@ -68,9 +68,17 @@ function updateModelSelector(provider) {
 
 // Helper function to get API request headers
 function getApiHeaders() {
-    return {
+    const headers = {
         'Content-Type': 'application/json',
     };
+    
+    // Add session ID if user is logged in
+    const sessionId = localStorage.getItem('session_id');
+    if (sessionId) {
+        headers['X-Session-ID'] = sessionId;
+    }
+    
+    return headers;
 }
 
 // Helper function to get API request body with API key, model, and provider
@@ -4707,4 +4715,88 @@ if (exportBatchAgentResultsBtn) {
 // Make functions available globally
 window.removePair = removePair;
 window.removeBatchFocus = removeBatchFocus;
+
+// Authentication handlers
+document.addEventListener('DOMContentLoaded', () => {
+    const loginBtn = document.getElementById('login-btn');
+    const logoutBtn = document.getElementById('logout-btn');
+    const userInfo = document.getElementById('user-info');
+    
+    // Check if user is logged in
+    const sessionId = localStorage.getItem('session_id');
+    const user = JSON.parse(localStorage.getItem('user') || 'null');
+    
+    if (sessionId && user) {
+        // User is logged in
+        if (loginBtn) loginBtn.style.display = 'none';
+        if (logoutBtn) logoutBtn.style.display = 'inline-block';
+        if (userInfo) {
+            userInfo.textContent = `${user.email} (${user.tier})`;
+            userInfo.style.display = 'inline-block';
+        }
+    } else {
+        // User is not logged in
+        if (loginBtn) loginBtn.style.display = 'inline-block';
+        if (logoutBtn) logoutBtn.style.display = 'none';
+        if (userInfo) userInfo.style.display = 'none';
+    }
+    
+    // Login button handler
+    if (loginBtn) {
+        loginBtn.addEventListener('click', () => {
+            window.location.href = '/login';
+        });
+    }
+    
+    // Logout button handler
+    if (logoutBtn) {
+        logoutBtn.addEventListener('click', async () => {
+            const sessionId = localStorage.getItem('session_id');
+            
+            if (sessionId) {
+                try {
+                    await fetch('/api/auth/logout', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-Session-ID': sessionId
+                        },
+                        body: JSON.stringify({ session_id: sessionId })
+                    });
+                } catch (error) {
+                    console.error('Logout error:', error);
+                }
+            }
+            
+            // Clear local storage
+            localStorage.removeItem('session_id');
+            localStorage.removeItem('user');
+            
+            // Reload page
+            window.location.reload();
+        });
+    }
+    
+    // Verify session on page load
+    if (sessionId) {
+        fetch('/api/auth/me', {
+            headers: {
+                'X-Session-ID': sessionId
+            }
+        })
+        .then(response => {
+            if (!response.ok) {
+                // Session invalid, clear it
+                localStorage.removeItem('session_id');
+                localStorage.removeItem('user');
+                if (loginBtn) loginBtn.style.display = 'inline-block';
+                if (logoutBtn) logoutBtn.style.display = 'none';
+                if (userInfo) userInfo.style.display = 'none';
+            }
+        })
+        .catch(error => {
+            console.error('Session check error:', error);
+        });
+    }
+});
 

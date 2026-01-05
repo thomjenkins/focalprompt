@@ -80,7 +80,7 @@ class FocalAssessor:
             agent_model: The model to use for generating output (default: same as model)
             provider: The LLM provider to use ('openai', 'anthropic', 'google', 'grok')
         """
-        from llm_providers import get_provider
+        from core.llm_providers import get_provider
         self.provider = get_provider(provider, api_key)
         self.model = model
         self.agent_model = agent_model or model

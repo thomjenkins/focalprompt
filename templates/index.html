@@ -9,8 +9,20 @@
 <body>
     <div class="container">
         <header>
-            <img src="{{ url_for('static', filename='focalpromptlogo.png') }}" alt="FocalPrompt Logo" style="max-width: 800px; max-height: 160px; width: auto; height: auto; display: block; margin: 0 auto;">
-            <p class="subtitle">Building AI agents with focus</p>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <div style="flex: 1;"></div>
+                <div style="flex: 1; text-align: center;">
+                    <img src="{{ url_for('static', filename='focalpromptlogo.png') }}" alt="FocalPrompt Logo" style="max-width: 800px; max-height: 160px; width: auto; height: auto; display: block; margin: 0 auto;">
+                    <p class="subtitle">Building AI agents with focus</p>
+                </div>
+                <div style="flex: 1; text-align: right;">
+                    <div id="auth-section">
+                        <span id="user-info" style="display: none; margin-right: 10px;"></span>
+                        <button id="login-btn" style="background: var(--primary-color); color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin-right: 8px;">Login</button>
+                        <button id="logout-btn" style="display: none; background: #dc3545; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer;">Logout</button>
+                    </div>
+                </div>
+            </div>
         </header>
 
         <!-- Settings Section -->

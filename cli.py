@@ -7,7 +7,7 @@ import argparse
 import sys
 import os
 from pathlib import Path
-from focal_assessor import assess_focus, FocalAssessor
+from core.focal_assessor import assess_focus, FocalAssessor
 
 
 def main():

@@ -34,4 +34,13 @@ processed_*.csv
 *.csv
 !requirements.txt
 
+# Database files
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Vercel
+.vercel
+
 
