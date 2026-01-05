@@ -77,21 +77,67 @@ class Database:
         self._initialized = False
         # Don't initialize here - defer to first use to avoid import-time crashes
     
+    def _clean_connection_string(self, url: str) -> str:
+        """
+        Clean PostgreSQL connection string by removing unsupported query parameters.
+        
+        Supabase and some providers add query parameters that psycopg2 doesn't recognize.
+        This function removes those while keeping valid PostgreSQL parameters.
+        """
+        from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+        
+        try:
+            # Parse the URL
+            parsed = urlparse(url)
+            
+            # Valid PostgreSQL connection parameters (psycopg2 supports these)
+            valid_params = {
+                'host', 'port', 'dbname', 'user', 'password', 'sslmode', 
+                'sslcert', 'sslkey', 'sslrootcert', 'sslcrl', 'connect_timeout',
+                'application_name', 'options', 'keepalives', 'keepalives_idle',
+                'keepalives_interval', 'keepalives_count', 'tcp_user_timeout'
+            }
+            
+            # Parse query parameters
+            query_params = parse_qs(parsed.query)
+            
+            # Filter out invalid parameters
+            cleaned_params = {}
+            for key, value in query_params.items():
+                if key.lower() in valid_params:
+                    cleaned_params[key] = value[0] if len(value) == 1 else value
+            
+            # Reconstruct URL without invalid parameters
+            cleaned_query = urlencode(cleaned_params) if cleaned_params else ''
+            cleaned_parsed = parsed._replace(query=cleaned_query)
+            cleaned_url = urlunparse(cleaned_parsed)
+            
+            return cleaned_url
+        except Exception as e:
+            # If parsing fails, return original URL and let psycopg2 handle the error
+            import sys
+            print(f"Warning: Failed to clean connection string: {e}, using original", file=sys.stderr)
+            return url
+    
     def _init_postgres_pool(self):
         """Initialize PostgreSQL connection pool."""
         if self.pool is not None:
             return  # Already initialized
         
         try:
+            # Clean connection string to remove unsupported query parameters
+            cleaned_url = self._clean_connection_string(self.database_url)
+            
             # Parse DATABASE_URL and create connection pool
             self.pool = SimpleConnectionPool(
                 minconn=1,
                 maxconn=5,
-                dsn=self.database_url
+                dsn=cleaned_url
             )
         except Exception as e:
             import sys
             print(f"Warning: Failed to create PostgreSQL pool: {e}", file=sys.stderr)
+            print(f"Original URL (first 50 chars): {self.database_url[:50]}...", file=sys.stderr)
             self.pool = None
             raise  # Re-raise so caller knows it failed
     
