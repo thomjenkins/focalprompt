@@ -13,6 +13,7 @@ from services.embedding_service import EmbeddingService
 from services.cost_calculator import CostCalculator
 from services.checkpoint_service import CheckpointService
 from services.usage_service import UsageService
+from services.billing_service import BillingService
 from services.database import Database
 from middleware.auth import optional_auth
 
@@ -21,7 +22,8 @@ ablation_bp = Blueprint('ablation', __name__)
 
 # Initialize services
 db = Database()
-usage_service = UsageService(db)
+billing_service = BillingService(db)
+usage_service = UsageService(db, billing_service)
 
 
 def get_api_key_and_model(data):

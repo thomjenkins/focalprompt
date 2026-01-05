@@ -14,6 +14,7 @@ from services.agent_builder_service import AgentBuilderService
 from services.cost_calculator import CostCalculator
 from services.checkpoint_service import CheckpointService
 from services.usage_service import UsageService
+from services.billing_service import BillingService
 from services.database import Database
 from middleware.auth import optional_auth
 from utils.prompt_builder import build_prompt_with_dynamic_foci
@@ -22,7 +23,8 @@ agent_bp = Blueprint('agent', __name__)
 
 # Initialize services
 db = Database()
-usage_service = UsageService(db)
+billing_service = BillingService(db)
+usage_service = UsageService(db, billing_service)
 
 
 def get_api_key_and_model(data):

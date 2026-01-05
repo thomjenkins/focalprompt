@@ -11,6 +11,7 @@ import json
 import os
 from services.checkpoint_service import CheckpointService
 from services.usage_service import UsageService
+from services.billing_service import BillingService
 from services.database import Database
 from middleware.auth import optional_auth
 from utils.data_processing import calculate_statistics_from_results
@@ -20,7 +21,8 @@ batch_bp = Blueprint('batch', __name__)
 
 # Initialize services
 db = Database()
-usage_service = UsageService(db)
+billing_service = BillingService(db)
+usage_service = UsageService(db, billing_service)
 
 
 def get_api_key_and_model(data):

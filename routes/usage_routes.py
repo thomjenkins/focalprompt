@@ -8,13 +8,15 @@ Provides endpoints for users to check their usage and quotas.
 from flask import Blueprint, request, jsonify
 from services.database import Database
 from services.usage_service import UsageService
+from services.billing_service import BillingService
 from middleware.auth import require_auth
 
 usage_bp = Blueprint('usage', __name__)
 
 # Initialize services
 db = Database()
-usage_service = UsageService(db)
+billing_service = BillingService(db)
+usage_service = UsageService(db, billing_service)
 
 
 @usage_bp.route('/api/usage/summary', methods=['GET'])

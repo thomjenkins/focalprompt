@@ -20,6 +20,7 @@ from services.prompt_rewrite_service import PromptRewriteService
 from services.checkpoint_service import CheckpointService
 from services.database import Database
 from services.usage_service import UsageService
+from services.billing_service import BillingService
 from middleware.auth import require_auth, optional_auth
 from utils.prompt_builder import build_prompt_with_dynamic_foci
 
@@ -28,7 +29,8 @@ assessment_bp = Blueprint('assessment', __name__)
 
 # Initialize services
 db = Database()
-usage_service = UsageService(db)
+billing_service = BillingService(db)
+usage_service = UsageService(db, billing_service)
 
 
 def get_api_key_and_model(data):

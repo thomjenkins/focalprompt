@@ -319,13 +319,48 @@ class Database:
                         )
                     """)
                 
+                # Charges table for billing
+                if self.use_postgres:
+                    cursor.execute("""
+                        CREATE TABLE IF NOT EXISTS charges (
+                            id VARCHAR(255) PRIMARY KEY,
+                            user_id VARCHAR(255) NOT NULL,
+                            amount_cents INTEGER NOT NULL,
+                            stripe_payment_intent_id VARCHAR(255),
+                            description TEXT,
+                            status VARCHAR(50) DEFAULT 'pending',
+                            created_at TIMESTAMP NOT NULL,
+                            updated_at TIMESTAMP NOT NULL,
+                            metadata TEXT,
+                            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                        )
+                    """)
+                else:
+                    cursor.execute("""
+                        CREATE TABLE IF NOT EXISTS charges (
+                            id TEXT PRIMARY KEY,
+                            user_id TEXT NOT NULL,
+                            amount_cents INTEGER NOT NULL,
+                            stripe_payment_intent_id TEXT,
+                            description TEXT,
+                            status TEXT DEFAULT 'pending',
+                            created_at TEXT NOT NULL,
+                            updated_at TEXT NOT NULL,
+                            metadata TEXT,
+                            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                        )
+                    """)
+                
                 # Create indexes for performance
                 indexes = [
                     "CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)",
                     "CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at)",
                     "CREATE INDEX IF NOT EXISTS idx_usage_user_id ON usage(user_id)",
                     "CREATE INDEX IF NOT EXISTS idx_usage_timestamp ON usage(timestamp)",
-                    "CREATE INDEX IF NOT EXISTS idx_usage_endpoint ON usage(endpoint)"
+                    "CREATE INDEX IF NOT EXISTS idx_usage_endpoint ON usage(endpoint)",
+                    "CREATE INDEX IF NOT EXISTS idx_charges_user_id ON charges(user_id)",
+                    "CREATE INDEX IF NOT EXISTS idx_charges_status ON charges(status)",
+                    "CREATE INDEX IF NOT EXISTS idx_charges_created_at ON charges(created_at)"
                 ]
                 
                 for index_sql in indexes:

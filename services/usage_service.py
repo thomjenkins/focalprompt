@@ -9,6 +9,7 @@ import uuid
 from typing import Tuple, Optional, Dict
 from datetime import datetime
 from services.database import Database
+from services.billing_service import BillingService
 
 
 class UsageService:

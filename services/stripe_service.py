@@ -64,6 +64,64 @@ class StripeService:
         if not price_id:
             return {'error': f'Invalid tier: {tier}'}
         
+    def create_customer(self, user_id: str, email: str) -> Dict:
+        """
+        Create a Stripe customer for a user.
+        
+        Args:
+            user_id: User ID
+            email: User email
+            
+        Returns:
+            Dict with customer_id or error
+        """
+        if not self.api_key:
+            return {'error': 'Stripe not configured'}
+        
+        try:
+            import stripe
+            stripe.api_key = self.api_key
+            
+            customer = stripe.Customer.create(
+                email=email,
+                metadata={'user_id': user_id}
+            )
+            
+            # Update user with customer ID
+            self.db.update_user(user_id, {'stripe_customer_id': customer.id})
+            
+            return {
+                'customer_id': customer.id,
+                'email': email
+            }
+        except Exception as e:
+            return {'error': f'Failed to create customer: {str(e)}'}
+    
+    def create_checkout_session(
+        self,
+        user_id: str,
+        tier: str,
+        base_url: str
+    ) -> Dict:
+        """
+        Create Stripe checkout session for subscription.
+        
+        Args:
+            user_id: User ID
+            tier: Subscription tier ('starter', 'professional', 'enterprise')
+            base_url: Base URL for redirects
+            
+        Returns:
+            Dict with checkout_url or error
+        """
+        if not self.api_key:
+            return {'error': 'Stripe not configured'}
+        
+        # Get user
+        user = self.db.get_user_by_id(user_id)
+        if not user:
+            return {'error': 'User not found'}
+        
         try:
             # Create or get Stripe customer
             customer_id = user.get('stripe_customer_id')
