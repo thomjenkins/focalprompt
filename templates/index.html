@@ -17,7 +17,8 @@
                 </div>
                 <div style="flex: 1; text-align: right;">
                     <div id="auth-section">
-                        <span id="user-info" style="display: none; margin-right: 10px;"></span>
+                        <span id="user-info" style="display: none; margin-right: 10px; cursor: pointer;" title="Click to view account"></span>
+                        <button id="account-btn" style="display: none; background: var(--primary-color); color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin-right: 8px;">Account</button>
                         <button id="login-btn" style="background: var(--primary-color); color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin-right: 8px;">Login</button>
                         <button id="logout-btn" style="display: none; background: #dc3545; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer;">Logout</button>
                     </div>
@@ -667,6 +668,41 @@
             </div>
             <div class="modal-footer">
                 <button id="error-modal-ok" class="btn btn-primary">OK</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Account Modal -->
+    <div id="account-modal" class="modal" style="display: none;">
+        <div class="modal-overlay"></div>
+        <div class="modal-content" style="max-width: 600px;">
+            <div class="modal-header">
+                <h3 style="margin: 0; color: var(--primary-color);">👤 Account</h3>
+                <button class="modal-close" id="account-modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="account-content">
+                    <div style="margin-bottom: 24px;">
+                        <h4 style="margin: 0 0 8px 0;">Account Information</h4>
+                        <p style="margin: 4px 0;"><strong>Email:</strong> <span id="account-email">-</span></p>
+                        <p style="margin: 4px 0;"><strong>Tier:</strong> <span id="account-tier">-</span></p>
+                        <p style="margin: 4px 0;"><strong>Status:</strong> <span id="account-status">-</span></p>
+                    </div>
+                    <div style="margin-bottom: 24px;">
+                        <h4 style="margin: 0 0 8px 0;">Usage This Month</h4>
+                        <div id="account-usage" style="color: #666;">
+                            <p>Loading usage data...</p>
+                        </div>
+                    </div>
+                    <div style="border-top: 1px solid var(--border-color); padding-top: 16px;">
+                        <h4 style="margin: 0 0 12px 0;">Upgrade Plan</h4>
+                        <p style="margin-bottom: 12px; color: #666;">Upgrade to get higher limits and more features.</p>
+                        <button id="upgrade-btn" class="btn btn-primary" style="width: 100%;">Upgrade to Pro</button>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="account-modal-ok" class="btn btn-primary">Close</button>
             </div>
         </div>
     </div>

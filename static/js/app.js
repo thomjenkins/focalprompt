@@ -4785,35 +4785,84 @@ window.removePair = removePair;
 window.removeBatchFocus = removeBatchFocus;
 
 // Authentication handlers
-document.addEventListener('DOMContentLoaded', () => {
+async function checkAuthStatus() {
     const loginBtn = document.getElementById('login-btn');
     const logoutBtn = document.getElementById('logout-btn');
     const userInfo = document.getElementById('user-info');
     
-    // Check if user is logged in
     const sessionId = localStorage.getItem('session_id');
-    const user = JSON.parse(localStorage.getItem('user') || 'null');
     
-    if (sessionId && user) {
-        // User is logged in
-        if (loginBtn) loginBtn.style.display = 'none';
-        if (logoutBtn) logoutBtn.style.display = 'inline-block';
-        if (userInfo) {
-            userInfo.textContent = `${user.email} (${user.tier})`;
-            userInfo.style.display = 'inline-block';
+    if (!sessionId) {
+        // Not logged in
+        if (loginBtn) loginBtn.style.display = 'inline-block';
+        if (logoutBtn) logoutBtn.style.display = 'none';
+        if (userInfo) userInfo.style.display = 'none';
+        return;
+    }
+    
+    // Verify session
+    try {
+        const response = await fetch('/api/auth/me', {
+            headers: {
+                'X-Session-ID': sessionId
+            }
+        });
+        
+        if (response.ok) {
+            const user = await response.json();
+            // Update localStorage with fresh user data
+            localStorage.setItem('user', JSON.stringify(user));
+            
+            // Show logged in state
+            if (loginBtn) loginBtn.style.display = 'none';
+            if (logoutBtn) logoutBtn.style.display = 'inline-block';
+            if (userInfo) {
+                userInfo.textContent = `${user.email} (${user.tier})`;
+                userInfo.style.display = 'inline-block';
+                userInfo.title = `Tier: ${user.tier}, Status: ${user.subscription_status}`;
+            }
+        } else {
+            // Session invalid
+            localStorage.removeItem('session_id');
+            localStorage.removeItem('user');
+            if (loginBtn) loginBtn.style.display = 'inline-block';
+            if (logoutBtn) logoutBtn.style.display = 'none';
+            if (userInfo) userInfo.style.display = 'none';
         }
-    } else {
-        // User is not logged in
+    } catch (error) {
+        console.error('Session check error:', error);
+        // On error, assume not logged in
         if (loginBtn) loginBtn.style.display = 'inline-block';
         if (logoutBtn) logoutBtn.style.display = 'none';
         if (userInfo) userInfo.style.display = 'none';
     }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    const loginBtn = document.getElementById('login-btn');
+    const logoutBtn = document.getElementById('logout-btn');
+    const accountBtn = document.getElementById('account-btn');
+    const userInfo = document.getElementById('user-info');
+    
+    // Check auth status on page load
+    checkAuthStatus();
     
     // Login button handler
     if (loginBtn) {
         loginBtn.addEventListener('click', () => {
             window.location.href = '/login';
         });
+    }
+    
+    // Account button handler
+    if (accountBtn) {
+        accountBtn.addEventListener('click', showAccountModal);
+    }
+    
+    // User info click handler
+    if (userInfo) {
+        userInfo.addEventListener('click', showAccountModal);
+        userInfo.style.cursor = 'pointer';
     }
     
     // Logout button handler
@@ -4845,25 +4894,39 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
     
-    // Verify session on page load
-    if (sessionId) {
-        fetch('/api/auth/me', {
-            headers: {
-                'X-Session-ID': sessionId
+    // Account modal event listeners
+    const accountModal = document.getElementById('account-modal');
+    const accountModalClose = document.getElementById('account-modal-close');
+    const accountModalOk = document.getElementById('account-modal-ok');
+    const upgradeBtn = document.getElementById('upgrade-btn');
+    
+    if (accountModalClose) {
+        accountModalClose.addEventListener('click', hideAccountModal);
+    }
+    
+    if (accountModalOk) {
+        accountModalOk.addEventListener('click', hideAccountModal);
+    }
+    
+    if (upgradeBtn) {
+        upgradeBtn.addEventListener('click', () => {
+            // TODO: Implement Stripe checkout
+            showErrorModal('Upgrade functionality coming soon!');
+        });
+    }
+    
+    // Close account modal when clicking overlay
+    if (accountModal) {
+        const overlay = accountModal.querySelector('.modal-overlay');
+        if (overlay) {
+            overlay.addEventListener('click', hideAccountModal);
+        }
+        
+        // Close on Escape key
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && accountModal.style.display !== 'none') {
+                hideAccountModal();
             }
-        })
-        .then(response => {
-            if (!response.ok) {
-                // Session invalid, clear it
-                localStorage.removeItem('session_id');
-                localStorage.removeItem('user');
-                if (loginBtn) loginBtn.style.display = 'inline-block';
-                if (logoutBtn) logoutBtn.style.display = 'none';
-                if (userInfo) userInfo.style.display = 'none';
-            }
-        })
-        .catch(error => {
-            console.error('Session check error:', error);
         });
     }
 });

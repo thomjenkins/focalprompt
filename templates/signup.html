@@ -151,12 +151,20 @@
                     return;
                 }
 
-                showSuccess('Account created! Redirecting to login...');
-                
-                // Redirect to login
-                setTimeout(() => {
-                    window.location.href = '/login';
-                }, 1500);
+                // Auto-login after signup
+                if (data.session_id && data.user) {
+                    localStorage.setItem('session_id', data.session_id);
+                    localStorage.setItem('user', JSON.stringify(data.user));
+                    showSuccess('Account created! Logging you in...');
+                    setTimeout(() => {
+                        window.location.href = '/';
+                    }, 1000);
+                } else {
+                    showSuccess('Account created! Redirecting to login...');
+                    setTimeout(() => {
+                        window.location.href = '/login';
+                    }, 1500);
+                }
 
             } catch (error) {
                 showError('Network error. Please try again.');

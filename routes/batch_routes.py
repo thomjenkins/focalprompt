@@ -10,10 +10,17 @@ from flask import Blueprint, request, jsonify, Response, stream_with_context
 import json
 import os
 from services.checkpoint_service import CheckpointService
+from services.usage_service import UsageService
+from services.database import Database
+from middleware.auth import optional_auth
 from utils.data_processing import calculate_statistics_from_results
 
 
 batch_bp = Blueprint('batch', __name__)
+
+# Initialize services
+db = Database()
+usage_service = UsageService(db)
 
 
 def get_api_key_and_model(data):
@@ -64,6 +71,7 @@ def get_checkpoint():
 
 @batch_bp.route('/api/batch-analysis-stream', methods=['POST'])
 @stream_with_context
+@optional_auth
 def batch_analysis_stream():
     """Run batch ablation analysis with streaming progress updates via SSE."""
     from services.assessor_factory import get_assessor
@@ -90,6 +98,14 @@ def batch_analysis_stream():
                 yield f"data: {json.dumps({'type': 'error', 'message': 'Foci are required'})}\n\n"
                 return
             
+            # Check usage limits if authenticated
+            if request.user:
+                endpoint = '/api/batch-analysis-stream'
+                allowed, error_msg = usage_service.check_limit(request.user['id'], endpoint)
+                if not allowed:
+                    yield f"data: {json.dumps({'type': 'error', 'message': error_msg})}\n\n"
+                    return
+            
             # Get API key, model, and provider from request
             api_key, model, provider = get_api_key_and_model(data)
             if not api_key:
@@ -113,6 +129,10 @@ def batch_analysis_stream():
                 checkpoint_service
             )
             
+            # Track usage for authenticated users
+            total_tokens = 0
+            total_cost = 0.0
+            
             # Stream results
             for chunk in batch_service.stream_batch_analysis(
                 pairs,
@@ -121,7 +141,27 @@ def batch_analysis_stream():
                 session_id,
                 resume
             ):
+                # Parse chunk to track usage
+                if chunk.startswith('data: '):
+                    try:
+                        chunk_data = json.loads(chunk[6:].strip())
+                        if chunk_data.get('type') == 'complete' and 'cost_breakdown' in chunk_data:
+                            cost_breakdown = chunk_data['cost_breakdown']
+                            total_tokens = cost_breakdown.get('total_tokens', 0)
+                            total_cost = cost_breakdown.get('total_cost', 0.0)
+                    except:
+                        pass
+                
                 yield chunk
+            
+            # Record usage after streaming completes
+            if request.user:
+                usage_service.record_usage(
+                    request.user['id'], 
+                    '/api/batch-analysis-stream', 
+                    total_tokens, 
+                    total_cost
+                )
                 
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"

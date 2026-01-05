@@ -13,9 +13,16 @@ from services.assessor_factory import get_assessor
 from services.agent_builder_service import AgentBuilderService
 from services.cost_calculator import CostCalculator
 from services.checkpoint_service import CheckpointService
+from services.usage_service import UsageService
+from services.database import Database
+from middleware.auth import optional_auth
 from utils.prompt_builder import build_prompt_with_dynamic_foci
 
 agent_bp = Blueprint('agent', __name__)
+
+# Initialize services
+db = Database()
+usage_service = UsageService(db)
 
 
 def get_api_key_and_model(data):
@@ -88,6 +95,7 @@ def generate_agent_response():
 
 @agent_bp.route('/api/build-batch-agents-stream', methods=['POST'])
 @stream_with_context
+@optional_auth
 def build_batch_agents_stream():
     """Build optimized agents for batch inputs."""
     from services.assessor_factory import get_assessor
@@ -111,6 +119,14 @@ def build_batch_agents_stream():
                 yield f"data: {json.dumps({'type': 'error', 'message': 'Foci are required'})}\n\n"
                 return
             
+            # Check usage limits if authenticated
+            if request.user:
+                endpoint = '/api/build-batch-agents-stream'
+                allowed, error_msg = usage_service.check_limit(request.user['id'], endpoint)
+                if not allowed:
+                    yield f"data: {json.dumps({'type': 'error', 'message': error_msg})}\n\n"
+                    return
+            
             # Get API key, model, and provider from request
             api_key, model, provider = get_api_key_and_model(data)
             if not api_key:
@@ -128,9 +144,33 @@ def build_batch_agents_stream():
                 checkpoint_service
             )
             
+            # Track usage for authenticated users
+            total_tokens = 0
+            total_cost = 0.0
+            
             # Stream results
             for chunk in service.stream_batch_agents(pairs, foci_list, session_id, resume):
+                # Parse chunk to track usage
+                if chunk.startswith('data: '):
+                    try:
+                        chunk_data = json.loads(chunk[6:].strip())
+                        if chunk_data.get('type') == 'complete' and 'cost_breakdown' in chunk_data:
+                            cost_breakdown = chunk_data['cost_breakdown']
+                            total_tokens = cost_breakdown.get('total_tokens', 0)
+                            total_cost = cost_breakdown.get('total_cost', 0.0)
+                    except:
+                        pass
+                
                 yield chunk
+            
+            # Record usage after streaming completes
+            if request.user:
+                usage_service.record_usage(
+                    request.user['id'], 
+                    '/api/build-batch-agents-stream', 
+                    total_tokens, 
+                    total_cost
+                )
                 
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
@@ -143,6 +183,7 @@ def build_batch_agents_stream():
 
 @agent_bp.route('/api/llm-evaluate-batch-agents-stream', methods=['POST'])
 @stream_with_context
+@optional_auth
 def llm_evaluate_batch_agents_stream():
     """Run LLM evaluation with streaming progress."""
     from flask import Response
@@ -159,6 +200,14 @@ def llm_evaluate_batch_agents_stream():
                 yield f"data: {json.dumps({'type': 'error', 'message': 'Results are required'})}\n\n"
                 return
             
+            # Check usage limits if authenticated
+            if request.user:
+                endpoint = '/api/llm-evaluate-batch-agents-stream'
+                allowed, error_msg = usage_service.check_limit(request.user['id'], endpoint)
+                if not allowed:
+                    yield f"data: {json.dumps({'type': 'error', 'message': error_msg})}\n\n"
+                    return
+            
             # Get API key, model, and provider from request
             api_key, model, provider = get_api_key_and_model(data)
             if not api_key:
@@ -174,9 +223,33 @@ def llm_evaluate_batch_agents_stream():
                 cost_calculator
             )
             
+            # Track usage for authenticated users
+            total_tokens = 0
+            total_cost = 0.0
+            
             # Stream results
             for chunk in service.stream_evaluations(results):
+                # Parse chunk to track usage
+                if chunk.startswith('data: '):
+                    try:
+                        chunk_data = json.loads(chunk[6:].strip())
+                        if chunk_data.get('type') == 'complete' and 'cost_breakdown' in chunk_data:
+                            cost_breakdown = chunk_data['cost_breakdown']
+                            total_tokens = cost_breakdown.get('total_tokens', 0)
+                            total_cost = cost_breakdown.get('total_cost', 0.0)
+                    except:
+                        pass
+                
                 yield chunk
+            
+            # Record usage after streaming completes
+            if request.user:
+                usage_service.record_usage(
+                    request.user['id'], 
+                    '/api/llm-evaluate-batch-agents-stream', 
+                    total_tokens, 
+                    total_cost
+                )
                 
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"

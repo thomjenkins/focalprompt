@@ -12,9 +12,16 @@ from services.ablation_service import AblationService
 from services.embedding_service import EmbeddingService
 from services.cost_calculator import CostCalculator
 from services.checkpoint_service import CheckpointService
+from services.usage_service import UsageService
+from services.database import Database
+from middleware.auth import optional_auth
 
 
 ablation_bp = Blueprint('ablation', __name__)
+
+# Initialize services
+db = Database()
+usage_service = UsageService(db)
 
 
 def get_api_key_and_model(data):
@@ -26,6 +33,7 @@ def get_api_key_and_model(data):
 
 
 @ablation_bp.route('/api/ablation-analysis', methods=['POST'])
+@optional_auth
 def ablation_analysis():
     """Run ablation analysis to determine focus influence."""
     try:
@@ -40,6 +48,13 @@ def ablation_analysis():
         
         if not foci_list or len(foci_list) == 0:
             return jsonify({'error': 'Foci are required for ablation analysis'}), 400
+        
+        # Check usage limits if authenticated
+        if request.user:
+            endpoint = '/api/ablation-analysis'
+            allowed, error_msg = usage_service.check_limit(request.user['id'], endpoint)
+            if not allowed:
+                return jsonify({'error': error_msg}), 429
         
         # Get API key, model, and provider from request
         api_key, model, provider = get_api_key_and_model(data)
@@ -79,6 +94,12 @@ def ablation_analysis():
             'complete': True
         }
         checkpoint_service.save_checkpoint(session_id, checkpoint_data, 'single_ablation')
+        
+        # Record usage if authenticated
+        if request.user:
+            tokens = result_data.get('cost_breakdown', {}).get('total_tokens', 0)
+            cost = result_data.get('cost_breakdown', {}).get('total_cost', 0.0)
+            usage_service.record_usage(request.user['id'], '/api/ablation-analysis', tokens, cost)
         
         return jsonify(result_data)
         

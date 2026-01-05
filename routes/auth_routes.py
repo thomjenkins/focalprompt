@@ -34,6 +34,17 @@ def register():
         if 'error' in result:
             return jsonify(result), 400
         
+        # Auto-login after registration
+        login_result = auth_service.login_user(email, password)
+        if 'error' not in login_result:
+            return jsonify({
+                'user_id': result['user_id'],
+                'email': result['email'],
+                'tier': result['tier'],
+                'session_id': login_result['session_id'],
+                'user': login_result['user']
+            }), 201
+        
         return jsonify(result), 201
         
     except Exception as e:
