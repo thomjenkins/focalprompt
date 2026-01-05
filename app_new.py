@@ -6,32 +6,70 @@ This is the new modular structure. The old app.py is preserved as app.py.backup.
 """
 
 import os
+import sys
 from flask import Flask, render_template, jsonify
-from flask_cors import CORS
-from routes.assessment_routes import assessment_bp
-from routes.ablation_routes import ablation_bp
-from routes.batch_routes import batch_bp
-from routes.agent_routes import agent_bp
-from routes.optimization_routes import optimization_bp
-from routes.auth_routes import auth_bp
-from routes.payment_routes import payment_bp
-from routes.usage_routes import usage_bp
 
+# Initialize Flask app first
 app = Flask(__name__)
-CORS(app)
 
-# Set secret key for sessions
+# Set secret key for sessions (before any routes)
 app.secret_key = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
 
-# Register blueprints
-app.register_blueprint(assessment_bp)
-app.register_blueprint(ablation_bp)
-app.register_blueprint(batch_bp)
-app.register_blueprint(agent_bp)
-app.register_blueprint(optimization_bp)
-app.register_blueprint(auth_bp)
-app.register_blueprint(payment_bp)
-app.register_blueprint(usage_bp)
+# Import CORS and enable it
+try:
+    from flask_cors import CORS
+    CORS(app)
+except ImportError as e:
+    print(f"Warning: flask-cors not available: {e}", file=sys.stderr)
+
+# Register blueprints with error handling
+try:
+    from routes.assessment_routes import assessment_bp
+    app.register_blueprint(assessment_bp)
+except Exception as e:
+    print(f"Error registering assessment_bp: {e}", file=sys.stderr)
+
+try:
+    from routes.ablation_routes import ablation_bp
+    app.register_blueprint(ablation_bp)
+except Exception as e:
+    print(f"Error registering ablation_bp: {e}", file=sys.stderr)
+
+try:
+    from routes.batch_routes import batch_bp
+    app.register_blueprint(batch_bp)
+except Exception as e:
+    print(f"Error registering batch_bp: {e}", file=sys.stderr)
+
+try:
+    from routes.agent_routes import agent_bp
+    app.register_blueprint(agent_bp)
+except Exception as e:
+    print(f"Error registering agent_bp: {e}", file=sys.stderr)
+
+try:
+    from routes.optimization_routes import optimization_bp
+    app.register_blueprint(optimization_bp)
+except Exception as e:
+    print(f"Error registering optimization_bp: {e}", file=sys.stderr)
+
+try:
+    from routes.auth_routes import auth_bp
+    app.register_blueprint(auth_bp)
+except Exception as e:
+    print(f"Error registering auth_bp: {e}", file=sys.stderr)
+
+try:
+    from routes.payment_routes import payment_bp
+    app.register_blueprint(payment_bp)
+except Exception as e:
+    print(f"Error registering payment_bp: {e}", file=sys.stderr)
+
+try:
+    from routes.usage_routes import usage_bp
+    app.register_blueprint(usage_bp)
+except Exception as e:
+    print(f"Error registering usage_bp: {e}", file=sys.stderr)
 
 
 @app.route('/')
