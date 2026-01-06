@@ -4939,6 +4939,18 @@ async function checkAuthStatus() {
             }
         });
         
+        // Check content-type before parsing JSON
+        const contentType = response.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+            // Server returned HTML or other non-JSON, clear session
+            localStorage.removeItem('session_id');
+            localStorage.removeItem('user');
+            if (loginBtn) loginBtn.style.display = 'inline-block';
+            if (logoutBtn) logoutBtn.style.display = 'none';
+            if (userInfo) userInfo.style.display = 'none';
+            return;
+        }
+        
         if (response.ok) {
             const user = await response.json();
             // Update localStorage with fresh user data
