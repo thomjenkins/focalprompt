@@ -197,9 +197,16 @@ Match foci to input types based on:
 Only mark as dynamic if confidence > 0.6."""
                 }
             ],
-            response_format={"type": "json_object"},
-            temperature=0.3
-        )
+            'response_format': {"type": "json_object"},
+            'temperature': 0.3
+        }
+        
+        # Add provider parameter if needed (for AI Gateway)
+        if needs_provider:
+            chat_kwargs['provider'] = provider_name
+        
+        # Use LLM to analyze which foci correspond to dynamic inputs
+        response = provider.chat_completion(**chat_kwargs)
         
         result = json.loads(response['content'])
         
