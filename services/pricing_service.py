@@ -64,14 +64,12 @@ class PricingService:
             provider
         )
         
-        base_cost = cost_breakdown['total_cost']
-        total_cost = base_cost * self.MARKUP_MULTIPLIER
+        # Apply markup to get final cost (already includes markup)
+        total_cost = cost_breakdown['total_cost'] * self.MARKUP_MULTIPLIER
         
         return {
             'estimated_input_tokens': estimated_input_tokens,
             'estimated_output_tokens': estimated_output_tokens,
-            'base_cost': base_cost,
-            'markup': total_cost - base_cost,
             'total_cost': total_cost,
             'total_cents': int(round(total_cost * 100)),
             'model': model,
