@@ -141,29 +141,30 @@ class AIGatewayProvider(LLMProvider):
                     except:
                         pass
             
-            # Provide helpful error message for common issues
+            # Provide user-friendly error messages (no technical details about API keys)
             if error_code == 404:
                 error_msg = (
-                    f"AI Gateway deployment not found (404). "
-                    f"This usually means your AI_GATEWAY_API_KEY is incorrect or the gateway isn't set up. "
-                    f"Please check: 1) Create AI Gateway in Vercel dashboard, 2) Copy the gateway API key, "
-                    f"3) Set AI_GATEWAY_API_KEY environment variable. "
-                    f"See AI_GATEWAY_SETUP.md for details. Original error: {error_msg}"
+                    f"Service temporarily unavailable. Please try again in a moment. "
+                    f"If the problem persists, please contact support."
                 )
             elif error_code == 401:
                 error_msg = (
-                    f"AI Gateway authentication failed (401). "
-                    f"Please verify your AI_GATEWAY_API_KEY is correct. "
-                    f"Original error: {error_msg}"
+                    f"Authentication failed. Please try again or contact support if the issue persists."
                 )
             elif error_code == 403:
                 error_msg = (
-                    f"AI Gateway access denied (403). "
-                    f"Please verify your API key has the correct permissions. "
-                    f"Original error: {error_msg}"
+                    f"Access denied. Please contact support if you believe this is an error."
+                )
+            elif error_code == 429:
+                error_msg = (
+                    f"Rate limit exceeded. Please wait a moment and try again."
+                )
+            elif error_code == 500 or error_code == 502 or error_code == 503:
+                error_msg = (
+                    f"Service temporarily unavailable. Please try again in a moment."
                 )
             else:
-                error_msg = f"AI Gateway request failed (code: {error_code or 'unknown'}): {error_msg}"
+                error_msg = f"Request failed. Please try again or contact support if the issue persists."
             
             raise Exception(error_msg)
     

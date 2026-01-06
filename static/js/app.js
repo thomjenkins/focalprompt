@@ -727,15 +727,47 @@ detectFociBtn.addEventListener('click', async () => {
             const estimate = await estimateResponse.json();
             const cost = estimate.total_cost || 0;
             if (cost > 0) {
-                const confirmMsg = `Estimated cost: $${cost.toFixed(4)}\n\nProceed with detecting foci?`;
-                if (!confirm(confirmMsg)) {
-                    return;
+                // Show cost estimate in a user-friendly way
+                const costDisplay = document.getElementById('cost-estimate');
+                if (costDisplay) {
+                    // Temporarily show the estimated cost
+                    const originalText = costDisplay.textContent;
+                    costDisplay.textContent = `~$${cost.toFixed(4)}`;
+                    costDisplay.style.color = '#28a745';
+                    
+                    // Show confirmation dialog
+                    const confirmMsg = `Estimated cost for this request: $${cost.toFixed(4)}\n\nProceed with detecting foci?`;
+                    const proceed = confirm(confirmMsg);
+                    
+                    // Restore original text after confirmation
+                    if (originalText && originalText !== '-') {
+                        costDisplay.textContent = originalText;
+                    } else {
+                        // Update to show the actual estimate
+                        updateCostDisplay();
+                    }
+                    
+                    if (!proceed) {
+                        return;
+                    }
+                } else {
+                    // Fallback to alert if cost display element not found
+                    const confirmMsg = `Estimated cost: $${cost.toFixed(4)}\n\nProceed with detecting foci?`;
+                    if (!confirm(confirmMsg)) {
+                        return;
+                    }
                 }
+            } else {
+                // Cost is 0 or very small - proceed without confirmation
+                console.log('Cost estimate is $0 or very small, proceeding without confirmation');
             }
+        } else {
+            // If estimate fails, log but continue (don't block the request)
+            console.warn('Could not get cost estimate, proceeding anyway');
         }
     } catch (error) {
         console.warn('Could not estimate cost:', error);
-        // Continue anyway
+        // Continue anyway - don't block the request
     }
     
     showLoading('Detecting foci from prompt...');
