@@ -113,11 +113,11 @@ class AIGatewayProvider(LLMProvider):
             error_code = None
             error_details = {}
             
-            # OpenAI SDK wraps HTTP errors in specific exception types
-            # Check for status_code attribute
+            # OpenAI SDK uses specific exception types (openai.APIError, openai.APIConnectionError, etc.)
+            # Check for status_code attribute (most common)
             if hasattr(e, 'status_code'):
                 error_code = e.status_code
-            # Check for response object
+            # Check for response object (OpenAI SDK v1+)
             elif hasattr(e, 'response'):
                 if hasattr(e.response, 'status_code'):
                     error_code = e.response.status_code
@@ -145,14 +145,19 @@ class AIGatewayProvider(LLMProvider):
                         error_msg = e.response.text
                     except:
                         pass
+            # Check for code attribute (some OpenAI exceptions use 'code')
+            elif hasattr(e, 'code'):
+                error_code = e.code
             
             # Log detailed error for debugging (server-side only)
             import sys
             print(f"AI Gateway Error (code {error_code}): {error_msg}", file=sys.stderr)
+            print(f"Exception type: {type(e).__name__}", file=sys.stderr)
+            print(f"Exception attributes: {[attr for attr in dir(e) if not attr.startswith('_')]}", file=sys.stderr)
             if error_details:
                 print(f"Error details: {error_details}", file=sys.stderr)
             print(f"Gateway URL: {self.base_url}", file=sys.stderr)
-            print(f"Model: {gateway_model}", file=sys.stderr)
+            print(f"Model: {gateway_model} (provider={provider}, model={model})", file=sys.stderr)
             print(f"API Key (first 20 chars): {self.gateway_api_key[:20] if self.gateway_api_key else 'None'}...", file=sys.stderr)
             
             # Provide user-friendly error messages (no technical details)
