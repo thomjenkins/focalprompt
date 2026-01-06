@@ -82,6 +82,25 @@ try:
             import traceback
             traceback.print_exc(file=sys.stderr)
     
+    # Force register assessment_bp if not already registered (fallback)
+    # This ensures the blueprint is registered even if app_new.py failed
+    def _ensure_assessment_bp_registered():
+        """Ensure assessment_bp is registered, register it if not."""
+        assessment_routes = [r for r in app.url_map.iter_rules() if 'assessment' in r.endpoint]
+        if len(assessment_routes) == 0:
+            try:
+                print("🔄 FORCE REGISTERING assessment_bp...", file=sys.stderr)
+                import routes.assessment_routes
+                app.register_blueprint(routes.assessment_routes.assessment_bp)
+                print("✅ assessment_bp force-registered successfully", file=sys.stderr)
+            except Exception as e:
+                print(f"❌ Failed to force-register assessment_bp: {type(e).__name__}: {e}", file=sys.stderr)
+                import traceback
+                traceback.print_exc(file=sys.stderr)
+    
+    # Try to register immediately
+    _ensure_assessment_bp_registered()
+    
     # Add a diagnostic endpoint
     from flask import jsonify as flask_jsonify
     @app.route('/api/diagnostic', methods=['GET'])
