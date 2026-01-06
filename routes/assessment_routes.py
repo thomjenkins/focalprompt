@@ -27,10 +27,31 @@ from utils.prompt_builder import build_prompt_with_dynamic_foci
 
 assessment_bp = Blueprint('assessment', __name__)
 
-# Initialize services
-db = Database()
-billing_service = BillingService(db)
-usage_service = UsageService(db, billing_service)
+# Initialize services lazily (only when needed, not at import time)
+_db = None
+_billing_service = None
+_usage_service = None
+
+def get_db():
+    """Get database instance (lazy initialization)."""
+    global _db
+    if _db is None:
+        _db = Database()
+    return _db
+
+def get_billing_service():
+    """Get billing service instance (lazy initialization)."""
+    global _billing_service
+    if _billing_service is None:
+        _billing_service = BillingService(get_db())
+    return _billing_service
+
+def get_usage_service():
+    """Get usage service instance (lazy initialization)."""
+    global _usage_service
+    if _usage_service is None:
+        _usage_service = UsageService(get_db(), get_billing_service())
+    return _usage_service
 
 
 def get_api_key_and_model(data):
@@ -55,7 +76,7 @@ def detect_foci():
         # Check usage limits if authenticated
         if request.user:
             endpoint = '/api/detect-foci'
-            allowed, error_msg = usage_service.check_limit(request.user['id'], endpoint)
+            allowed, error_msg = get_usage_service().check_limit(request.user['id'], endpoint)
             if not allowed:
                 return jsonify({'error': error_msg}), 429
         
@@ -74,7 +95,7 @@ def detect_foci():
             estimated_cost = estimate.get('total_cost', 0.0)
             
             # Check credit balance
-            credit_balance = billing_service.get_user_credit_balance(request.user['id'])
+            credit_balance = get_billing_service().get_user_credit_balance(request.user['id'])
             if credit_balance < estimated_cost:
                 return jsonify({
                     'error': f'Insufficient credit. You have ${credit_balance:.2f}, estimated cost is ${estimated_cost:.4f}. Please top up your account.'
@@ -94,18 +115,18 @@ def detect_foci():
             output_tokens = usage.get('completion_tokens', 0)
             
             # Calculate actual cost with markup
-            cost_breakdown = billing_service.calculate_charge_amount(
+            cost_breakdown = get_billing_service().calculate_charge_amount(
                 input_tokens, output_tokens, 0, model, provider
             )
             actual_cost = cost_breakdown['total_cost']
             
             # Use credit
-            credit_result = billing_service.use_credit(request.user['id'], actual_cost)
+            credit_result = get_billing_service().use_credit(request.user['id'], actual_cost)
             if not credit_result.get('success'):
                 return jsonify({'error': credit_result.get('error', 'Failed to process payment')}), 402
             
             # Record usage
-            usage_service.record_usage(request.user['id'], '/api/detect-foci', tokens, actual_cost)
+            get_usage_service().record_usage(request.user['id'], '/api/detect-foci', tokens, actual_cost)
             
             # Add remaining balance to result
             result['credit_remaining'] = credit_result.get('remaining_balance', 0.0)
@@ -164,7 +185,7 @@ def assess():
         # Check usage limits if authenticated
         if request.user:
             endpoint = '/api/assess'
-            allowed, error_msg = usage_service.check_limit(request.user['id'], endpoint)
+            allowed, error_msg = get_usage_service().check_limit(request.user['id'], endpoint)
             if not allowed:
                 return jsonify({'error': error_msg}), 429
         
@@ -203,7 +224,7 @@ def assess():
                 cost_breakdown = result['cost_breakdown']
                 tokens = cost_breakdown.get('total_tokens', 0)
                 cost = cost_breakdown.get('total_cost', 0.0)
-            usage_service.record_usage(request.user['id'], '/api/assess', tokens, cost)
+            get_usage_service().record_usage(request.user['id'], '/api/assess', tokens, cost)
         
         return jsonify(result)
         
