@@ -639,16 +639,8 @@ window.addEventListener('DOMContentLoaded', async () => {
         });
     }
     
-    try {
-        const response = await fetch('/api/health');
-        const data = await response.json();
-        
-        if (!data.api_key_set) {
-            showErrorModal('⚠️ Error: Unable to connect to AI service. Please try again later.');
-        }
-    } catch (error) {
-        console.error('Health check failed:', error);
-    }
+    // Health check removed - users no longer need to set API keys
+    // The service uses AI Gateway which is configured server-side
 });
 
 // Utility Functions
