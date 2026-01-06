@@ -28,18 +28,13 @@ class PricingService:
             provider: Provider name
             
         Returns:
-            Dict with pricing information (per million tokens, with markup)
+            Dict with pricing information (per 1K tokens, with markup already applied)
         """
         base_pricing = self.cost_calculator.get_pricing(model, provider)
         
         return {
-            'input_per_million': base_pricing['input'] * 1_000_000 * self.MARKUP_MULTIPLIER,
-            'output_per_million': base_pricing['output'] * 1_000_000 * self.MARKUP_MULTIPLIER,
             'input_per_1k': (base_pricing['input'] * 1_000_000 * self.MARKUP_MULTIPLIER) / 1000,
-            'output_per_1k': (base_pricing['output'] * 1_000_000 * self.MARKUP_MULTIPLIER) / 1000,
-            'base_input_per_million': base_pricing['input'] * 1_000_000,
-            'base_output_per_million': base_pricing['output'] * 1_000_000,
-            'markup_percent': 50
+            'output_per_1k': (base_pricing['output'] * 1_000_000 * self.MARKUP_MULTIPLIER) / 1000
         }
     
     def estimate_request_cost(
