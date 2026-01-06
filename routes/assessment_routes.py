@@ -236,10 +236,12 @@ def assess():
 def generate_output():
     """Generate output using an agent."""
     import sys
+    import traceback
     # Log that this route was hit
     print(f"✅ /api/generate-output route handler called", file=sys.stderr)
     print(f"   Method: {request.method}", file=sys.stderr)
     print(f"   Path: {request.path}", file=sys.stderr)
+    print(f"   Blueprint: {assessment_bp.name}", file=sys.stderr)
     
     # Handle GET for testing
     if request.method == 'GET':
@@ -247,7 +249,8 @@ def generate_output():
             'status': 'ok',
             'message': 'Route is registered and accessible',
             'method': request.method,
-            'path': request.path
+            'path': request.path,
+            'blueprint': assessment_bp.name
         })
     
     try:
