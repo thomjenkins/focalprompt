@@ -45,20 +45,40 @@ try:
     assessment_routes = [r for r in app.url_map.iter_rules() if 'assessment' in r.endpoint]
     print(f"🔍 assessment blueprint routes: {len(assessment_routes)}", file=sys.stderr)
     if len(assessment_routes) == 0:
-        print("   ⚠️ WARNING: No assessment routes found! Blueprint may not have registered.", file=sys.stderr)
-        # Try to import and see what happens
+        print("   ⚠️ WARNING: No assessment routes found! Attempting manual registration...", file=sys.stderr)
+        # Force manual registration - this MUST work
         try:
-            print("   🔄 Attempting to manually import assessment_bp...", file=sys.stderr)
-            from routes.assessment_routes import assessment_bp
-            print(f"   ✅ assessment_bp imported: {assessment_bp.name}, routes: {len(list(assessment_bp.deferred_functions))}", file=sys.stderr)
-            print("   🔄 Attempting to register manually...", file=sys.stderr)
+            print("   🔄 Step 1: Importing assessment_routes module...", file=sys.stderr)
+            import routes.assessment_routes as assessment_module
+            print("   ✅ Module imported", file=sys.stderr)
+            
+            print("   🔄 Step 2: Getting assessment_bp from module...", file=sys.stderr)
+            assessment_bp = assessment_module.assessment_bp
+            print(f"   ✅ Blueprint retrieved: {assessment_bp.name}", file=sys.stderr)
+            
+            print("   🔄 Step 3: Checking blueprint routes...", file=sys.stderr)
+            bp_routes = list(assessment_bp.deferred_functions)
+            print(f"   ✅ Blueprint has {len(bp_routes)} routes", file=sys.stderr)
+            
+            print("   🔄 Step 4: Registering blueprint with app...", file=sys.stderr)
             app.register_blueprint(assessment_bp)
-            print("   ✅ Manual registration successful", file=sys.stderr)
-            # Check again
+            print("   ✅ Blueprint registered", file=sys.stderr)
+            
+            # Verify registration
             assessment_routes_after = [r for r in app.url_map.iter_rules() if 'assessment' in r.endpoint]
-            print(f"   ✅ assessment routes after manual registration: {len(assessment_routes_after)}", file=sys.stderr)
+            print(f"   ✅ Verification: {len(assessment_routes_after)} assessment routes now registered", file=sys.stderr)
+            for route in assessment_routes_after[:10]:  # First 10
+                print(f"      - {list(route.methods)} {route}", file=sys.stderr)
+        except ImportError as e:
+            print(f"   ❌ ImportError: {e}", file=sys.stderr)
+            import traceback
+            traceback.print_exc(file=sys.stderr)
+        except AttributeError as e:
+            print(f"   ❌ AttributeError: {e}", file=sys.stderr)
+            import traceback
+            traceback.print_exc(file=sys.stderr)
         except Exception as e:
-            print(f"   ❌ Manual import/registration failed: {type(e).__name__}: {e}", file=sys.stderr)
+            print(f"   ❌ Unexpected error ({type(e).__name__}): {e}", file=sys.stderr)
             import traceback
             traceback.print_exc(file=sys.stderr)
     
