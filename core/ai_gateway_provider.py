@@ -121,6 +121,7 @@ class AIGatewayProvider(LLMProvider):
             error_code = e.response.status_code
             error_msg = str(e)
             error_details = {}
+            exception_type = type(e).__name__
             
             # Try to extract JSON error details from response
             try:
@@ -138,45 +139,51 @@ class AIGatewayProvider(LLMProvider):
                     error_msg = e.response.text
                 except:
                     pass
+            
+            # Log detailed error for debugging (server-side only)
+            import sys
+            print(f"AI Gateway Error (code {error_code}): {error_msg}", file=sys.stderr)
+            print(f"Exception type: {exception_type}", file=sys.stderr)
+            if error_details:
+                print(f"Error details: {error_details}", file=sys.stderr)
+            print(f"Gateway URL: {self.base_url}", file=sys.stderr)
+            print(f"Model: {gateway_model} (provider={provider}, model={model})", file=sys.stderr)
+            print(f"API Key (first 20 chars): {self.gateway_api_key[:20] if self.gateway_api_key else 'None'}...", file=sys.stderr)
+            
+            # Provide user-friendly error messages (no technical details)
+            if error_code == 404:
+                user_error_msg = "Service temporarily unavailable. Please try again in a moment. If the problem persists, please contact support."
+            elif error_code == 401:
+                user_error_msg = "Service temporarily unavailable. Please try again in a moment. If the problem persists, please contact support."
+            elif error_code == 403:
+                user_error_msg = "Service temporarily unavailable. Please try again in a moment. If the problem persists, please contact support."
+            elif error_code == 429:
+                user_error_msg = "Rate limit exceeded. Please wait a moment and try again."
+            elif error_code == 500 or error_code == 502 or error_code == 503:
+                user_error_msg = "Service temporarily unavailable. Please try again in a moment. If the problem persists, please contact support."
+            else:
+                user_error_msg = "Service temporarily unavailable. Please try again in a moment. If the problem persists, please contact support."
+            
+            raise Exception(user_error_msg)
                     
         except requests.exceptions.RequestException as e:
             # Network or connection error
-            error_code = None
-            error_msg = f"Network error: {str(e)}"
-            error_details = {}
+            import sys
+            print(f"AI Gateway Network Error: {str(e)}", file=sys.stderr)
+            print(f"Gateway URL: {self.base_url}", file=sys.stderr)
+            print(f"Model: {gateway_model} (provider={provider}, model={model})", file=sys.stderr)
+            
+            raise Exception("Service temporarily unavailable. Please try again in a moment. If the problem persists, please contact support.")
             
         except Exception as e:
             # Other unexpected errors
-            error_code = None
-            error_msg = str(e)
-            error_details = {}
-        
-        # Log detailed error for debugging (server-side only)
-        import sys
-        print(f"AI Gateway Error (code {error_code}): {error_msg}", file=sys.stderr)
-        print(f"Exception type: {type(e).__name__}", file=sys.stderr)
-        if error_details:
-            print(f"Error details: {error_details}", file=sys.stderr)
-        print(f"Gateway URL: {self.base_url}", file=sys.stderr)
-        print(f"Model: {gateway_model} (provider={provider}, model={model})", file=sys.stderr)
-        print(f"API Key (first 20 chars): {self.gateway_api_key[:20] if self.gateway_api_key else 'None'}...", file=sys.stderr)
-        
-        # Provide user-friendly error messages (no technical details)
-        if error_code == 404:
-            user_error_msg = "Service temporarily unavailable. Please try again in a moment. If the problem persists, please contact support."
-        elif error_code == 401:
-            user_error_msg = "Service temporarily unavailable. Please try again in a moment. If the problem persists, please contact support."
-        elif error_code == 403:
-            user_error_msg = "Service temporarily unavailable. Please try again in a moment. If the problem persists, please contact support."
-        elif error_code == 429:
-            user_error_msg = "Rate limit exceeded. Please wait a moment and try again."
-        elif error_code == 500 or error_code == 502 or error_code == 503:
-            user_error_msg = "Service temporarily unavailable. Please try again in a moment. If the problem persists, please contact support."
-        else:
-            # Generic error message for unknown errors
-            user_error_msg = "Service temporarily unavailable. Please try again in a moment. If the problem persists, please contact support."
-        
-        raise Exception(user_error_msg)
+            import sys
+            print(f"AI Gateway Unexpected Error: {str(e)}", file=sys.stderr)
+            print(f"Exception type: {type(e).__name__}", file=sys.stderr)
+            print(f"Gateway URL: {self.base_url}", file=sys.stderr)
+            print(f"Model: {gateway_model} (provider={provider}, model={model})", file=sys.stderr)
+            
+            raise Exception("Service temporarily unavailable. Please try again in a moment. If the problem persists, please contact support.")
     
     def list_models(self, provider: str = 'openai') -> List[str]:
         """
