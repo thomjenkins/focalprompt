@@ -109,7 +109,7 @@ def signup():
 def health():
     """Health check endpoint."""
     try:
-        api_key = os.getenv("OPENAI_API_KEY")
+        ai_gateway_key = os.getenv("AI_GATEWAY_API_KEY")
         database_url = (
             os.getenv('DATABASE_URL') or
             os.getenv('DATABASE_POSTGRES_URL') or
@@ -117,7 +117,7 @@ def health():
         )
         return jsonify({
             'status': 'ok',
-            'api_key_set': api_key is not None and len(api_key) > 0,
+            'ai_gateway_configured': ai_gateway_key is not None and len(ai_gateway_key) > 0,
             'database_configured': database_url is not None,
             'secret_key_set': os.getenv('SECRET_KEY') is not None,
             'vercel': os.getenv('VERCEL') is not None
