@@ -117,7 +117,7 @@ def batch_analysis_stream():
             # Create services - embedding service needs OpenAI API key from env
             openai_api_key = os.getenv("OPENAI_API_KEY")
             if not openai_api_key:
-                yield f"data: {json.dumps({'type': 'error', 'message': 'OPENAI_API_KEY environment variable required for embeddings'})}\n\n"
+                yield f"data: {json.dumps({'type': 'error', 'message': 'Embeddings service not available. Please contact support.'})}\n\n"
                 return
             embedding_service = EmbeddingService(openai_api_key)
             cost_calculator = CostCalculator()

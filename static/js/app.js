@@ -644,7 +644,7 @@ window.addEventListener('DOMContentLoaded', async () => {
         const data = await response.json();
         
         if (!data.api_key_set) {
-            showErrorModal('⚠️ OPENAI_API_KEY is not set. Please set it in your environment and restart the server.');
+            showErrorModal('⚠️ Error: Unable to connect to AI service. Please try again later.');
         }
     } catch (error) {
         console.error('Health check failed:', error);
