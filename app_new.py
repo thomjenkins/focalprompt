@@ -140,6 +140,32 @@ def not_found(error):
     """Handle 404 errors - return JSON for API routes, HTML for pages."""
     import sys
     from flask import request
+    
+    # If this is generate-output, try to force register the blueprint
+    if '/api/generate-output' in request.path:
+        print(f"🔧 404 for /api/generate-output - attempting emergency registration...", file=sys.stderr)
+        try:
+            # Check if already registered
+            assessment_routes = [r for r in app.url_map.iter_rules() if 'assessment' in r.endpoint]
+            if len(assessment_routes) == 0:
+                print("   🔄 assessment_bp not registered, attempting import...", file=sys.stderr)
+                from routes.assessment_routes import assessment_bp
+                print(f"   ✅ Imported assessment_bp: {assessment_bp.name}", file=sys.stderr)
+                app.register_blueprint(assessment_bp)
+                print("   ✅ Emergency registration successful!", file=sys.stderr)
+                # Now try to handle the request again
+                assessment_routes_after = [r for r in app.url_map.iter_rules() if 'assessment' in r.endpoint]
+                print(f"   ✅ {len(assessment_routes_after)} assessment routes now registered", file=sys.stderr)
+                # Redirect to the route handler
+                from flask import redirect
+                return redirect(request.url, code=307)
+            else:
+                print(f"   ⚠️ assessment_bp already has {len(assessment_routes)} routes but route not found", file=sys.stderr)
+        except Exception as e:
+            print(f"   ❌ Emergency registration failed: {type(e).__name__}: {e}", file=sys.stderr)
+            import traceback
+            traceback.print_exc(file=sys.stderr)
+    
     # Log for debugging
     print(f"❌ 404 for {request.method} {request.path}", file=sys.stderr)
     # Get all registered routes
