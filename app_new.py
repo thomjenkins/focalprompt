@@ -127,14 +127,11 @@ def not_found(error):
     from flask import request
     # Log for debugging
     print(f"404 for {request.method} {request.path}", file=sys.stderr)
+    print(f"Registered routes: {[str(r) for r in app.url_map.iter_rules()]}", file=sys.stderr)
     if request.path.startswith('/api/'):
-        # Include available routes in error for debugging
-        available_routes = [str(r) for r in app.url_map.iter_rules() if str(r).startswith('/api/')]
-        print(f"Available API routes: {available_routes}", file=sys.stderr)
         return jsonify({
-            'error': f'Endpoint not found: {request.path}',
-            'method': request.method,
-            'available_routes': available_routes[:10]  # Limit to first 10
+            'error': f'Endpoint not found: {request.method} {request.path}',
+            'hint': 'Check Vercel logs for route registration errors'
         }), 404
     return render_template('index.html'), 404
 
