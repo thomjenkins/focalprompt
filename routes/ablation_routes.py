@@ -64,12 +64,8 @@ def ablation_analysis():
         assessor = get_assessor(api_key=None, model=model, provider=provider)
         provider_instance = assessor.provider
         
-        # Create services - embedding service needs OpenAI API key from env
-        # For embeddings, we still need direct OpenAI access (or gateway if it supports embeddings)
-        openai_api_key = os.getenv("OPENAI_API_KEY")
-        if not openai_api_key:
-            return jsonify({'error': 'OPENAI_API_KEY environment variable required for embeddings'}), 500
-        embedding_service = EmbeddingService(openai_api_key)
+        # Create services - embedding service uses AI Gateway
+        embedding_service = EmbeddingService()
         cost_calculator = CostCalculator()
         ablation_service = AblationService(
             provider_instance,

@@ -36,7 +36,7 @@ class AblationService:
         self.provider = provider
         self.model = model
         self.api_key = api_key
-        self.embedding_service = embedding_service or EmbeddingService(api_key)
+        self.embedding_service = embedding_service or EmbeddingService()
         self.cost_calculator = cost_calculator or CostCalculator()
     
     def run_ablation(

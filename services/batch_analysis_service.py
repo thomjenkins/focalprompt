@@ -44,7 +44,7 @@ class BatchAnalysisService:
         self.provider = provider
         self.model = model
         self.api_key = api_key
-        self.embedding_service = embedding_service or EmbeddingService(api_key)
+        self.embedding_service = embedding_service or EmbeddingService()
         self.cost_calculator = cost_calculator or CostCalculator()
         self.checkpoint_service = checkpoint_service or CheckpointService()
         self.executor = ThreadPoolExecutor(max_workers=max_workers)

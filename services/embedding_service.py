@@ -1,27 +1,40 @@
 #!/usr/bin/env python3
 """
-Embedding service for generating text embeddings.
+Embedding service for generating text embeddings via Vercel AI Gateway.
 
-Currently only supports OpenAI embeddings (other providers don't have embedding APIs).
+Uses OpenAI embeddings through the AI Gateway.
 """
 
+import os
 import numpy as np
-from typing import List
-from openai import OpenAI
+from typing import List, Tuple
+try:
+    import requests
+except ImportError:
+    raise ImportError("requests package not installed. Install with: pip install requests")
 
 
 class EmbeddingService:
-    """Service for generating text embeddings."""
+    """Service for generating text embeddings via AI Gateway."""
     
-    def __init__(self, api_key: str):
+    def __init__(self, gateway_api_key: str = None, base_url: str = None):
         """
         Initialize embedding service.
         
         Args:
-            api_key: OpenAI API key (embeddings only supported by OpenAI)
+            gateway_api_key: Vercel AI Gateway API key (defaults to AI_GATEWAY_API_KEY env var)
+            base_url: Optional custom gateway URL (defaults to Vercel's gateway)
         """
-        self.client = OpenAI(api_key=api_key)
-        self.model = "text-embedding-3-small"
+        self.gateway_api_key = gateway_api_key or os.getenv("AI_GATEWAY_API_KEY")
+        if not self.gateway_api_key:
+            raise ValueError("AI_GATEWAY_API_KEY not provided and not found in environment variables")
+        
+        # Vercel AI Gateway endpoint (OpenAI-compatible)
+        self.base_url = base_url or os.getenv("AI_GATEWAY_URL", "https://gateway.vercel.ai/v1")
+        self.base_url = self.base_url.rstrip('/')
+        
+        # OpenAI embedding model (via gateway)
+        self.model = "openai/text-embedding-3-small"
     
     def get_embedding(self, text: str) -> np.ndarray:
         """
@@ -33,11 +46,21 @@ class EmbeddingService:
         Returns:
             Numpy array of embedding vector
         """
-        response = self.client.embeddings.create(
-            model=self.model,
-            input=text
-        )
-        return np.array(response.data[0].embedding)
+        url = f"{self.base_url}/embeddings"
+        headers = {
+            'Authorization': f'Bearer {self.gateway_api_key}',
+            'Content-Type': 'application/json'
+        }
+        payload = {
+            'model': self.model,
+            'input': text
+        }
+        
+        response = requests.post(url, json=payload, headers=headers, timeout=60)
+        response.raise_for_status()
+        
+        data = response.json()
+        return np.array(data['data'][0]['embedding'])
     
     def batch_embeddings(self, texts: List[str]) -> List[np.ndarray]:
         """
@@ -54,7 +77,7 @@ class EmbeddingService:
             embeddings.append(self.get_embedding(text))
         return embeddings
     
-    def get_embedding_with_usage(self, text: str) -> tuple:
+    def get_embedding_with_usage(self, text: str) -> Tuple[np.ndarray, int]:
         """
         Get embedding and token usage.
         
@@ -64,12 +87,22 @@ class EmbeddingService:
         Returns:
             Tuple of (embedding_array, token_count)
         """
-        response = self.client.embeddings.create(
-            model=self.model,
-            input=text
-        )
-        embedding = np.array(response.data[0].embedding)
-        token_count = response.usage.total_tokens if hasattr(response, 'usage') else 0
+        url = f"{self.base_url}/embeddings"
+        headers = {
+            'Authorization': f'Bearer {self.gateway_api_key}',
+            'Content-Type': 'application/json'
+        }
+        payload = {
+            'model': self.model,
+            'input': text
+        }
+        
+        response = requests.post(url, json=payload, headers=headers, timeout=60)
+        response.raise_for_status()
+        
+        data = response.json()
+        embedding = np.array(data['data'][0]['embedding'])
+        token_count = data.get('usage', {}).get('total_tokens', 0)
         return embedding, token_count
 
 

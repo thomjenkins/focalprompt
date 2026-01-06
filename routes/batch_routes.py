@@ -114,12 +114,8 @@ def batch_analysis_stream():
             assessor = get_assessor(api_key=None, model=model, provider=provider)
             provider_instance = assessor.provider
             
-            # Create services - embedding service needs OpenAI API key from env
-            openai_api_key = os.getenv("OPENAI_API_KEY")
-            if not openai_api_key:
-                yield f"data: {json.dumps({'type': 'error', 'message': 'Embeddings service not available. Please contact support.'})}\n\n"
-                return
-            embedding_service = EmbeddingService(openai_api_key)
+            # Create services - embedding service uses AI Gateway
+            embedding_service = EmbeddingService()
             cost_calculator = CostCalculator()
             checkpoint_service = CheckpointService()
             
