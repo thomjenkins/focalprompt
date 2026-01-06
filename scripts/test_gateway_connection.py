@@ -73,9 +73,10 @@ def test_gateway():
         print()
         print("Common issues:")
         print("1. Gateway not created in Vercel dashboard")
-        print("2. Wrong API key (should start with 'gateway_')")
+        print("2. Wrong API key (check it matches the key from AI Gateway → API Keys)")
         print("3. Gateway in different Vercel project")
         print("4. Gateway not enabled")
+        print("5. Trailing spaces in .env file (remove quotes/spaces around key)")
         print()
         print("Check the error message above for more details.")
         return False
