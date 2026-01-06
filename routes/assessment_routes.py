@@ -232,11 +232,29 @@ def assess():
         return jsonify({'error': str(e)}), 500
 
 
-@assessment_bp.route('/api/generate-output', methods=['POST'])
+@assessment_bp.route('/api/generate-output', methods=['POST', 'GET'])
 def generate_output():
     """Generate output using an agent."""
+    import sys
+    # Log that this route was hit
+    print(f"✅ /api/generate-output route handler called", file=sys.stderr)
+    print(f"   Method: {request.method}", file=sys.stderr)
+    print(f"   Path: {request.path}", file=sys.stderr)
+    
+    # Handle GET for testing
+    if request.method == 'GET':
+        return jsonify({
+            'status': 'ok',
+            'message': 'Route is registered and accessible',
+            'method': request.method,
+            'path': request.path
+        })
+    
     try:
         data = request.json
+        if not data:
+            return jsonify({'error': 'Request body is required'}), 400
+            
         prompt = data.get('prompt', '')
         temperature = data.get('temperature', 0.7)
         
@@ -253,12 +271,18 @@ def generate_output():
         if not provider:
             provider = 'openai'
         
+        print(f"   Using model: {model}, provider: {provider}", file=sys.stderr)
+        
         assessor = get_assessor(api_key=None, model=model, provider=provider)
         output = assessor.generate_output(prompt, temperature=temperature)
         
+        print(f"   ✅ Output generated successfully", file=sys.stderr)
         return jsonify({'output': output})
         
     except Exception as e:
+        print(f"   ❌ Error in generate_output: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc(file=sys.stderr)
         return jsonify({'error': str(e)}), 500
 
 
