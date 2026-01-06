@@ -117,6 +117,26 @@ def signup():
     return render_template('signup.html')
 
 
+@app.errorhandler(404)
+def not_found(error):
+    """Handle 404 errors - return JSON for API routes, HTML for pages."""
+    from flask import request
+    if request.path.startswith('/api/'):
+        return jsonify({'error': 'Endpoint not found'}), 404
+    return render_template('index.html'), 404
+
+
+@app.errorhandler(500)
+def internal_error(error):
+    """Handle 500 errors - return JSON for API routes, HTML for pages."""
+    import sys
+    from flask import request
+    print(f"Internal server error: {error}", file=sys.stderr)
+    if request.path.startswith('/api/'):
+        return jsonify({'error': 'Internal server error. Please try again later.'}), 500
+    return render_template('index.html'), 500
+
+
 @app.route('/api/health', methods=['GET'])
 def health():
     """Health check endpoint."""

@@ -779,6 +779,13 @@ detectFociBtn.addEventListener('click', async () => {
             body: JSON.stringify(getApiBody({ prompt })),
         });
         
+        // Check content-type before parsing JSON
+        const contentType = response.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+            const text = await response.text();
+            throw new Error(`Server returned ${response.status}: ${text.substring(0, 200)}`);
+        }
+        
         const data = await response.json();
         
         if (!response.ok) {
