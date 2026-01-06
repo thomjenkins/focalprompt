@@ -159,9 +159,30 @@
             }
         });
 
-        // Check if already logged in
-        if (localStorage.getItem('session_id')) {
-            window.location.href = '/';
+        // Check if already logged in (verify session is valid first)
+        const sessionId = localStorage.getItem('session_id');
+        if (sessionId) {
+            // Verify session is still valid before redirecting
+            fetch('/api/auth/me', {
+                headers: {
+                    'X-Session-ID': sessionId
+                }
+            })
+            .then(response => {
+                if (response.ok) {
+                    // Session is valid, redirect
+                    window.location.href = '/';
+                } else {
+                    // Session invalid, clear it (don't redirect)
+                    localStorage.removeItem('session_id');
+                    localStorage.removeItem('user');
+                }
+            })
+            .catch(() => {
+                // Network error, clear session (don't redirect)
+                localStorage.removeItem('session_id');
+                localStorage.removeItem('user');
+            });
         }
     </script>
 </body>
