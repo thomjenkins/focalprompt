@@ -39,15 +39,26 @@ except ImportError as e:
 
 # Register blueprints with error handling
 try:
+    print("🔄 Attempting to import assessment_bp...", file=sys.stderr)
     from routes.assessment_routes import assessment_bp
+    print("✅ assessment_bp imported successfully", file=sys.stderr)
+    print(f"   Blueprint name: {assessment_bp.name}", file=sys.stderr)
+    print(f"   Blueprint routes before registration: {len(list(assessment_bp.deferred_functions))}", file=sys.stderr)
+    
     app.register_blueprint(assessment_bp)
+    print("✅ assessment_bp registered with app", file=sys.stderr)
+    
     # Count actual routes registered
     assessment_routes = [r for r in app.url_map.iter_rules() if 'assessment' in r.endpoint]
     print(f"✅ Registered assessment_bp with {len(assessment_routes)} routes", file=sys.stderr)
     for route in assessment_routes:
         print(f"   - {list(route.methods)} {route}", file=sys.stderr)
+except ImportError as e:
+    print(f"❌ ImportError registering assessment_bp: {e}", file=sys.stderr)
+    import traceback
+    traceback.print_exc(file=sys.stderr)
 except Exception as e:
-    print(f"❌ Error registering assessment_bp: {e}", file=sys.stderr)
+    print(f"❌ Error registering assessment_bp: {type(e).__name__}: {e}", file=sys.stderr)
     import traceback
     traceback.print_exc(file=sys.stderr)
 
