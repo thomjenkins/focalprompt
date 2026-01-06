@@ -104,7 +104,18 @@ def detect_foci():
         assessor = get_assessor(api_key=None, model=model, provider=provider)
         service = AssessmentService(assessor)
         
-        result = service.detect_foci(prompt)
+        try:
+            result = service.detect_foci(prompt)
+        except ValueError as e:
+            # JSON parsing or validation error
+            import sys
+            print(f"ValueError in detect_foci: {e}", file=sys.stderr)
+            return jsonify({'error': f'Failed to parse LLM response: {str(e)}'}), 500
+        except json.JSONDecodeError as e:
+            # JSON parsing error
+            import sys
+            print(f"JSONDecodeError in detect_foci: {e}", file=sys.stderr)
+            return jsonify({'error': 'LLM did not return valid JSON. Please try again.'}), 500
         
         # Calculate actual cost and use credit if authenticated
         if request.user:
