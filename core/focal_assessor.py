@@ -8,7 +8,7 @@ addresses different aspects (foci) of a given prompt.
 import json
 from typing import List, Dict, Optional
 from dataclasses import dataclass, asdict
-from openai import OpenAI
+# OpenAI import removed - we use AI Gateway now via LLMProvider abstraction
 
 
 @dataclass
