@@ -156,9 +156,16 @@ def not_found(error):
                 # Now try to handle the request again
                 assessment_routes_after = [r for r in app.url_map.iter_rules() if 'assessment' in r.endpoint]
                 print(f"   ✅ {len(assessment_routes_after)} assessment routes now registered", file=sys.stderr)
-                # Redirect to the route handler
-                from flask import redirect
-                return redirect(request.url, code=307)
+                # Try to match the route now
+                try:
+                    from flask import current_app
+                    with app.test_request_context(path=request.path, method=request.method, data=request.get_data(), headers=dict(request.headers)):
+                        rule, args = app.url_map.bind_to_environ(request.environ).match(return_rule=True)
+                        view_func = app.view_functions[rule.endpoint]
+                        return view_func(**args)
+                except Exception as e:
+                    print(f"   ⚠️ Could not route to handler after registration: {e}", file=sys.stderr)
+                    # Fall through to normal 404 handling
             else:
                 print(f"   ⚠️ assessment_bp already has {len(assessment_routes)} routes but route not found", file=sys.stderr)
         except Exception as e:
