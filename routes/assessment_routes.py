@@ -62,17 +62,53 @@ def detect_foci():
         # Get model and provider from request (API key no longer needed - uses AI Gateway)
         _, model, provider = get_api_key_and_model(data)
         
+        # Estimate cost before processing (for credit check)
+        estimated_cost = 0.0
+        if request.user:
+            from services.pricing_service import PricingService
+            pricing_service = PricingService()
+            estimated_tokens = len(prompt) // 4 + 500 + 1000  # Rough estimate
+            estimate = pricing_service.estimate_request_cost(
+                estimated_tokens, 1000, model, provider
+            )
+            estimated_cost = estimate.get('total_cost', 0.0)
+            
+            # Check credit balance
+            credit_balance = billing_service.get_user_credit_balance(request.user['id'])
+            if credit_balance < estimated_cost:
+                return jsonify({
+                    'error': f'Insufficient credit. You have ${credit_balance:.2f}, estimated cost is ${estimated_cost:.4f}. Please top up your account.'
+                }), 402  # Payment Required
+        
         assessor = get_assessor(api_key=None, model=model, provider=provider)
         service = AssessmentService(assessor)
         
         result = service.detect_foci(prompt)
         
-        # Record usage if authenticated
-        if request.user and 'usage' in result:
+        # Calculate actual cost and use credit if authenticated
+        if request.user:
+            # Calculate actual cost from usage
             usage = result.get('usage', {})
             tokens = usage.get('total_tokens', 0)
-            cost = result.get('cost_breakdown', {}).get('total_cost', 0.0)
-            usage_service.record_usage(request.user['id'], '/api/detect-foci', tokens, cost)
+            input_tokens = usage.get('prompt_tokens', 0)
+            output_tokens = usage.get('completion_tokens', 0)
+            
+            # Calculate actual cost with markup
+            cost_breakdown = billing_service.calculate_charge_amount(
+                input_tokens, output_tokens, 0, model, provider
+            )
+            actual_cost = cost_breakdown['total_cost']
+            
+            # Use credit
+            credit_result = billing_service.use_credit(request.user['id'], actual_cost)
+            if not credit_result.get('success'):
+                return jsonify({'error': credit_result.get('error', 'Failed to process payment')}), 402
+            
+            # Record usage
+            usage_service.record_usage(request.user['id'], '/api/detect-foci', tokens, actual_cost)
+            
+            # Add remaining balance to result
+            result['credit_remaining'] = credit_result.get('remaining_balance', 0.0)
         
         return jsonify(result)
         

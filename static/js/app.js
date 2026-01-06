@@ -726,40 +726,39 @@ detectFociBtn.addEventListener('click', async () => {
         if (estimateResponse.ok) {
             const estimate = await estimateResponse.json();
             const cost = estimate.total_cost || 0;
+            
             if (cost > 0) {
-                // Show cost estimate in a user-friendly way
-                const costDisplay = document.getElementById('cost-estimate');
-                if (costDisplay) {
-                    // Temporarily show the estimated cost
-                    const originalText = costDisplay.textContent;
-                    costDisplay.textContent = `~$${cost.toFixed(4)}`;
-                    costDisplay.style.color = '#28a745';
-                    
-                    // Show confirmation dialog
-                    const confirmMsg = `Estimated cost for this request: $${cost.toFixed(4)}\n\nProceed with detecting foci?`;
-                    const proceed = confirm(confirmMsg);
-                    
-                    // Restore original text after confirmation
-                    if (originalText && originalText !== '-') {
-                        costDisplay.textContent = originalText;
-                    } else {
-                        // Update to show the actual estimate
-                        updateCostDisplay();
-                    }
-                    
-                    if (!proceed) {
-                        return;
-                    }
-                } else {
-                    // Fallback to alert if cost display element not found
-                    const confirmMsg = `Estimated cost: $${cost.toFixed(4)}\n\nProceed with detecting foci?`;
-                    if (!confirm(confirmMsg)) {
-                        return;
+                // Check credit balance if logged in
+                const sessionId = localStorage.getItem('session_id');
+                if (sessionId) {
+                    try {
+                        const creditResponse = await fetch('/api/credit/balance', {
+                            headers: { 'X-Session-ID': sessionId }
+                        });
+                        if (creditResponse.ok) {
+                            const creditData = await creditResponse.json();
+                            const balance = creditData.balance || 0;
+                            
+                            if (balance < cost) {
+                                showErrorModal(
+                                    `Insufficient credit.\n\n` +
+                                    `You have: $${balance.toFixed(2)}\n` +
+                                    `Required: $${cost.toFixed(4)}\n\n` +
+                                    `Please top up your account to continue.`
+                                );
+                                return;
+                            }
+                        }
+                    } catch (error) {
+                        console.warn('Could not check credit balance:', error);
                     }
                 }
-            } else {
-                // Cost is 0 or very small - proceed without confirmation
-                console.log('Cost estimate is $0 or very small, proceeding without confirmation');
+                
+                // Show action-specific cost estimate
+                const confirmMsg = `Auto-Detect Foci\n\nEstimated Cost: $${cost.toFixed(4)}\n\nThis will use credit from your account.\n\nProceed?`;
+                if (!confirm(confirmMsg)) {
+                    return;
+                }
             }
         } else {
             // If estimate fails, log but continue (don't block the request)
@@ -4943,11 +4942,16 @@ async function checkAuthStatus() {
             if (logoutBtn) logoutBtn.style.display = 'inline-block';
             const accountBtn = document.getElementById('account-btn');
             if (accountBtn) accountBtn.style.display = 'inline-block';
+            const topUpBtn = document.getElementById('top-up-btn');
+            if (topUpBtn) topUpBtn.style.display = 'inline-block';
             if (userInfo) {
                 userInfo.textContent = `${user.email} (${user.tier})`;
                 userInfo.style.display = 'inline-block';
                 userInfo.title = `Tier: ${user.tier}, Status: ${user.subscription_status}`;
             }
+            
+            // Load credit balance
+            loadCreditBalance();
         } else {
             // Session invalid
             localStorage.removeItem('session_id');
@@ -4956,6 +4960,10 @@ async function checkAuthStatus() {
             if (logoutBtn) logoutBtn.style.display = 'none';
             const accountBtn = document.getElementById('account-btn');
             if (accountBtn) accountBtn.style.display = 'none';
+            const topUpBtn = document.getElementById('top-up-btn');
+            if (topUpBtn) topUpBtn.style.display = 'none';
+            const creditBalance = document.getElementById('credit-balance');
+            if (creditBalance) creditBalance.style.display = 'none';
             if (userInfo) userInfo.style.display = 'none';
         }
     } catch (error) {
@@ -4964,6 +4972,48 @@ async function checkAuthStatus() {
         if (loginBtn) loginBtn.style.display = 'inline-block';
         if (logoutBtn) logoutBtn.style.display = 'none';
         if (userInfo) userInfo.style.display = 'none';
+    }
+}
+
+// Credit balance functions
+async function loadCreditBalance() {
+    const creditBalanceEl = document.getElementById('credit-balance');
+    const creditAmountEl = document.getElementById('credit-balance-amount');
+    
+    if (!creditBalanceEl || !creditAmountEl) return;
+    
+    const sessionId = localStorage.getItem('session_id');
+    if (!sessionId) {
+        creditBalanceEl.style.display = 'none';
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/credit/balance', {
+            headers: {
+                'X-Session-ID': sessionId
+            }
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            creditAmountEl.textContent = `$${data.balance.toFixed(2)}`;
+            creditBalanceEl.style.display = 'inline-block';
+            
+            // Update color based on balance
+            if (data.balance < 1.0) {
+                creditBalanceEl.style.background = '#fff3cd';
+                creditBalanceEl.style.color = '#856404';
+            } else {
+                creditBalanceEl.style.background = '#e8f4f8';
+                creditBalanceEl.style.color = 'var(--primary-color)';
+            }
+        } else {
+            creditBalanceEl.style.display = 'none';
+        }
+    } catch (error) {
+        console.error('Error loading credit balance:', error);
+        creditBalanceEl.style.display = 'none';
     }
 }
 
@@ -5079,6 +5129,22 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Check auth status on page load
     checkAuthStatus();
+    
+    // Check for payment success/cancel in URL
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('payment_success') === 'true') {
+        showSuccess('Payment successful! Credit has been added to your account.');
+        // Refresh credit balance
+        setTimeout(() => {
+            loadCreditBalance();
+            // Clean URL
+            window.history.replaceState({}, document.title, window.location.pathname);
+        }, 1000);
+    } else if (urlParams.get('payment_canceled') === 'true') {
+        showErrorModal('Payment was canceled.');
+        // Clean URL
+        window.history.replaceState({}, document.title, window.location.pathname);
+    }
     
     // Login button handler
     if (loginBtn) {

@@ -17,8 +17,12 @@
                 </div>
                 <div style="flex: 1; text-align: right;">
                     <div id="auth-section">
+                        <span id="credit-balance" style="display: none; margin-right: 12px; padding: 6px 12px; background: #e8f4f8; border-radius: 4px; font-weight: 600; color: var(--primary-color);" title="Account Credit Balance">
+                            💰 <span id="credit-balance-amount">$0.00</span>
+                        </span>
                         <span id="user-info" style="display: none; margin-right: 10px; cursor: pointer;" title="Click to view account"></span>
                         <button id="account-btn" style="display: none; background: var(--primary-color); color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin-right: 8px;">Account</button>
+                        <button id="top-up-btn" style="display: none; background: #28a745; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin-right: 8px;">Top Up</button>
                         <button id="login-btn" style="background: var(--primary-color); color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin-right: 8px;">Login</button>
                         <button id="logout-btn" style="display: none; background: #dc3545; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer;">Logout</button>
                     </div>
@@ -64,7 +68,7 @@
                         <span id="cost-estimate" style="font-size: 1.2em; font-weight: bold; color: #28a745;">-</span>
                     </div>
                     <div style="margin-top: 8px; font-size: 0.85em; color: #666;">
-                        <small>Estimated cost for a typical request. Actual charges based on usage.</small>
+                        <small>Estimated cost for a typical request (1000 input + 500 output tokens). Actual charges based on usage.</small>
                     </div>
                 </div>
                 

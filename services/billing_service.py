@@ -96,6 +96,57 @@ class BillingService:
             'provider': provider
         }
     
+    def get_user_credit_balance(self, user_id: str) -> float:
+        """Get user's current credit balance."""
+        user = self.db.get_user_by_id(user_id)
+        if not user:
+            return 0.0
+        return float(user.get('credit_balance', 0.0))
+    
+    def add_credit(self, user_id: str, amount: float) -> bool:
+        """Add credit to user's account."""
+        user = self.db.get_user_by_id(user_id)
+        if not user:
+            return False
+        
+        current_balance = float(user.get('credit_balance', 0.0))
+        new_balance = current_balance + amount
+        
+        return self.db.update_user(user_id, {'credit_balance': new_balance})
+    
+    def use_credit(self, user_id: str, amount: float) -> Dict:
+        """
+        Use credit from user's account.
+        
+        Returns:
+            Dict with 'success' (bool) and 'remaining_balance' (float) or 'error'
+        """
+        user = self.db.get_user_by_id(user_id)
+        if not user:
+            return {'success': False, 'error': 'User not found'}
+        
+        current_balance = float(user.get('credit_balance', 0.0))
+        
+        if current_balance < amount:
+            return {
+                'success': False,
+                'error': f'Insufficient credit. You have ${current_balance:.2f}, need ${amount:.2f}',
+                'current_balance': current_balance,
+                'required': amount
+            }
+        
+        new_balance = current_balance - amount
+        success = self.db.update_user(user_id, {'credit_balance': new_balance})
+        
+        if success:
+            return {
+                'success': True,
+                'remaining_balance': new_balance,
+                'amount_used': amount
+            }
+        else:
+            return {'success': False, 'error': 'Failed to update credit balance'}
+    
     def charge_user(
         self,
         user_id: str,

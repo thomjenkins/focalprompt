@@ -251,11 +251,26 @@ class Database:
                             email VARCHAR(255) UNIQUE NOT NULL,
                             password_hash TEXT NOT NULL,
                             tier VARCHAR(50) DEFAULT 'free',
+                            credit_balance REAL DEFAULT 5.0,
                             created_at TIMESTAMP NOT NULL,
                             subscription_id VARCHAR(255),
                             subscription_status VARCHAR(50) DEFAULT 'active',
                             stripe_customer_id VARCHAR(255)
                         )
+                    """)
+                    # Add credit_balance column if it doesn't exist (migration)
+                    cursor.execute("""
+                        DO $$ 
+                        BEGIN
+                            IF NOT EXISTS (
+                                SELECT 1 FROM information_schema.columns 
+                                WHERE table_name='users' AND column_name='credit_balance'
+                            ) THEN
+                                ALTER TABLE users ADD COLUMN credit_balance REAL DEFAULT 5.0;
+                                -- Give existing users $5 credit
+                                UPDATE users SET credit_balance = 5.0 WHERE credit_balance IS NULL;
+                            END IF;
+                        END $$;
                     """)
                 else:
                     cursor.execute("""
@@ -264,12 +279,21 @@ class Database:
                             email TEXT UNIQUE NOT NULL,
                             password_hash TEXT NOT NULL,
                             tier TEXT DEFAULT 'free',
+                            credit_balance REAL DEFAULT 5.0,
                             created_at TEXT NOT NULL,
                             subscription_id TEXT,
                             subscription_status TEXT DEFAULT 'active',
                             stripe_customer_id TEXT
                         )
                     """)
+                    # Add credit_balance column if it doesn't exist (migration for SQLite)
+                    try:
+                        cursor.execute("ALTER TABLE users ADD COLUMN credit_balance REAL DEFAULT 5.0")
+                        # Give existing users $5 credit
+                        cursor.execute("UPDATE users SET credit_balance = 5.0 WHERE credit_balance IS NULL")
+                    except sqlite3.OperationalError:
+                        # Column already exists, ignore
+                        pass
                 
                 # Sessions table
                 if self.use_postgres:
@@ -485,15 +509,30 @@ class Database:
             cursor.close()
             return True
     
-    def update_user_tier(self, user_id: str, tier: str) -> bool:
-        """Update user tier."""
+    def update_user(self, user_id: str, updates: Dict) -> bool:
+        """Update user fields."""
         with self._get_conn() as conn:
-            if self.use_postgres:
-                cursor = self._execute(conn, "UPDATE users SET tier = %s WHERE id = %s", (tier, user_id))
-            else:
-                cursor = self._execute(conn, "UPDATE users SET tier = ? WHERE id = ?", (tier, user_id))
+            update_parts = []
+            params = []
+            
+            for key, value in updates.items():
+                if key in ['tier', 'credit_balance', 'subscription_id', 'subscription_status', 'stripe_customer_id']:
+                    update_parts.append(f"{key} = %s" if self.use_postgres else f"{key} = ?")
+                    params.append(value)
+            
+            if not update_parts:
+                return False
+            
+            query = f"UPDATE users SET {', '.join(update_parts)} WHERE id = %s" if self.use_postgres else f"UPDATE users SET {', '.join(update_parts)} WHERE id = ?"
+            params.append(user_id)
+            
+            cursor = self._execute(conn, query, tuple(params))
             cursor.close()
             return True
+    
+    def update_user_tier(self, user_id: str, tier: str) -> bool:
+        """Update user tier."""
+        return self.update_user(user_id, {'tier': tier})
     
     # Session operations
     def create_session(self, session_id: str, user_id: str, expires_at: datetime) -> bool:

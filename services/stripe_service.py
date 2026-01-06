@@ -228,19 +228,45 @@ class StripeService:
         event_data = event['data']['object']
         
         if event_type == 'checkout.session.completed':
-            # Subscription created
+            # Handle both subscription and one-time payment (top-up)
             session = event_data
             user_id = session['metadata'].get('user_id')
-            subscription_id = session.get('subscription')
-            tier = session['metadata'].get('tier', 'starter')
+            payment_type = session['metadata'].get('type', 'subscription')
             
-            if user_id and subscription_id:
-                self.db.update_user_subscription(
-                    user_id,
-                    subscription_id,
-                    'active'
-                )
-                self.db.update_user_tier(user_id, tier)
+            if payment_type == 'pay_as_you_go_top_up':
+                # Top-up payment - add credit to user account
+                amount_cents = int(session['metadata'].get('amount_cents', 0))
+                amount_dollars = amount_cents / 100.0
+                
+                if user_id and amount_dollars > 0:
+                    from services.billing_service import BillingService
+                    billing_service = BillingService()
+                    billing_service.add_credit(user_id, amount_dollars)
+            
+            elif user_id and session.get('subscription'):
+                # Subscription created
+                subscription_id = session.get('subscription')
+                tier = session['metadata'].get('tier', 'starter')
+                
+                if subscription_id:
+                    self.db.update_user_subscription(
+                        user_id,
+                        subscription_id,
+                        'active'
+                    )
+                    self.db.update_user_tier(user_id, tier)
+        
+        elif event_type == 'payment_intent.succeeded':
+            # Handle successful payment intent (for top-ups)
+            payment_intent = event_data
+            user_id = payment_intent['metadata'].get('user_id')
+            amount_cents = payment_intent.get('amount', 0)
+            amount_dollars = amount_cents / 100.0
+            
+            if user_id and amount_dollars > 0:
+                from services.billing_service import BillingService
+                billing_service = BillingService()
+                billing_service.add_credit(user_id, amount_dollars)
         
         elif event_type == 'customer.subscription.updated':
             # Subscription updated

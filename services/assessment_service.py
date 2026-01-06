@@ -83,6 +83,14 @@ Identify all distinct structural components of the prompt."""
         )
         
         result = json.loads(response['content'])
+        
+        # Add usage information to result
+        result['usage'] = {
+            'prompt_tokens': response.get('usage', {}).get('prompt_tokens', 0),
+            'completion_tokens': response.get('usage', {}).get('completion_tokens', 0),
+            'total_tokens': response.get('usage', {}).get('total_tokens', 0)
+        }
+        
         return result
     
     def detect_dynamic_foci(

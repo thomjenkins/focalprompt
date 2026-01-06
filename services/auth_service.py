@@ -61,6 +61,7 @@ class AuthService:
             'email': email,
             'password_hash': password_hash,
             'tier': 'free',
+            'credit_balance': 5.0,  # $5 starting credit
             'created_at': datetime.now().isoformat(),
             'subscription_status': 'active'
         }

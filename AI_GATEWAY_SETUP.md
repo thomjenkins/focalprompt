@@ -83,15 +83,19 @@ The `gateway.ts` file in the root directory can be used to test your gateway con
    Replace `your_gateway_key_here` with your actual gateway API key from Step 2.
 
 4. **Run the test script:**
+   **Option A: Use the helper script (easiest):**
    ```bash
    cd demo
-   pnpm tsx ../gateway.ts
+   ./test-gateway.sh
    ```
 
-   Or from the root directory:
+   **Option B: Run directly:**
    ```bash
-   pnpm --dir demo tsx gateway.ts
+   cd demo
+   pnpm tsx gateway.ts
    ```
+   
+   (Make sure your `.env` file is in the root directory with `AI_GATEWAY_API_KEY=your_key`)
 
 5. **Expected output:**
    - If successful: You'll see the AI-generated text stream, followed by token usage and finish reason
