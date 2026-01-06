@@ -108,6 +108,11 @@ class AIGatewayProvider(LLMProvider):
             'Content-Type': 'application/json'
         }
         
+        # Add Vercel project context if available (helps gateway route to correct project)
+        vercel_project_id = os.getenv('VERCEL_PROJECT_ID')
+        if vercel_project_id:
+            headers['X-Vercel-Project-ID'] = vercel_project_id
+        
         try:
             response = requests.post(url, json=payload, headers=headers, timeout=60)
             
