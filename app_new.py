@@ -153,19 +153,21 @@ def not_found(error):
                 print(f"   ✅ Imported assessment_bp: {assessment_bp.name}", file=sys.stderr)
                 app.register_blueprint(assessment_bp)
                 print("   ✅ Emergency registration successful!", file=sys.stderr)
-                # Now try to handle the request again
+                # Verify registration worked
                 assessment_routes_after = [r for r in app.url_map.iter_rules() if 'assessment' in r.endpoint]
                 print(f"   ✅ {len(assessment_routes_after)} assessment routes now registered", file=sys.stderr)
-                # Try to match the route now
-                try:
-                    from flask import current_app
-                    with app.test_request_context(path=request.path, method=request.method, data=request.get_data(), headers=dict(request.headers)):
-                        rule, args = app.url_map.bind_to_environ(request.environ).match(return_rule=True)
-                        view_func = app.view_functions[rule.endpoint]
-                        return view_func(**args)
-                except Exception as e:
-                    print(f"   ⚠️ Could not route to handler after registration: {e}", file=sys.stderr)
-                    # Fall through to normal 404 handling
+                # Check if generate-output is now available
+                generate_output_routes = [r for r in assessment_routes_after if '/api/generate-output' in str(r)]
+                if generate_output_routes:
+                    print(f"   ✅ /api/generate-output route is now available!", file=sys.stderr)
+                    # Return a message asking user to retry (can't re-route POST in error handler)
+                    return jsonify({
+                        'error': 'Route was just registered. Please retry your request.',
+                        'retry': True,
+                        'message': 'The assessment blueprint was successfully registered. Please send your request again.'
+                    }), 503  # Service Unavailable - temporary, should retry
+                else:
+                    print(f"   ⚠️ Route still not found after registration", file=sys.stderr)
             else:
                 print(f"   ⚠️ assessment_bp already has {len(assessment_routes)} routes but route not found", file=sys.stderr)
         except Exception as e:
