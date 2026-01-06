@@ -106,16 +106,13 @@ def detect_foci():
         
         try:
             result = service.detect_foci(prompt)
-        except ValueError as e:
+        except (ValueError, json.JSONDecodeError) as e:
             # JSON parsing or validation error
             import sys
-            print(f"ValueError in detect_foci: {e}", file=sys.stderr)
+            import traceback
+            print(f"Error parsing LLM response in detect_foci: {type(e).__name__}: {e}", file=sys.stderr)
+            traceback.print_exc(file=sys.stderr)
             return jsonify({'error': f'Failed to parse LLM response: {str(e)}'}), 500
-        except json.JSONDecodeError as e:
-            # JSON parsing error
-            import sys
-            print(f"JSONDecodeError in detect_foci: {e}", file=sys.stderr)
-            return jsonify({'error': 'LLM did not return valid JSON. Please try again.'}), 500
         
         # Calculate actual cost and use credit if authenticated
         if request.user:
