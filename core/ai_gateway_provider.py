@@ -97,8 +97,16 @@ class AIGatewayProvider(LLMProvider):
             'temperature': temperature
         }
         
+        # Only include response_format for models that support it
+        # gpt-4o-mini doesn't support response_format via AI Gateway
+        # Only include for full gpt-4o, gpt-4-turbo, etc.
         if response_format:
-            payload['response_format'] = response_format
+            model_lower = model.lower()
+            # Check if this is a model that supports response_format
+            # Exclude mini models and only include full models
+            if 'mini' not in model_lower and any(supported in model_lower for supported in ['gpt-4o', 'gpt-4-turbo', 'gpt-4', 'gpt-3.5-turbo']):
+                payload['response_format'] = response_format
+            # For mini models or others, skip response_format - prompt will request JSON
         
         # Make direct HTTP request to gateway
         requests = _check_requests()  # Lazy import
