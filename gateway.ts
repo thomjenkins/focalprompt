@@ -14,7 +14,7 @@ async function main() {
   console.log('');
 
   const result = streamText({
-    model: 'openai/gpt-4o-mini', // Using a model that exists
+    model: 'openai/gpt-4o-mini', // Using a model that exists (Vercel example uses 'openai/gpt-4.1' which doesn't exist)
     prompt: 'Invent a new holiday and describe its traditions.',
     apiKey: process.env.AI_GATEWAY_API_KEY,
     baseURL: 'https://gateway.vercel.ai/v1',
