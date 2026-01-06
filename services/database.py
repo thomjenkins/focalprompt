@@ -143,16 +143,25 @@ class Database:
     
     def _ensure_initialized(self):
         """Ensure database is initialized (lazy initialization)."""
-        if not self._initialized:
-            try:
-                self._init_db()
-                self._initialized = True
-            except Exception as e:
-                # Log but don't crash - database might not be available yet
-                import sys
-                print(f"Warning: Database initialization failed: {e}", file=sys.stderr)
-                # Will retry on next use
-                self._initialized = False
+        if self._initialized:
+            return  # Already initialized
+        
+        # Prevent recursion: if we're already initializing, don't call _init_db again
+        if hasattr(self, '_initializing') and self._initializing:
+            return  # Already in the process of initializing
+        
+        try:
+            self._initializing = True  # Set flag to prevent recursion
+            self._init_db()
+            self._initialized = True
+        except Exception as e:
+            # Log but don't crash - database might not be available yet
+            import sys
+            print(f"Warning: Database initialization failed: {e}", file=sys.stderr)
+            # Will retry on next use
+            self._initialized = False
+        finally:
+            self._initializing = False  # Clear flag
     
     @contextmanager
     def _get_conn(self):
