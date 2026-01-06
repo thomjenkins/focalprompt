@@ -103,11 +103,34 @@ Identify all distinct structural components of the prompt."""
         try:
             result = json.loads(content)
         except json.JSONDecodeError as e:
-            # If JSON parsing fails, log the content and raise a helpful error
+            # If JSON parsing fails, try to extract JSON from markdown code blocks or plain text
             import sys
+            import re
             print(f"JSON parsing error in detect_foci: {e}", file=sys.stderr)
             print(f"Response content (first 500 chars): {content[:500]}", file=sys.stderr)
-            raise ValueError(f"LLM did not return valid JSON. Response: {content[:200]}...")
+            
+            # Try to extract JSON from markdown code blocks
+            json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', content, re.DOTALL)
+            if json_match:
+                try:
+                    result = json.loads(json_match.group(1))
+                    print("✅ Extracted JSON from markdown code block", file=sys.stderr)
+                except json.JSONDecodeError:
+                    pass
+            
+            # If still no result, try to find JSON object in the text
+            if 'result' not in locals():
+                json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', content, re.DOTALL)
+                if json_match:
+                    try:
+                        result = json.loads(json_match.group(0))
+                        print("✅ Extracted JSON from text", file=sys.stderr)
+                    except json.JSONDecodeError:
+                        pass
+            
+            # If still no result, raise error
+            if 'result' not in locals():
+                raise ValueError(f"LLM did not return valid JSON. Response: {content[:200]}...")
         
         # Add usage information to result
         result['usage'] = {
