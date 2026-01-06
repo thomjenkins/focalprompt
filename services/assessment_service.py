@@ -95,7 +95,19 @@ Identify all distinct structural components of the prompt."""
         # Use LLM to detect foci from the prompt structure
         response = provider.chat_completion(**chat_kwargs)
         
-        result = json.loads(response['content'])
+        # Parse JSON response - handle cases where response might not be valid JSON
+        content = response.get('content', '')
+        if not content:
+            raise ValueError("Empty response from LLM")
+        
+        try:
+            result = json.loads(content)
+        except json.JSONDecodeError as e:
+            # If JSON parsing fails, log the content and raise a helpful error
+            import sys
+            print(f"JSON parsing error in detect_foci: {e}", file=sys.stderr)
+            print(f"Response content (first 500 chars): {content[:500]}", file=sys.stderr)
+            raise ValueError(f"LLM did not return valid JSON. Response: {content[:200]}...")
         
         # Add usage information to result
         result['usage'] = {
