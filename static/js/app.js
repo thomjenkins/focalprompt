@@ -353,8 +353,62 @@ function loadBatchAnalysis() {
     }
 }
 
+// Model pricing cache
+let modelPricingCache = null;
+
+// Load model pricing on page load
+async function loadModelPricing() {
+    try {
+        const response = await fetch('/api/pricing/models');
+        if (response.ok) {
+            modelPricingCache = await response.json();
+            updateCostDisplay();
+        }
+    } catch (error) {
+        console.error('Error loading model pricing:', error);
+    }
+}
+
+// Update cost display based on selected model
+function updateCostDisplay() {
+    const providerSelect = document.getElementById('provider-select');
+    const modelSelect = document.getElementById('model-select');
+    const costEstimate = document.getElementById('cost-estimate');
+    
+    if (!providerSelect || !modelSelect || !costEstimate || !modelPricingCache) return;
+    
+    const provider = providerSelect.value;
+    const model = modelSelect.value;
+    
+    const providerData = modelPricingCache[provider];
+    if (!providerData) {
+        costEstimate.textContent = '-';
+        return;
+    }
+    
+    const modelData = providerData.models.find(m => m.id === model);
+    if (!modelData || !modelData.pricing) {
+        costEstimate.textContent = '-';
+        return;
+    }
+    
+    const pricing = modelData.pricing;
+    
+    // Estimate for a typical request (1000 input, 500 output tokens)
+    const typicalInput = 1000;
+    const typicalOutput = 500;
+    const estimatedCost = (typicalInput * pricing.input_per_1k / 1000) + (typicalOutput * pricing.output_per_1k / 1000);
+    
+    // Show total cost (already includes markup)
+    costEstimate.textContent = `$${estimatedCost.toFixed(4)}`;
+    costEstimate.title = `Estimated cost for a typical request (${typicalInput} input + ${typicalOutput} output tokens)`;
+}
+
 // Check health on page load
 window.addEventListener('DOMContentLoaded', async () => {
+    // Load model pricing
+    await loadModelPricing();
+    
     // Also add direct listeners as backup
     const buttons = document.querySelectorAll('.tab-btn');
     console.log('Found', buttons.length, 'tab buttons on load');
