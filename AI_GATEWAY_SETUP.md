@@ -15,8 +15,10 @@ If you see: `"The deployment could not be found on Vercel"` (404 error), it mean
 
 ### Step 2: Get Your Gateway API Key
 
-1. In the AI Gateway settings, you'll see your **Gateway API Key**
-2. Copy this key - it should look like: `gateway_xxxxx...`
+1. In the AI Gateway settings, go to **API Keys** in the sidebar
+2. Click on your API key (or the "..." menu) to reveal the full key
+3. Copy the complete key - it may start with `vck_` or another prefix (the format can vary)
+4. The key name (e.g., "focalprompt") is just a label - you need the actual key value
 
 ### Step 3: Set Environment Variable
 
