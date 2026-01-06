@@ -5,10 +5,23 @@ Stripe payment service for FocalPrompt SaaS.
 Handles subscription management, checkout sessions, and webhooks.
 """
 
-import stripe
 import os
 from typing import Dict, Optional
 from services.database import Database
+
+# Lazy import - only import stripe when actually needed
+_stripe_available = None
+
+def _get_stripe():
+    """Get stripe module, raise error if not available."""
+    global _stripe_available
+    if _stripe_available is None:
+        try:
+            import stripe
+            _stripe_available = stripe
+        except ImportError:
+            raise ImportError("stripe package not installed. Install with: pip install stripe")
+    return _stripe_available
 
 
 class StripeService:
@@ -22,10 +35,9 @@ class StripeService:
             api_key: Stripe API key (defaults to env var)
         """
         self.api_key = api_key or os.getenv('STRIPE_SECRET_KEY')
-        if self.api_key:
-            stripe.api_key = self.api_key
         self.webhook_secret = os.getenv('STRIPE_WEBHOOK_SECRET')
         self.db = Database()
+        # Don't configure stripe at init - lazy load
     
     def create_checkout_session(
         self,
@@ -79,7 +91,7 @@ class StripeService:
             return {'error': 'Stripe not configured'}
         
         try:
-            import stripe
+            stripe = _get_stripe()
             stripe.api_key = self.api_key
             
             customer = stripe.Customer.create(
@@ -123,6 +135,9 @@ class StripeService:
             return {'error': 'User not found'}
         
         try:
+            stripe = _get_stripe()
+            stripe.api_key = self.api_key
+            
             # Create or get Stripe customer
             customer_id = user.get('stripe_customer_id')
             if not customer_id:
@@ -160,9 +175,11 @@ class StripeService:
                 'session_id': session.id
             }
             
-        except stripe.error.StripeError as e:
-            return {'error': f'Stripe error: {str(e)}'}
         except Exception as e:
+            # Check if it's a Stripe error
+            stripe = _get_stripe()
+            if isinstance(e, stripe.error.StripeError):
+                return {'error': f'Stripe error: {str(e)}'}
             return {'error': f'Error creating checkout: {str(e)}'}
     
     def create_portal_session(self, user_id: str, base_url: str) -> Dict:
@@ -188,6 +205,9 @@ class StripeService:
             return {'error': 'No active subscription'}
         
         try:
+            stripe = _get_stripe()
+            stripe.api_key = self.api_key
+            
             session = stripe.billing_portal.Session.create(
                 customer=customer_id,
                 return_url=f'{base_url}/dashboard'
@@ -195,8 +215,12 @@ class StripeService:
             
             return {'portal_url': session.url}
             
-        except stripe.error.StripeError as e:
-            return {'error': f'Stripe error: {str(e)}'}
+        except Exception as e:
+            # Check if it's a Stripe error
+            stripe = _get_stripe()
+            if isinstance(e, stripe.error.StripeError):
+                return {'error': f'Stripe error: {str(e)}'}
+            return {'error': f'Error creating portal: {str(e)}'}
     
     def handle_webhook(self, payload: bytes, signature: str) -> Dict:
         """
@@ -213,6 +237,8 @@ class StripeService:
             return {'error': 'Webhook secret not configured'}
         
         try:
+            stripe = _get_stripe()
+            
             event = stripe.Webhook.construct_event(
                 payload,
                 signature,
@@ -220,8 +246,12 @@ class StripeService:
             )
         except ValueError as e:
             return {'error': f'Invalid payload: {str(e)}'}
-        except stripe.error.SignatureVerificationError as e:
-            return {'error': f'Invalid signature: {str(e)}'}
+        except Exception as e:
+            # Check if it's a Stripe signature error
+            stripe = _get_stripe()
+            if isinstance(e, stripe.error.SignatureVerificationError):
+                return {'error': f'Invalid signature: {str(e)}'}
+            raise  # Re-raise if not a Stripe error
         
         # Handle different event types
         event_type = event['type']

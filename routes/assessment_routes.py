@@ -217,14 +217,20 @@ def generate_output():
     try:
         data = request.json
         prompt = data.get('prompt', '')
-        model = data.get('model', 'gpt-4o-mini')
         temperature = data.get('temperature', 0.7)
         
         if not prompt:
             return jsonify({'error': 'Prompt is required'}), 400
         
         # Get model and provider from request (API key no longer needed - uses AI Gateway)
+        # Defaults: model='gpt-4o-mini', provider='openai'
         _, model, provider = get_api_key_and_model(data)
+        
+        # Ensure we have defaults
+        if not model:
+            model = 'gpt-4o-mini'
+        if not provider:
+            provider = 'openai'
         
         assessor = get_assessor(api_key=None, model=model, provider=provider)
         output = assessor.generate_output(prompt, temperature=temperature)
