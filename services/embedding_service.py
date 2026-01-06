@@ -40,7 +40,8 @@ class EmbeddingService:
             raise ValueError("AI_GATEWAY_API_KEY not provided and not found in environment variables")
         
         # Vercel AI Gateway endpoint (OpenAI-compatible)
-        self.base_url = base_url or os.getenv("AI_GATEWAY_URL", "https://gateway.vercel.ai/v1")
+        # Official URL: https://ai-gateway.vercel.sh/v1
+        self.base_url = base_url or os.getenv("AI_GATEWAY_URL", "https://ai-gateway.vercel.sh/v1")
         self.base_url = self.base_url.rstrip('/')
         
         # OpenAI embedding model (via gateway)

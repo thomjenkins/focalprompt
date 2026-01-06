@@ -17,7 +17,7 @@ async function main() {
     model: 'openai/gpt-4o-mini', // Using a model that exists
     prompt: 'Invent a new holiday and describe its traditions.',
     apiKey: process.env.AI_GATEWAY_API_KEY,
-    baseURL: 'https://gateway.vercel.ai/v1',
+    baseURL: 'https://ai-gateway.vercel.sh/v1',
   });
 
   for await (const textPart of result.textStream) {

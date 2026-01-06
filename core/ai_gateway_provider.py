@@ -55,9 +55,9 @@ class AIGatewayProvider(LLMProvider):
         self.gateway_api_key = gateway_api_key
         
         # Vercel AI Gateway endpoint (OpenAI-compatible)
-        # Default: https://gateway.vercel.ai/v1
+        # Official URL: https://ai-gateway.vercel.sh/v1
         # Can be overridden with AI_GATEWAY_URL environment variable
-        self.base_url = base_url or os.getenv("AI_GATEWAY_URL", "https://gateway.vercel.ai/v1")
+        self.base_url = base_url or os.getenv("AI_GATEWAY_URL", "https://ai-gateway.vercel.sh/v1")
         
         # Ensure base_url doesn't end with a slash
         self.base_url = self.base_url.rstrip('/')
