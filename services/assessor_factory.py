@@ -24,6 +24,12 @@ class AssessorFactory:
         
         if not self._gateway_api_key:
             # Provide helpful error message
+            import sys
+            print("ERROR: AI_GATEWAY_API_KEY environment variable not set.", file=sys.stderr)
+            print("Please set it in your Vercel project settings:", file=sys.stderr)
+            print("1. Go to Vercel Dashboard → Your Project → Settings → Environment Variables", file=sys.stderr)
+            print("2. Add AI_GATEWAY_API_KEY with your gateway API key", file=sys.stderr)
+            print("3. The key can be found in Settings → AI Gateway", file=sys.stderr)
             raise ValueError(
                 "AI_GATEWAY_API_KEY environment variable not set. "
                 "Please set it in your Vercel project settings. "

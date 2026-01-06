@@ -111,6 +111,7 @@ class AIGatewayProvider(LLMProvider):
             # Extract more detailed error information from OpenAI SDK exceptions
             error_msg = str(e)
             error_code = None
+            error_details = {}
             
             # OpenAI SDK wraps HTTP errors in specific exception types
             # Check for status_code attribute
@@ -125,9 +126,13 @@ class AIGatewayProvider(LLMProvider):
                     try:
                         error_data = e.response.json()
                         if isinstance(error_data, dict):
+                            error_details = error_data
                             # Format error data nicely
                             if 'error' in error_data:
-                                error_msg = str(error_data['error'])
+                                if isinstance(error_data['error'], dict):
+                                    error_msg = error_data['error'].get('message', str(error_data['error']))
+                                else:
+                                    error_msg = str(error_data['error'])
                             else:
                                 error_msg = str(error_data)
                         else:
@@ -141,19 +146,37 @@ class AIGatewayProvider(LLMProvider):
                     except:
                         pass
             
-            # Provide user-friendly error messages (no technical details about API keys)
+            # Log detailed error for debugging (server-side only)
+            import sys
+            print(f"AI Gateway Error (code {error_code}): {error_msg}", file=sys.stderr)
+            if error_details:
+                print(f"Error details: {error_details}", file=sys.stderr)
+            print(f"Gateway URL: {self.base_url}", file=sys.stderr)
+            print(f"Model: {gateway_model}", file=sys.stderr)
+            print(f"API Key (first 20 chars): {self.gateway_api_key[:20] if self.gateway_api_key else 'None'}...", file=sys.stderr)
+            
+            # Provide user-friendly error messages with helpful guidance
             if error_code == 404:
                 error_msg = (
-                    f"Service temporarily unavailable. Please try again in a moment. "
-                    f"If the problem persists, please contact support."
+                    f"AI Gateway not found. This usually means:\n"
+                    f"1. The AI Gateway hasn't been created in your Vercel project\n"
+                    f"2. The AI_GATEWAY_API_KEY is incorrect\n"
+                    f"3. The gateway is in a different Vercel project\n\n"
+                    f"Please check your Vercel dashboard → Settings → AI Gateway to verify the gateway is set up correctly."
                 )
             elif error_code == 401:
                 error_msg = (
-                    f"Authentication failed. Please try again or contact support if the issue persists."
+                    f"AI Gateway authentication failed. Please verify:\n"
+                    f"1. The AI_GATEWAY_API_KEY is correct in your Vercel environment variables\n"
+                    f"2. The key hasn't been regenerated (if so, update it in Vercel)\n"
+                    f"3. You're using the Gateway API key, not your Vercel account token"
                 )
             elif error_code == 403:
                 error_msg = (
-                    f"Access denied. Please contact support if you believe this is an error."
+                    f"AI Gateway access denied. Please check:\n"
+                    f"1. The gateway is enabled for your Vercel project\n"
+                    f"2. The gateway API key has the correct permissions\n"
+                    f"3. The gateway is in the same project as your deployment"
                 )
             elif error_code == 429:
                 error_msg = (
@@ -161,10 +184,14 @@ class AIGatewayProvider(LLMProvider):
                 )
             elif error_code == 500 or error_code == 502 or error_code == 503:
                 error_msg = (
-                    f"Service temporarily unavailable. Please try again in a moment."
+                    f"AI Gateway service temporarily unavailable. Please try again in a moment."
                 )
             else:
-                error_msg = f"Request failed. Please try again or contact support if the issue persists."
+                # Include the actual error message for unknown errors
+                if error_code:
+                    error_msg = f"AI Gateway request failed (Error {error_code}): {error_msg}"
+                else:
+                    error_msg = f"AI Gateway request failed: {error_msg}"
             
             raise Exception(error_msg)
     
