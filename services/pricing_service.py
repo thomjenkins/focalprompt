@@ -64,8 +64,9 @@ class PricingService:
             provider
         )
         
-        # CostCalculator already includes markup in total_cost
-        total_cost = cost_breakdown['total_cost']
+        # Apply 50% markup to base cost
+        base_cost = cost_breakdown['total_cost']
+        total_cost = base_cost * self.MARKUP_MULTIPLIER
         
         return {
             'estimated_input_tokens': estimated_input_tokens,
