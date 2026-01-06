@@ -86,6 +86,12 @@ try:
 except Exception as e:
     print(f"Error registering usage_bp: {e}", file=sys.stderr)
 
+try:
+    from routes.pricing_routes import pricing_bp
+    app.register_blueprint(pricing_bp)
+except Exception as e:
+    print(f"Error registering pricing_bp: {e}", file=sys.stderr)
+
 
 @app.route('/')
 def index():

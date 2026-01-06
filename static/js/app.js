@@ -763,7 +763,8 @@ detectFociBtn.addEventListener('click', async () => {
             }
         } else {
             // If estimate fails, log but continue (don't block the request)
-            console.warn('Could not get cost estimate, proceeding anyway');
+            const errorText = await estimateResponse.text();
+            console.warn('Could not get cost estimate:', estimateResponse.status, errorText);
         }
     } catch (error) {
         console.warn('Could not estimate cost:', error);
