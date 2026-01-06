@@ -56,6 +56,7 @@ class EmbeddingService:
         Returns:
             Numpy array of embedding vector
         """
+        requests = _check_requests()  # Lazy import
         url = f"{self.base_url}/embeddings"
         headers = {
             'Authorization': f'Bearer {self.gateway_api_key}',
@@ -97,6 +98,7 @@ class EmbeddingService:
         Returns:
             Tuple of (embedding_array, token_count)
         """
+        requests = _check_requests()  # Lazy import
         url = f"{self.base_url}/embeddings"
         headers = {
             'Authorization': f'Bearer {self.gateway_api_key}',
