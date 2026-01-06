@@ -108,18 +108,64 @@ class AIGatewayProvider(LLMProvider):
             }
                 
         except Exception as e:
-            # Extract more detailed error information
+            # Extract more detailed error information from OpenAI SDK exceptions
             error_msg = str(e)
-            if hasattr(e, 'response') and hasattr(e.response, 'json'):
-                try:
-                    error_data = e.response.json()
-                    error_msg = f"Error code: {e.response.status_code} - {error_data}"
-                except:
-                    error_msg = f"Error code: {e.response.status_code} - {error_msg}"
-            elif hasattr(e, 'status_code'):
-                error_msg = f"Error code: {e.status_code} - {error_msg}"
+            error_code = None
             
-            raise Exception(f"AI Gateway request failed: {error_msg}")
+            # OpenAI SDK wraps HTTP errors in specific exception types
+            # Check for status_code attribute
+            if hasattr(e, 'status_code'):
+                error_code = e.status_code
+            # Check for response object
+            elif hasattr(e, 'response'):
+                if hasattr(e.response, 'status_code'):
+                    error_code = e.response.status_code
+                # Try to extract JSON error details
+                if hasattr(e.response, 'json'):
+                    try:
+                        error_data = e.response.json()
+                        if isinstance(error_data, dict):
+                            # Format error data nicely
+                            if 'error' in error_data:
+                                error_msg = str(error_data['error'])
+                            else:
+                                error_msg = str(error_data)
+                        else:
+                            error_msg = str(error_data)
+                    except:
+                        pass
+                # Also check for text response
+                elif hasattr(e.response, 'text'):
+                    try:
+                        error_msg = e.response.text
+                    except:
+                        pass
+            
+            # Provide helpful error message for common issues
+            if error_code == 404:
+                error_msg = (
+                    f"AI Gateway deployment not found (404). "
+                    f"This usually means your AI_GATEWAY_API_KEY is incorrect or the gateway isn't set up. "
+                    f"Please check: 1) Create AI Gateway in Vercel dashboard, 2) Copy the gateway API key, "
+                    f"3) Set AI_GATEWAY_API_KEY environment variable. "
+                    f"See AI_GATEWAY_SETUP.md for details. Original error: {error_msg}"
+                )
+            elif error_code == 401:
+                error_msg = (
+                    f"AI Gateway authentication failed (401). "
+                    f"Please verify your AI_GATEWAY_API_KEY is correct. "
+                    f"Original error: {error_msg}"
+                )
+            elif error_code == 403:
+                error_msg = (
+                    f"AI Gateway access denied (403). "
+                    f"Please verify your API key has the correct permissions. "
+                    f"Original error: {error_msg}"
+                )
+            else:
+                error_msg = f"AI Gateway request failed (code: {error_code or 'unknown'}): {error_msg}"
+            
+            raise Exception(error_msg)
     
     def list_models(self, provider: str = 'openai') -> List[str]:
         """
