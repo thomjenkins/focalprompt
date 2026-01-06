@@ -14,10 +14,19 @@ import json
 from typing import List, Dict, Any, Optional
 from core.llm_providers import LLMProvider
 
-try:
-    import requests
-except ImportError:
-    raise ImportError("requests package not installed. Install with: pip install requests")
+# Lazy import - only import requests when actually needed
+_requests_available = None
+
+def _check_requests():
+    """Check if requests is available, raise error if not."""
+    global _requests_available
+    if _requests_available is None:
+        try:
+            import requests
+            _requests_available = requests
+        except ImportError:
+            raise ImportError("requests package not installed. Install with: pip install requests")
+    return _requests_available
 
 
 class AIGatewayProvider(LLMProvider):
@@ -92,6 +101,7 @@ class AIGatewayProvider(LLMProvider):
             payload['response_format'] = response_format
         
         # Make direct HTTP request to gateway
+        requests = _check_requests()  # Lazy import
         url = f"{self.base_url}/chat/completions"
         headers = {
             'Authorization': f'Bearer {self.gateway_api_key}',
