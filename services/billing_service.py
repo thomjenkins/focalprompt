@@ -7,11 +7,14 @@ and usage tracking for billing.
 """
 
 import os
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, TYPE_CHECKING
 from decimal import Decimal, ROUND_UP
 from services.cost_calculator import CostCalculator
 from services.database import Database
-from services.stripe_service import StripeService
+
+# Lazy import - only import StripeService when actually needed for payments
+if TYPE_CHECKING:
+    from services.stripe_service import StripeService
 
 
 class BillingService:
@@ -23,17 +26,27 @@ class BillingService:
     # Minimum charge amount (in cents) - avoid micro-transactions
     MIN_CHARGE_CENTS = 50  # $0.50 minimum
     
-    def __init__(self, db: Database = None, stripe_service: StripeService = None):
+    def __init__(self, db: Database = None, stripe_service = None):
         """
         Initialize billing service.
         
         Args:
             db: Database instance
-            stripe_service: Stripe service instance
+            stripe_service: Stripe service instance (optional, only needed for payments)
         """
         self.db = db or Database()
-        self.stripe_service = stripe_service or StripeService()
+        self._stripe_service = stripe_service  # Don't create at init - lazy load
         self.cost_calculator = CostCalculator()
+    
+    def _get_stripe_service(self):
+        """Get StripeService instance (lazy initialization). Only needed for payments."""
+        if self._stripe_service is None:
+            try:
+                from services.stripe_service import StripeService
+                self._stripe_service = StripeService()
+            except ImportError:
+                raise ImportError("stripe package not installed. Install with: pip install stripe")
+        return self._stripe_service
     
     def calculate_charge_amount(
         self,
@@ -176,11 +189,14 @@ class BillingService:
         if not user:
             return {'error': 'User not found'}
         
+        # Get Stripe service (lazy load)
+        stripe_service = self._get_stripe_service()
+        
         # Get or create Stripe customer
         stripe_customer_id = user.get('stripe_customer_id')
         if not stripe_customer_id:
             # Create Stripe customer
-            result = self.stripe_service.create_customer(user_id, user['email'])
+            result = stripe_service.create_customer(user_id, user['email'])
             if 'error' in result:
                 return result
             stripe_customer_id = result['customer_id']
@@ -188,7 +204,7 @@ class BillingService:
         # Create payment intent
         try:
             import stripe
-            stripe.api_key = self.stripe_service.api_key
+            stripe.api_key = stripe_service.api_key
             
             payment_intent = stripe.PaymentIntent.create(
                 amount=amount_cents,
