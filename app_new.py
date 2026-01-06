@@ -130,23 +130,35 @@ def not_found(error):
     import sys
     from flask import request
     # Log for debugging
-    print(f"404 for {request.method} {request.path}", file=sys.stderr)
+    print(f"❌ 404 for {request.method} {request.path}", file=sys.stderr)
     # Get all registered routes
-    all_routes = [str(r) for r in app.url_map.iter_rules()]
-    api_routes = [r for r in all_routes if r.startswith('/api/')]
+    all_routes = list(app.url_map.iter_rules())
+    api_routes = [r for r in all_routes if str(r).startswith('/api/')]
     print(f"Total registered routes: {len(all_routes)}", file=sys.stderr)
-    print(f"API routes ({len(api_routes)}): {api_routes[:20]}", file=sys.stderr)  # First 20
+    print(f"API routes: {len(api_routes)}", file=sys.stderr)
+    
     # Check if the route exists with different method
-    matching_routes = [str(r) for r in app.url_map.iter_rules() if request.path in str(r)]
+    matching_routes = [r for r in all_routes if request.path in str(r)]
     if matching_routes:
-        print(f"Routes matching path (different method?): {matching_routes}", file=sys.stderr)
+        print(f"⚠️ Routes matching path (different method?):", file=sys.stderr)
+        for route in matching_routes:
+            print(f"   {list(route.methods)} {route} (endpoint: {route.endpoint})", file=sys.stderr)
+    
+    # Specifically check for generate-output
+    if '/api/generate-output' in request.path:
+        generate_output_routes = [r for r in all_routes if '/api/generate-output' in str(r)]
+        print(f"🔍 generate-output routes found: {len(generate_output_routes)}", file=sys.stderr)
+        for route in generate_output_routes:
+            print(f"   {list(route.methods)} {route} (endpoint: {route.endpoint})", file=sys.stderr)
+    
     if request.path.startswith('/api/'):
         return jsonify({
             'error': f'Endpoint not found: {request.method} {request.path}',
             'method': request.method,
             'path': request.path,
             'available_api_routes_count': len(api_routes),
-            'hint': 'Check Vercel logs for route registration errors'
+            'matching_paths': [str(r) for r in matching_routes] if matching_routes else [],
+            'hint': 'Check Vercel logs for route registration errors. Visit /api/routes to see all registered routes.'
         }), 404
     return render_template('index.html'), 404
 

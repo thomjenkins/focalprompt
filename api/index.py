@@ -28,6 +28,19 @@ try:
     print("✅ App imported successfully", file=sys.stderr)
     print(f"App type: {type(app)}", file=sys.stderr)
     
+    # Log all registered routes for debugging
+    print("📋 Registered routes:", file=sys.stderr)
+    api_routes = [r for r in app.url_map.iter_rules() if str(r).startswith('/api/')]
+    print(f"   Total API routes: {len(api_routes)}", file=sys.stderr)
+    for route in sorted(api_routes, key=lambda x: str(x))[:30]:  # First 30
+        print(f"   {list(route.methods)} {route}", file=sys.stderr)
+    
+    # Specifically check for generate-output
+    generate_output_routes = [r for r in app.url_map.iter_rules() if '/api/generate-output' in str(r)]
+    print(f"🔍 generate-output routes: {len(generate_output_routes)}", file=sys.stderr)
+    for route in generate_output_routes:
+        print(f"   ✅ {list(route.methods)} {route} (endpoint: {route.endpoint})", file=sys.stderr)
+    
     # Add a diagnostic endpoint
     from flask import jsonify as flask_jsonify
     @app.route('/api/diagnostic', methods=['GET'])
