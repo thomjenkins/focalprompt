@@ -41,7 +41,11 @@ except ImportError as e:
 try:
     from routes.assessment_routes import assessment_bp
     app.register_blueprint(assessment_bp)
-    print(f"✅ Registered assessment_bp with {len(list(assessment_bp.deferred_functions))} routes", file=sys.stderr)
+    # Count actual routes registered
+    assessment_routes = [r for r in app.url_map.iter_rules() if 'assessment' in r.endpoint]
+    print(f"✅ Registered assessment_bp with {len(assessment_routes)} routes", file=sys.stderr)
+    for route in assessment_routes:
+        print(f"   - {list(route.methods)} {route}", file=sys.stderr)
 except Exception as e:
     print(f"❌ Error registering assessment_bp: {e}", file=sys.stderr)
     import traceback
@@ -186,6 +190,36 @@ def test():
         'status': 'ok',
         'message': 'App is running',
         'python_version': __import__('sys').version
+    })
+
+
+@app.route('/api/routes', methods=['GET'])
+def list_routes():
+    """List all registered routes for debugging."""
+    import sys
+    routes_info = []
+    for rule in app.url_map.iter_rules():
+        routes_info.append({
+            'endpoint': rule.endpoint,
+            'methods': list(rule.methods),
+            'path': str(rule),
+            'is_api': str(rule).startswith('/api/')
+        })
+    
+    # Sort by path
+    routes_info.sort(key=lambda x: x['path'])
+    
+    # Log to stderr for Vercel logs
+    print(f"Total routes registered: {len(routes_info)}", file=sys.stderr)
+    api_routes = [r for r in routes_info if r['is_api']]
+    print(f"API routes: {len(api_routes)}", file=sys.stderr)
+    for route in api_routes[:20]:  # First 20
+        print(f"  {route['methods']} {route['path']}", file=sys.stderr)
+    
+    return jsonify({
+        'total_routes': len(routes_info),
+        'api_routes': len(api_routes),
+        'routes': routes_info
     })
 
 
