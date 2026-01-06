@@ -710,6 +710,34 @@ detectFociBtn.addEventListener('click', async () => {
         return;
     }
     
+    // Estimate cost before making the request
+    try {
+        const estimateResponse = await fetch('/api/pricing/estimate', {
+            method: 'POST',
+            headers: getApiHeaders(),
+            body: JSON.stringify({
+                estimated_input_tokens: Math.ceil(prompt.length / 4) + 500, // Rough estimate: prompt + system message
+                estimated_output_tokens: 1000, // Estimate for foci detection response
+                model: userModel,
+                provider: userProvider
+            })
+        });
+        
+        if (estimateResponse.ok) {
+            const estimate = await estimateResponse.json();
+            const cost = estimate.total_cost || 0;
+            if (cost > 0) {
+                const confirmMsg = `Estimated cost: $${cost.toFixed(4)}\n\nProceed with detecting foci?`;
+                if (!confirm(confirmMsg)) {
+                    return;
+                }
+            }
+        }
+    } catch (error) {
+        console.warn('Could not estimate cost:', error);
+        // Continue anyway
+    }
+    
     showLoading('Detecting foci from prompt...');
     
     try {
@@ -737,7 +765,7 @@ detectFociBtn.addEventListener('click', async () => {
         renderFoci();
         
     } catch (error) {
-        showError('Error detecting foci: ' + error.message);
+        showErrorModal('Error detecting foci: ' + error.message);
         console.error('Detect foci error:', error);
     } finally {
         hideLoading();

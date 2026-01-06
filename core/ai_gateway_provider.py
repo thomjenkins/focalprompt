@@ -108,7 +108,18 @@ class AIGatewayProvider(LLMProvider):
             }
                 
         except Exception as e:
-            raise Exception(f"AI Gateway request failed: {str(e)}")
+            # Extract more detailed error information
+            error_msg = str(e)
+            if hasattr(e, 'response') and hasattr(e.response, 'json'):
+                try:
+                    error_data = e.response.json()
+                    error_msg = f"Error code: {e.response.status_code} - {error_data}"
+                except:
+                    error_msg = f"Error code: {e.response.status_code} - {error_msg}"
+            elif hasattr(e, 'status_code'):
+                error_msg = f"Error code: {e.status_code} - {error_msg}"
+            
+            raise Exception(f"AI Gateway request failed: {error_msg}")
     
     def list_models(self, provider: str = 'openai') -> List[str]:
         """

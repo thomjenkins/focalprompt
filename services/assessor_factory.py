@@ -23,7 +23,12 @@ class AssessorFactory:
         self._gateway_api_key = os.getenv("AI_GATEWAY_API_KEY")
         
         if not self._gateway_api_key:
-            raise ValueError("AI_GATEWAY_API_KEY environment variable not set")
+            # Provide helpful error message
+            raise ValueError(
+                "AI_GATEWAY_API_KEY environment variable not set. "
+                "Please set it in your Vercel project settings. "
+                "You can find your AI Gateway API key in the Vercel dashboard under your project's AI Gateway settings."
+            )
     
     def get_assessor(
         self,
