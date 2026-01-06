@@ -43,11 +43,17 @@ class AssessmentService:
             Dict with 'foci' list
         """
         provider = self.assessor.provider
+        provider_name = getattr(self.assessor, 'provider_name', 'openai')
         
-        # Use LLM to detect foci from the prompt structure
-        response = provider.chat_completion(
-            model=self.assessor.model,
-            messages=[
+        # Check if provider needs provider parameter (AI Gateway)
+        import inspect
+        sig = inspect.signature(provider.chat_completion)
+        needs_provider = 'provider' in sig.parameters
+        
+        # Build chat_completion call with or without provider parameter
+        chat_kwargs = {
+            'model': self.assessor.model,
+            'messages': [
                 {
                     "role": "system",
                     "content": "You are an expert at analyzing prompts and breaking them down into distinct structural components (foci). Each focus should be a specific instruction, requirement, constraint, or task from the prompt."
@@ -78,9 +84,16 @@ Return a JSON object with this structure:
 Identify all distinct structural components of the prompt."""
                 }
             ],
-            response_format={"type": "json_object"},
-            temperature=0.3
-        )
+            'response_format': {"type": "json_object"},
+            'temperature': 0.3
+        }
+        
+        # Add provider parameter if needed (for AI Gateway)
+        if needs_provider:
+            chat_kwargs['provider'] = provider_name
+        
+        # Use LLM to detect foci from the prompt structure
+        response = provider.chat_completion(**chat_kwargs)
         
         result = json.loads(response['content'])
         
@@ -111,6 +124,7 @@ Identify all distinct structural components of the prompt."""
             Dict with 'foci' (updated) and 'suggestions'
         """
         provider = self.assessor.provider
+        provider_name = getattr(self.assessor, 'provider_name', 'openai')
         
         # Extract input patterns from pairs
         input_samples = []
@@ -128,10 +142,15 @@ Identify all distinct structural components of the prompt."""
             for i, f in enumerate(foci)
         ])
         
+        # Check if provider needs provider parameter (AI Gateway)
+        import inspect
+        sig = inspect.signature(provider.chat_completion)
+        needs_provider = 'provider' in sig.parameters
+        
         # Use LLM to analyze which foci correspond to dynamic inputs
-        response = provider.chat_completion(
-            model=self.assessor.model,
-            messages=[
+        chat_kwargs = {
+            'model': self.assessor.model,
+            'messages': [
                 {
                     "role": "system",
                     "content": "You are an expert at analyzing prompt structures and identifying which sections correspond to dynamic inputs (chat content, RAG context, tool results) versus static instructions."
@@ -240,8 +259,16 @@ Only mark as dynamic if confidence > 0.6."""
                 prompt, output, user_foci, max_foci
             )
             
-            response = self.assessor.provider.chat_completion(
-                messages=[
+            provider = self.assessor.provider
+            provider_name = getattr(self.assessor, 'provider_name', 'openai')
+            
+            # Check if provider needs provider parameter (AI Gateway)
+            import inspect
+            sig = inspect.signature(provider.chat_completion)
+            needs_provider = 'provider' in sig.parameters
+            
+            chat_kwargs = {
+                'messages': [
                     {
                         "role": "system",
                         "content": "You are an expert at analyzing how well LLM outputs address different aspects of prompts. You assess the level of attention given to each specified focus point."
@@ -251,10 +278,16 @@ Only mark as dynamic if confidence > 0.6."""
                         "content": assessment_prompt
                     }
                 ],
-                model=self.assessor.model,
-                response_format={"type": "json_object"},
-                temperature=0.3
-            )
+                'model': self.assessor.model,
+                'response_format': {"type": "json_object"},
+                'temperature': 0.3
+            }
+            
+            # Add provider parameter if needed (for AI Gateway)
+            if needs_provider:
+                chat_kwargs['provider'] = provider_name
+            
+            response = provider.chat_completion(**chat_kwargs)
             
             result = json.loads(response['content'])
             
