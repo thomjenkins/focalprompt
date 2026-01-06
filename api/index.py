@@ -41,6 +41,27 @@ try:
     for route in generate_output_routes:
         print(f"   ✅ {list(route.methods)} {route} (endpoint: {route.endpoint})", file=sys.stderr)
     
+    # Check for assessment blueprint routes
+    assessment_routes = [r for r in app.url_map.iter_rules() if 'assessment' in r.endpoint]
+    print(f"🔍 assessment blueprint routes: {len(assessment_routes)}", file=sys.stderr)
+    if len(assessment_routes) == 0:
+        print("   ⚠️ WARNING: No assessment routes found! Blueprint may not have registered.", file=sys.stderr)
+        # Try to import and see what happens
+        try:
+            print("   🔄 Attempting to manually import assessment_bp...", file=sys.stderr)
+            from routes.assessment_routes import assessment_bp
+            print(f"   ✅ assessment_bp imported: {assessment_bp.name}, routes: {len(list(assessment_bp.deferred_functions))}", file=sys.stderr)
+            print("   🔄 Attempting to register manually...", file=sys.stderr)
+            app.register_blueprint(assessment_bp)
+            print("   ✅ Manual registration successful", file=sys.stderr)
+            # Check again
+            assessment_routes_after = [r for r in app.url_map.iter_rules() if 'assessment' in r.endpoint]
+            print(f"   ✅ assessment routes after manual registration: {len(assessment_routes_after)}", file=sys.stderr)
+        except Exception as e:
+            print(f"   ❌ Manual import/registration failed: {type(e).__name__}: {e}", file=sys.stderr)
+            import traceback
+            traceback.print_exc(file=sys.stderr)
+    
     # Add a diagnostic endpoint
     from flask import jsonify as flask_jsonify
     @app.route('/api/diagnostic', methods=['GET'])
