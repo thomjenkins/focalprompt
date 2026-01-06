@@ -798,8 +798,20 @@ detectFociBtn.addEventListener('click', async () => {
         renderFoci();
         
     } catch (error) {
-        showErrorModal('Error detecting foci: ' + error.message);
+        // Log full error details for debugging
         console.error('Detect foci error:', error);
+        console.error('Error details:', {
+            message: error.message,
+            stack: error.stack,
+            response: error.response
+        });
+        
+        // Show user-friendly error message
+        let errorMessage = 'Error detecting foci: ' + error.message;
+        if (error.message.includes('404') || error.message.includes('deployment')) {
+            errorMessage = 'Service temporarily unavailable. Please try again in a moment. If the problem persists, please contact support.';
+        }
+        showErrorModal(errorMessage);
     } finally {
         hideLoading();
     }
