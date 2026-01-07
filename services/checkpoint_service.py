@@ -7,6 +7,7 @@ Handles saving, loading, and listing checkpoints for batch operations.
 
 import os
 import json
+import sys
 from typing import Optional, Dict, List
 from datetime import datetime
 
