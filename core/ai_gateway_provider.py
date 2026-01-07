@@ -175,7 +175,11 @@ class AIGatewayProvider(LLMProvider):
             
             # Provide user-friendly error messages (no technical details)
             if error_code == 404:
-                user_error_msg = "Service temporarily unavailable. Please try again in a moment. If the problem persists, please contact support."
+                # Check if it's a model not found error
+                if 'model' in error_msg.lower() or 'not found' in error_msg.lower():
+                    user_error_msg = f"Model '{model}' is not available for provider '{provider}'. Please try a different model or provider."
+                else:
+                    user_error_msg = "Service temporarily unavailable. Please try again in a moment. If the problem persists, please contact support."
             elif error_code == 401:
                 user_error_msg = "Service temporarily unavailable. Please try again in a moment. If the problem persists, please contact support."
             elif error_code == 403:
