@@ -775,9 +775,34 @@ window.addEventListener('DOMContentLoaded', async () => {
         // Update model list when provider changes
         providerSelect.addEventListener('change', () => {
             const newProvider = providerSelect.value;
+            const oldProvider = userProvider;
             userProvider = newProvider;
+            
+            // Only reset model if provider actually changed
+            if (oldProvider !== newProvider) {
+                // Check if current model is valid for new provider
+                const currentModelValid = allModelsFlat.some(m => m.value === userModel && m.provider === newProvider);
+                
+                if (!currentModelValid) {
+                    // Model not valid for new provider, use default
+                    const defaultModel = defaultModels[newProvider] || (allModelsData[newProvider] && allModelsData[newProvider][0]) || 'gpt-4o-mini';
+                    userModel = defaultModel;
+                    
+                    // Update model select dropdown if it exists
+                    if (modelSelect) {
+                        modelSelect.value = defaultModel;
+                    }
+                    
+                    // Update search input
+                    updateModelSearchValue();
+                    
+                    // Save to localStorage
+                    localStorage.setItem('focalprompt_model', defaultModel);
+                    localStorage.setItem('focalprompt_provider', newProvider);
+                }
+            }
+            
             updateModelSelector(newProvider);
-            userModel = modelSelect.value;
         });
     }
     
