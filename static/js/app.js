@@ -904,6 +904,11 @@ clearFociBtn.addEventListener('click', () => {
     }
 });
 
+// Merge foci button
+if (mergeFociBtn) {
+    mergeFociBtn.addEventListener('click', mergeSelectedFoci);
+}
+
 // Color palette for foci
 const focusColors = [
     '#dbeafe', '#d1fae5', '#fef3c7', '#fce7f3', '#e0e7ff',
