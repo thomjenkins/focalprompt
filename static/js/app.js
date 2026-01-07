@@ -11,8 +11,8 @@ let userProvider = localStorage.getItem('focalprompt_provider') || 'openai';
 let userApiKey = localStorage.getItem('focalprompt_api_key') || '';
 let userModel = localStorage.getItem('focalprompt_model') || 'gpt-4o-mini';
 
-// Comprehensive model list for all providers
-const allModelsData = {
+// Dynamic model list - will be populated from API
+let allModelsData = {
     openai: ['gpt-5.2', 'gpt-5.1-instant', 'gpt-5.1-thinking', 'gpt-5.1-codex', 'gpt-5.1-codex-mini', 'gpt-5.1-codex-max', 'gpt-5.2-pro', 'gpt-5.2-chat', 'gpt-5', 'gpt-5-mini', 'gpt-5-nano', 'gpt-5-pro', 'gpt-5-chat', 'gpt-5-codex', 'gpt-4.1', 'gpt-4.1-mini', 'gpt-4.1-nano', 'gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo', 'gpt-3.5-turbo-instruct', 'gpt-oss-120b', 'gpt-oss-20b', 'gpt-oss-safeguard-20b', 'o3', 'o3-mini', 'o3-pro', 'o3-deep-research', 'o4-mini', 'o1', 'text-embedding-3-small', 'text-embedding-3-large', 'text-embedding-ada-002', 'codex-mini'],
     anthropic: ['claude-sonnet-4.5', 'claude-haiku-4.5', 'claude-opus-4.5', 'claude-opus-4.1', 'claude-opus-4', 'claude-3.7-sonnet', 'claude-3.5-sonnet', 'claude-3.5-sonnet-20240620', 'claude-3.5-haiku', 'claude-3-opus', 'claude-3-sonnet-20240229', 'claude-3-haiku'],
     google: ['gemini-3-pro-preview', 'gemini-3-pro-image', 'gemini-3-flash', 'gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.5-flash-preview-09-2025', 'gemini-2.5-flash-image', 'gemini-2.5-flash-image-preview', 'gemini-2.5-flash-lite-preview-09-2025', 'gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash', 'gemini-embedding-001', 'text-multilingual-embedding-002', 'text-embedding-005', 'imagen-4.0-fast-generate-001', 'imagen-4.0-generate-001', 'imagen-4.0-ultra-generate-001'],
@@ -41,8 +41,8 @@ const allModelsData = {
     kwaipilot: ['kat-coder-pro-v1']
 };
 
-// Flatten all models into searchable format
-const allModelsFlat = Object.entries(allModelsData).flatMap(([provider, models]) =>
+// Flatten all models into searchable format (will be updated dynamically)
+let allModelsFlat = Object.entries(allModelsData).flatMap(([provider, models]) =>
     models.map(model => ({
         value: model,
         label: `${provider}/${model}`,
@@ -50,6 +50,43 @@ const allModelsFlat = Object.entries(allModelsData).flatMap(([provider, models])
         searchText: `${provider} ${model} ${provider}/${model}`.toLowerCase()
     }))
 ).sort((a, b) => a.label.localeCompare(b.label));
+
+// Load models dynamically from AI Gateway
+async function loadModelsFromGateway() {
+    try {
+        const response = await fetch('/api/models');
+        if (!response.ok) {
+            console.warn('Failed to fetch models from gateway, using fallback');
+            return false;
+        }
+        
+        const data = await response.json();
+        if (data.source === 'gateway' && data.models) {
+            // Update allModelsData with fetched models
+            allModelsData = {};
+            for (const [provider, models] of Object.entries(data.models)) {
+                allModelsData[provider] = models.map(m => m.value);
+            }
+            
+            // Rebuild allModelsFlat
+            allModelsFlat = Object.entries(allModelsData).flatMap(([provider, models]) =>
+                models.map(model => ({
+                    value: model,
+                    label: `${provider}/${model}`,
+                    provider: provider,
+                    searchText: `${provider} ${model} ${provider}/${model}`.toLowerCase()
+                }))
+            ).sort((a, b) => a.label.localeCompare(b.label));
+            
+            console.log(`Loaded ${data.total} models from AI Gateway`);
+            return true;
+        }
+        return false;
+    } catch (error) {
+        console.warn('Error loading models from gateway:', error);
+        return false;
+    }
+}
 
 // Legacy provider models for backward compatibility
 const providerModels = {
@@ -641,8 +678,15 @@ function updateCostDisplay() {
 
 // Check health on page load
 window.addEventListener('DOMContentLoaded', async () => {
-    // Initialize searchable model selector
-    initModelSearch();
+    // Load models dynamically from AI Gateway first
+    const modelsLoaded = await loadModelsFromGateway();
+    if (modelsLoaded) {
+        // Re-initialize model search with updated models
+        initModelSearch();
+    } else {
+        // Initialize with fallback models
+        initModelSearch();
+    }
     
     // Load model pricing
     await loadModelPricing();

@@ -212,53 +212,100 @@ class AIGatewayProvider(LLMProvider):
             
             raise Exception("Service temporarily unavailable. Please try again in a moment. If the problem persists, please contact support.")
     
+    def fetch_models_from_gateway(self) -> Optional[List[Dict[str, Any]]]:
+        """
+        Fetch all available models from the AI Gateway API.
+        
+        Returns:
+            List of model dicts with 'id', 'provider', 'name', etc., or None if fetch fails
+        """
+        requests = _check_requests()
+        url = f"{self.base_url}/models"
+        headers = {
+            'Authorization': f'Bearer {self.gateway_api_key}',
+            'Content-Type': 'application/json'
+        }
+        
+        # Add Vercel project context if available
+        vercel_project_id = os.getenv('VERCEL_PROJECT_ID')
+        if vercel_project_id:
+            headers['X-Vercel-Project-ID'] = vercel_project_id
+        
+        try:
+            response = requests.get(url, headers=headers, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            
+            # AI Gateway returns OpenAI-compatible format: {'object': 'list', 'data': [...]}
+            if isinstance(data, dict) and 'data' in data:
+                return data['data']
+            elif isinstance(data, list):
+                return data
+            else:
+                import sys
+                print(f"Unexpected models API response format: {type(data)}", file=sys.stderr)
+                return None
+                
+        except Exception as e:
+            import sys
+            print(f"Error fetching models from AI Gateway: {e}", file=sys.stderr)
+            return None
+    
     def list_models(self, provider: str = 'openai') -> List[str]:
         """
         List available models for a provider.
         
-        Note: Vercel AI Gateway supports many models. This returns common ones.
-        Check https://vercel.com/docs/ai-gateway/models-and-providers for full list.
+        First tries to fetch from AI Gateway API, falls back to hardcoded list.
+        
+        Args:
+            provider: Provider name to filter models
+            
+        Returns:
+            List of model names (without 'provider/' prefix)
         """
-        # Return models based on provider (without 'provider/' prefix in model name)
-        # The gateway will add the prefix automatically
+        # Try to fetch from gateway first
+        all_models = self.fetch_models_from_gateway()
+        
+        if all_models:
+            # Filter by provider and extract model names
+            provider_models = []
+            for model in all_models:
+                model_id = model.get('id', '')
+                # Model ID format is 'provider/model-name'
+                if '/' in model_id:
+                    model_provider, model_name = model_id.split('/', 1)
+                    if model_provider.lower() == provider.lower():
+                        provider_models.append(model_name)
+            
+            if provider_models:
+                return sorted(provider_models)
+        
+        # Fallback to hardcoded list if API fetch fails
+        import sys
+        print(f"Using fallback model list for provider '{provider}'", file=sys.stderr)
+        
         if provider == 'openai':
-            return [
-                'gpt-4o-mini',
-                'gpt-4o',
-                'gpt-4-turbo',
-                'gpt-3.5-turbo'
-            ]
+            return ['gpt-4o-mini', 'gpt-4o', 'gpt-4-turbo', 'gpt-3.5-turbo']
         elif provider == 'anthropic':
-            return [
-                'claude-3-5-sonnet-20241022',
-                'claude-3-5-haiku-20241022',
-                'claude-3-opus-20240229',
-                'claude-3-sonnet-20240229',
-                'claude-3-haiku-20240307'
-            ]
+            return ['claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022', 'claude-3-opus-20240229', 'claude-3-sonnet-20240229', 'claude-3-haiku-20240307']
         elif provider == 'google':
-            return [
-                'gemini-3-pro-preview',
-                'gemini-3-pro-image',
-                'gemini-3-flash',
-                'gemini-2.5-pro',
-                'gemini-2.5-flash',
-                'gemini-2.5-flash-lite',
-                'gemini-2.5-flash-preview-09-2025',
-                'gemini-2.5-flash-image',
-                'gemini-2.5-flash-image-preview',
-                'gemini-2.5-flash-lite-preview-09-2025',
-                'gemini-2.0-flash',
-                'gemini-2.0-flash-lite',
-                'gemini-1.5-flash'
-                # Note: gemini-1.5-pro may not be available in all gateway setups
-            ]
-            ]
-        elif provider == 'grok':
-            return [
-                'grok-beta',
-                'grok-2'
-            ]
+            return ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-3-flash', 'gemini-1.5-flash']
+        elif provider == 'grok' or provider == 'xai':
+            return ['grok-2', 'grok-3', 'grok-4']
         else:
             return []
+    
+    def list_all_models(self) -> List[Dict[str, Any]]:
+        """
+        List all available models from the gateway with full details.
+        
+        Returns:
+            List of model dicts with full information (id, provider, name, pricing, etc.)
+        """
+        models = self.fetch_models_from_gateway()
+        if models:
+            return models
+        
+        # Fallback: return empty list if fetch fails
+        return []
 
