@@ -264,9 +264,19 @@ function selectModel(modelValue, modelProvider) {
         modelSelectHidden.value = modelValue;
     }
     
-    // Update provider select
+    // Update model select dropdown (if it exists)
+    const modelSelect = document.getElementById('model-select');
+    if (modelSelect) {
+        // Check if the model exists in the dropdown options
+        const option = Array.from(modelSelect.options).find(opt => opt.value === modelValue);
+        if (option) {
+            modelSelect.value = modelValue;
+        }
+    }
+    
+    // Update provider select (this may trigger change event, but model is already set correctly)
     const providerSelect = document.getElementById('provider-select');
-    if (providerSelect) {
+    if (providerSelect && providerSelect.value !== modelProvider) {
         providerSelect.value = modelProvider;
     }
     
