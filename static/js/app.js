@@ -97,6 +97,7 @@ const outputInput = document.getElementById('output-input');
 const detectFociBtn = document.getElementById('detect-foci-btn');
 const addFocusBtn = document.getElementById('add-focus-btn');
 const clearFociBtn = document.getElementById('clear-foci-btn');
+const mergeFociBtn = document.getElementById('merge-foci-btn');
 const generateOutputBtn = document.getElementById('generate-output-btn');
 const assessBtn = document.getElementById('assess-btn');
 const loadAssessmentCheckpointBtn = document.getElementById('load-assessment-checkpoint-btn');
@@ -917,6 +918,7 @@ function renderFoci() {
         promptVisualization.classList.add('hidden');
         coverageIndicator.classList.add('hidden');
         coverageWarning.classList.add('hidden');
+        if (mergeFociBtn) mergeFociBtn.style.display = 'none';
         return;
     }
     
@@ -932,10 +934,12 @@ function renderFoci() {
         const dynamicTypeOptions = ['chat', 'rag', 'tools', 'other'];
         
         return `
-        <div class="focus-item" data-focus-index="${index}" style="border-left: 4px solid ${focus.colorDark};">
+        <div class="focus-item" data-focus-index="${index}" draggable="true" style="border-left: 4px solid ${focus.colorDark}; cursor: move;">
             <div class="focus-item-header">
-                <div class="focus-item-title">
-                    ${index + 1}. ${escapeHtml(focus.focus)}
+                <div class="focus-item-title" style="display: flex; align-items: center; gap: 8px;">
+                    <span style="cursor: move; user-select: none;">☰</span>
+                    <input type="checkbox" class="focus-select-checkbox" data-focus-index="${index}" onchange="updateMergeButton()" style="cursor: pointer;">
+                    <span>${index + 1}. ${escapeHtml(focus.focus)}</span>
                     ${isDynamic ? `<span style="margin-left: 8px; padding: 2px 6px; background: #fef3c7; border-radius: 4px; font-size: 0.75em; color: #92400e;">Dynamic: ${dynamicType}</span>` : ''}
                 </div>
                 <button class="focus-item-remove" onclick="removeFocus(${index})">×</button>
@@ -959,6 +963,12 @@ function renderFoci() {
         `;
     }).join('');
     
+    // Setup drag and drop
+    setupDragAndDrop();
+    
+    // Update merge button visibility
+    updateMergeButton();
+    
     // Update visualization
     updateCoverageVisualization();
     updateCoverageStats();
@@ -969,6 +979,175 @@ function renderFoci() {
     } else {
         runAblationBtn.disabled = true;
     }
+}
+
+// Setup drag and drop for foci reordering
+function setupDragAndDrop() {
+    const focusItems = fociContainer.querySelectorAll('.focus-item');
+    
+    focusItems.forEach(item => {
+        item.addEventListener('dragstart', handleDragStart);
+        item.addEventListener('dragover', handleDragOver);
+        item.addEventListener('drop', handleDrop);
+        item.addEventListener('dragend', handleDragEnd);
+    });
+}
+
+let draggedIndex = null;
+let dragOverIndex = null;
+
+function handleDragStart(e) {
+    draggedIndex = parseInt(e.target.closest('.focus-item').dataset.focusIndex);
+    e.target.closest('.focus-item').style.opacity = '0.5';
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/html', e.target.outerHTML);
+}
+
+function handleDragOver(e) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    
+    const targetItem = e.target.closest('.focus-item');
+    if (!targetItem) return;
+    
+    const targetIndex = parseInt(targetItem.dataset.focusIndex);
+    if (targetIndex !== draggedIndex && targetIndex !== dragOverIndex) {
+        // Remove previous drop indicator
+        if (dragOverIndex !== null) {
+            const prevItem = fociContainer.querySelector(`[data-focus-index="${dragOverIndex}"]`);
+            if (prevItem) prevItem.style.borderTop = '';
+        }
+        
+        // Add drop indicator
+        targetItem.style.borderTop = '3px solid var(--primary-color)';
+        dragOverIndex = targetIndex;
+    }
+}
+
+function handleDrop(e) {
+    e.preventDefault();
+    
+    const targetItem = e.target.closest('.focus-item');
+    if (!targetItem || draggedIndex === null) return;
+    
+    const targetIndex = parseInt(targetItem.dataset.focusIndex);
+    
+    if (draggedIndex !== targetIndex) {
+        // Reorder foci array
+        const [draggedFocus] = foci.splice(draggedIndex, 1);
+        foci.splice(targetIndex, 0, draggedFocus);
+        
+        // Re-render to update indices
+        renderFoci();
+    }
+    
+    // Clean up
+    handleDragEnd(e);
+}
+
+function handleDragEnd(e) {
+    e.target.closest('.focus-item').style.opacity = '1';
+    
+    // Remove drop indicators
+    const focusItems = fociContainer.querySelectorAll('.focus-item');
+    focusItems.forEach(item => {
+        item.style.borderTop = '';
+    });
+    
+    draggedIndex = null;
+    dragOverIndex = null;
+}
+
+// Update merge button visibility based on selected foci
+function updateMergeButton() {
+    if (!mergeFociBtn) return;
+    
+    const selectedCheckboxes = fociContainer.querySelectorAll('.focus-select-checkbox:checked');
+    const selectedCount = selectedCheckboxes.length;
+    
+    if (selectedCount >= 2) {
+        mergeFociBtn.style.display = 'inline-block';
+        mergeFociBtn.textContent = `🔗 Merge Selected (${selectedCount})`;
+    } else {
+        mergeFociBtn.style.display = 'none';
+    }
+}
+
+// Merge selected foci
+function mergeSelectedFoci() {
+    const selectedCheckboxes = Array.from(fociContainer.querySelectorAll('.focus-select-checkbox:checked'));
+    
+    if (selectedCheckboxes.length < 2) {
+        showErrorModal('Please select at least 2 foci to merge.');
+        return;
+    }
+    
+    const selectedIndices = selectedCheckboxes
+        .map(cb => parseInt(cb.dataset.focusIndex))
+        .sort((a, b) => a - b); // Sort ascending
+    
+    // Merge foci: combine focus names and prompt sections
+    const mergedFocus = {
+        focus: foci[selectedIndices[0]].focus, // Use first focus name as base
+        prompt_section: foci[selectedIndices[0]].prompt_section, // Use first prompt section as base
+        is_dynamic: foci[selectedIndices[0]].is_dynamic || false,
+        dynamic_type: foci[selectedIndices[0]].dynamic_type || ''
+    };
+    
+    // Combine all selected foci
+    const allFocusNames = selectedIndices.map(i => foci[i].focus);
+    const allPromptSections = selectedIndices.map(i => foci[i].prompt_section);
+    
+    // Merge focus names (if different)
+    const uniqueNames = [...new Set(allFocusNames)];
+    if (uniqueNames.length > 1) {
+        mergedFocus.focus = uniqueNames.join(' + ');
+    }
+    
+    // Merge prompt sections (if different)
+    const uniqueSections = [...new Set(allPromptSections)];
+    if (uniqueSections.length > 1) {
+        mergedFocus.prompt_section = uniqueSections.join(' | ');
+    }
+    
+    // If any selected focus is dynamic, mark merged as dynamic
+    const hasDynamic = selectedIndices.some(i => foci[i].is_dynamic);
+    if (hasDynamic) {
+        mergedFocus.is_dynamic = true;
+        // Use the first dynamic type found
+        const dynamicType = selectedIndices.find(i => foci[i].is_dynamic && foci[i].dynamic_type);
+        if (dynamicType !== undefined) {
+            mergedFocus.dynamic_type = foci[dynamicType].dynamic_type;
+        }
+    }
+    
+    // Remove selected foci (in reverse order to maintain indices)
+    for (let i = selectedIndices.length - 1; i >= 0; i--) {
+        foci.splice(selectedIndices[i], 1);
+    }
+    
+    // Insert merged focus at the position of the first selected focus
+    foci.splice(selectedIndices[0], 0, mergedFocus);
+    
+    // Re-render
+    renderFoci();
+    
+    showSuccessMessage(`Merged ${selectedIndices.length} foci into one.`);
+}
+
+// Helper function to show success message
+function showSuccessMessage(message) {
+    // Create a temporary success message
+    const successDiv = document.createElement('div');
+    successDiv.style.cssText = 'position: fixed; top: 20px; right: 20px; background: #10b981; color: white; padding: 12px 20px; border-radius: 6px; z-index: 10000; box-shadow: 0 4px 6px rgba(0,0,0,0.1);';
+    successDiv.textContent = '✓ ' + message;
+    document.body.appendChild(successDiv);
+    
+    setTimeout(() => {
+        successDiv.style.opacity = '0';
+        successDiv.style.transition = 'opacity 0.3s';
+        setTimeout(() => successDiv.remove(), 300);
+    }, 2000);
 }
 
 // Toggle focus dynamic status
