@@ -15,7 +15,7 @@ let userModel = localStorage.getItem('focalprompt_model') || 'gpt-4o-mini';
 const allModelsData = {
     openai: ['gpt-5.2', 'gpt-5.1-instant', 'gpt-5.1-thinking', 'gpt-5.1-codex', 'gpt-5.1-codex-mini', 'gpt-5.1-codex-max', 'gpt-5.2-pro', 'gpt-5.2-chat', 'gpt-5', 'gpt-5-mini', 'gpt-5-nano', 'gpt-5-pro', 'gpt-5-chat', 'gpt-5-codex', 'gpt-4.1', 'gpt-4.1-mini', 'gpt-4.1-nano', 'gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo', 'gpt-3.5-turbo-instruct', 'gpt-oss-120b', 'gpt-oss-20b', 'gpt-oss-safeguard-20b', 'o3', 'o3-mini', 'o3-pro', 'o3-deep-research', 'o4-mini', 'o1', 'text-embedding-3-small', 'text-embedding-3-large', 'text-embedding-ada-002', 'codex-mini'],
     anthropic: ['claude-sonnet-4.5', 'claude-haiku-4.5', 'claude-opus-4.5', 'claude-opus-4.1', 'claude-opus-4', 'claude-3.7-sonnet', 'claude-3.5-sonnet', 'claude-3.5-sonnet-20240620', 'claude-3.5-haiku', 'claude-3-opus', 'claude-3-sonnet-20240229', 'claude-3-haiku'],
-    google: ['gemini-3-pro-preview', 'gemini-3-pro-image', 'gemini-3-flash', 'gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.5-flash-preview-09-2025', 'gemini-2.5-flash-image', 'gemini-2.5-flash-image-preview', 'gemini-2.5-flash-lite-preview-09-2025', 'gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-embedding-001', 'text-multilingual-embedding-002', 'text-embedding-005', 'imagen-4.0-fast-generate-001', 'imagen-4.0-generate-001', 'imagen-4.0-ultra-generate-001'],
+    google: ['gemini-3-pro-preview', 'gemini-3-pro-image', 'gemini-3-flash', 'gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.5-flash-preview-09-2025', 'gemini-2.5-flash-image', 'gemini-2.5-flash-image-preview', 'gemini-2.5-flash-lite-preview-09-2025', 'gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash', 'gemini-embedding-001', 'text-multilingual-embedding-002', 'text-embedding-005', 'imagen-4.0-fast-generate-001', 'imagen-4.0-generate-001', 'imagen-4.0-ultra-generate-001'],
     xai: ['grok-4.1-fast-non-reasoning', 'grok-4.1-fast-reasoning', 'grok-4-fast-non-reasoning', 'grok-4-fast-reasoning', 'grok-4', 'grok-3', 'grok-3-mini', 'grok-3-mini-fast', 'grok-3-fast', 'grok-2', 'grok-2-vision', 'grok-code-fast-1'],
     minimax: ['minimax-m2.1', 'minimax-m2.1-lightning', 'minimax-m2'],
     alibaba: ['qwen3-next-80b-a3b-instruct', 'qwen3-next-80b-a3b-thinking', 'qwen3-max', 'qwen3-max-preview', 'qwen-3-235b', 'qwen3-235b-a22b-thinking', 'qwen-3-30b', 'qwen3-32b', 'qwen3-14b', 'qwen3-vl-instruct', 'qwen3-vl-thinking', 'qwen3-coder-30b-a3b', 'qwen3-coder-plus', 'qwen3-coder', 'qwen3-embedding-0.6b', 'qwen3-embedding-8b', 'qwen3-embedding-4b'],
@@ -64,7 +64,7 @@ const providerModels = {
 const defaultModels = {
     openai: 'gpt-4o-mini',
     anthropic: 'claude-3-5-sonnet',
-    google: 'gemini-1.5-pro',
+    google: 'gemini-2.5-flash', // More commonly available than gemini-1.5-pro
     grok: 'grok-2',
     xai: 'grok-2',
     mistral: 'mistral-small',

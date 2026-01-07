@@ -107,9 +107,10 @@ class PricingService:
             'google': {
                 'name': 'Google (Gemini)',
                 'models': [
-                    {'id': 'gemini-1.5-pro', 'name': 'Gemini 1.5 Pro', 'description': 'Premium'},
-                    {'id': 'gemini-1.5-flash', 'name': 'Gemini 1.5 Flash', 'description': 'Fast'},
-                    {'id': 'gemini-pro', 'name': 'Gemini Pro', 'description': 'Standard'}
+                    {'id': 'gemini-2.5-flash', 'name': 'Gemini 2.5 Flash', 'description': 'Fast, Recommended'},
+                    {'id': 'gemini-2.5-pro', 'name': 'Gemini 2.5 Pro', 'description': 'Premium'},
+                    {'id': 'gemini-3-flash', 'name': 'Gemini 3 Flash', 'description': 'Latest Fast'},
+                    {'id': 'gemini-1.5-flash', 'name': 'Gemini 1.5 Flash', 'description': 'Legacy Fast'}
                 ]
             },
             'grok': {
