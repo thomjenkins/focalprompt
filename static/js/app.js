@@ -78,9 +78,17 @@ async function loadModelsFromGateway() {
                 }))
             ).sort((a, b) => a.label.localeCompare(b.label));
             
-            console.log(`Loaded ${data.total} models from AI Gateway`);
+            // Update legacy providerModels for backward compatibility
+            providerModels.openai = allModelsData.openai?.map(m => ({ value: m, label: `openai/${m}` })) || providerModels.openai;
+            providerModels.anthropic = allModelsData.anthropic?.map(m => ({ value: m, label: `anthropic/${m}` })) || providerModels.anthropic;
+            providerModels.google = allModelsData.google?.map(m => ({ value: m, label: `google/${m}` })) || providerModels.google;
+            providerModels.xai = allModelsData.xai?.map(m => ({ value: m, label: `xai/${m}` })) || providerModels.xai;
+            providerModels.grok = providerModels.xai;
+            
+            console.log(`✅ Loaded ${data.total} models from AI Gateway`);
             return true;
         }
+        console.warn('Models API returned fallback data');
         return false;
     } catch (error) {
         console.warn('Error loading models from gateway:', error);
@@ -88,13 +96,13 @@ async function loadModelsFromGateway() {
     }
 }
 
-// Legacy provider models for backward compatibility
-const providerModels = {
-    openai: allModelsData.openai.map(m => ({ value: m, label: `openai/${m}` })),
-    anthropic: allModelsData.anthropic.map(m => ({ value: m, label: `anthropic/${m}` })),
-    google: allModelsData.google.map(m => ({ value: m, label: `google/${m}` })),
-    grok: allModelsData.xai.map(m => ({ value: m, label: `xai/${m}` })),
-    xai: allModelsData.xai.map(m => ({ value: m, label: `xai/${m}` }))
+// Legacy provider models for backward compatibility (will be updated dynamically)
+let providerModels = {
+    openai: allModelsData.openai?.map(m => ({ value: m, label: `openai/${m}` })) || [],
+    anthropic: allModelsData.anthropic?.map(m => ({ value: m, label: `anthropic/${m}` })) || [],
+    google: allModelsData.google?.map(m => ({ value: m, label: `google/${m}` })) || [],
+    grok: allModelsData.xai?.map(m => ({ value: m, label: `xai/${m}` })) || [],
+    xai: allModelsData.xai?.map(m => ({ value: m, label: `xai/${m}` })) || []
 };
 
 // Default models for each provider
@@ -678,14 +686,15 @@ function updateCostDisplay() {
 
 // Check health on page load
 window.addEventListener('DOMContentLoaded', async () => {
-    // Load models dynamically from AI Gateway first
+    // Initialize model search with fallback models first (for immediate UI)
+    initModelSearch();
+    
+    // Then load models dynamically from AI Gateway and update
     const modelsLoaded = await loadModelsFromGateway();
     if (modelsLoaded) {
-        // Re-initialize model search with updated models
-        initModelSearch();
-    } else {
-        // Initialize with fallback models
-        initModelSearch();
+        // Update the model search input with current selection
+        updateModelSearchValue();
+        console.log('Model selector updated with gateway models');
     }
     
     // Load model pricing
