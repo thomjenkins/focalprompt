@@ -136,7 +136,7 @@ class AIGatewayProvider(LLMProvider):
                     print(f"Retry attempt {attempt + 1}/{max_retries} for {gateway_model} (timeout: {timeout}s)", file=sys.stderr)
                     time.sleep(retry_delays[attempt - 1])
                 
-                response = requests.post(url, json=payload, headers=headers, timeout=timeout)
+                response = requests.post(url, json=payload, headers=headers, timeout=timeout, stream=False)
                 
                 # Check for HTTP errors
                 response.raise_for_status()
@@ -155,16 +155,21 @@ class AIGatewayProvider(LLMProvider):
                 
             except requests.exceptions.Timeout as e:
                 import sys
-                if attempt < max_retries - 1:
-                    print(f"Request timeout (attempt {attempt + 1}/{max_retries}), will retry...", file=sys.stderr)
+                # CRITICAL: Don't retry on timeout if we're on a retry attempt
+                # Timeouts usually mean the request is genuinely slow, and retrying wastes tokens
+                # Only retry on the first attempt if it's a connection timeout (not read timeout)
+                if attempt == 0 and 'read' not in str(e).lower():
+                    # Connection timeout on first attempt - might be transient
+                    print(f"Connection timeout (attempt {attempt + 1}/{max_retries}), will retry...", file=sys.stderr)
                     continue
                 else:
-                    # Last attempt failed
+                    # Read timeout or subsequent attempt - don't retry (would waste tokens)
                     print(f"AI Gateway Timeout Error: Request timed out after {timeout}s", file=sys.stderr)
                     print(f"Exception type: {type(e).__name__}", file=sys.stderr)
                     print(f"Gateway URL: {self.base_url}", file=sys.stderr)
                     print(f"Model: {gateway_model} (provider={provider}, model={model})", file=sys.stderr)
-                    raise Exception("Request timed out. The model may be slow or overloaded. Please try again or use a faster model.")
+                    print(f"Note: Not retrying to avoid wasting tokens. The model may be too slow for this task.", file=sys.stderr)
+                    raise Exception("Request timed out. The model may be too slow for this task. Consider using a faster model or breaking the task into smaller chunks.")
                     
             except requests.exceptions.ConnectionError as e:
                 import sys
