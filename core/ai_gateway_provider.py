@@ -176,8 +176,8 @@ class AIGatewayProvider(LLMProvider):
                     print(f"Gateway URL: {self.base_url}", file=sys.stderr)
                     print(f"Model: {gateway_model} (provider={provider}, model={model})", file=sys.stderr)
                     raise Exception("Connection error. Please check your internet connection and try again.")
-                
-        except requests.exceptions.HTTPError as e:
+                    
+            except requests.exceptions.HTTPError as e:
             # HTTP error from requests library
             error_code = e.response.status_code
             error_msg = str(e)
