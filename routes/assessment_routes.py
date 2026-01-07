@@ -206,22 +206,27 @@ def assess():
         
         result = service.assess_focus(prompt, output, user_foci, max_foci)
         
-        # Save checkpoint for single assessment
-        session_id = str(uuid.uuid4())
-        checkpoint_data = {
-            'session_id': session_id,
-            'timestamp': datetime.now().isoformat(),
-            'type': 'single_assessment',
-            'result_data': {
-                **result,
-                'prompt': prompt,
-                'output': output,
-                'user_foci': user_foci if user_foci else None,
-                'max_foci': max_foci
-            },
-            'complete': True
-        }
-        checkpoint_service.save_checkpoint(session_id, checkpoint_data, 'single_assessment')
+        # Save checkpoint for single assessment (optional - don't fail if it doesn't work)
+        try:
+            session_id = str(uuid.uuid4())
+            checkpoint_data = {
+                'session_id': session_id,
+                'timestamp': datetime.now().isoformat(),
+                'type': 'single_assessment',
+                'result_data': {
+                    **result,
+                    'prompt': prompt,
+                    'output': output,
+                    'user_foci': user_foci if user_foci else None,
+                    'max_foci': max_foci
+                },
+                'complete': True
+            }
+            checkpoint_service.save_checkpoint(session_id, checkpoint_data, 'single_assessment')
+        except Exception as e:
+            # Don't fail the request if checkpoint saving fails
+            import sys
+            print(f"Warning: Could not save assessment checkpoint: {e}", file=sys.stderr)
         
         # Record usage if authenticated
         if request.user:

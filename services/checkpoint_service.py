@@ -14,15 +14,29 @@ from datetime import datetime
 class CheckpointService:
     """Service for managing checkpoints."""
     
-    def __init__(self, checkpoint_dir: str = "checkpoints"):
+    def __init__(self, checkpoint_dir: str = None):
         """
         Initialize checkpoint service.
         
         Args:
-            checkpoint_dir: Directory to store checkpoints
+            checkpoint_dir: Directory to store checkpoints. If None, uses /tmp/checkpoints on Vercel or ./checkpoints locally.
         """
+        if checkpoint_dir is None:
+            # Use /tmp on Vercel (writable), or ./checkpoints locally
+            if os.path.exists('/tmp') and os.access('/tmp', os.W_OK):
+                checkpoint_dir = '/tmp/checkpoints'
+            else:
+                checkpoint_dir = "checkpoints"
+        
         self.checkpoint_dir = checkpoint_dir
-        os.makedirs(checkpoint_dir, exist_ok=True)
+        try:
+            os.makedirs(checkpoint_dir, exist_ok=True)
+        except (OSError, PermissionError) as e:
+            # If we can't create the directory, log but don't fail
+            # Checkpoints will be disabled for this session
+            print(f"Warning: Could not create checkpoint directory {checkpoint_dir}: {e}", file=sys.stderr)
+            print("Checkpoint saving will be disabled for this session.", file=sys.stderr)
+            self.checkpoint_dir = None
     
     def get_checkpoint_path(self, session_id: str, checkpoint_type: str = 'batch_analysis') -> str:
         """
@@ -35,6 +49,9 @@ class CheckpointService:
         Returns:
             Full path to checkpoint file
         """
+        if self.checkpoint_dir is None:
+            # Return a dummy path if checkpoint directory is not available
+            return os.path.join('/tmp', f"{checkpoint_type}_{session_id}.json")
         return os.path.join(self.checkpoint_dir, f"{checkpoint_type}_{session_id}.json")
     
     def save_checkpoint(
@@ -54,6 +71,10 @@ class CheckpointService:
         Returns:
             True if successful, False otherwise
         """
+        # If checkpoint directory is None (couldn't be created), skip saving
+        if self.checkpoint_dir is None:
+            return False
+        
         checkpoint_path = self.get_checkpoint_path(session_id, checkpoint_type)
         temp_path = checkpoint_path + '.tmp'
         
@@ -67,8 +88,18 @@ class CheckpointService:
             # Atomic rename
             os.rename(temp_path, checkpoint_path)
             return True
+        except (OSError, PermissionError) as e:
+            # Don't log as error - checkpoint saving is optional
+            print(f"Warning: Could not save checkpoint {session_id}: {e}", file=sys.stderr)
+            # Clean up temp file if it exists
+            if os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except:
+                    pass
+            return False
         except Exception as e:
-            print(f"Error saving checkpoint {session_id}: {e}")
+            print(f"Error saving checkpoint {session_id}: {e}", file=sys.stderr)
             # Clean up temp file if it exists
             if os.path.exists(temp_path):
                 try:

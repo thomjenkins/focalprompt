@@ -1368,6 +1368,35 @@ generateOutputBtn.addEventListener('click', async () => {
         return;
     }
     
+    // Estimate cost before making the request
+    try {
+        const estimateResponse = await fetch('/api/pricing/estimate', {
+            method: 'POST',
+            headers: getApiHeaders(),
+            body: JSON.stringify({
+                estimated_input_tokens: Math.ceil(prompt.length / 4) + 500, // Rough estimate: prompt + system message
+                estimated_output_tokens: 500, // Estimate for generated output
+                model: userModel,
+                provider: userProvider
+            })
+        });
+        
+        if (estimateResponse.ok) {
+            const estimateData = await estimateResponse.json();
+            const estimatedCost = estimateData.total_cost || 0;
+            
+            if (estimatedCost > 0) {
+                const confirmMessage = `Estimated cost: $${estimatedCost.toFixed(4)}\n\nProceed with generating output?`;
+                if (!confirm(confirmMessage)) {
+                    return;
+                }
+            }
+        }
+    } catch (error) {
+        console.warn('Could not fetch cost estimate:', error);
+        // Continue anyway - cost estimate is optional
+    }
+    
     showLoading('Generating output...');
     
     try {
