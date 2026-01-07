@@ -56,15 +56,32 @@ const providerModels = {
     openai: allModelsData.openai.map(m => ({ value: m, label: `openai/${m}` })),
     anthropic: allModelsData.anthropic.map(m => ({ value: m, label: `anthropic/${m}` })),
     google: allModelsData.google.map(m => ({ value: m, label: `google/${m}` })),
-    grok: allModelsData.xai.map(m => ({ value: m, label: `xai/${m}` }))
+    grok: allModelsData.xai.map(m => ({ value: m, label: `xai/${m}` })),
+    xai: allModelsData.xai.map(m => ({ value: m, label: `xai/${m}` }))
 };
 
 // Default models for each provider
 const defaultModels = {
     openai: 'gpt-4o-mini',
-    anthropic: 'claude-3-5-sonnet-20241022',
+    anthropic: 'claude-3-5-sonnet',
     google: 'gemini-1.5-pro',
-    grok: 'grok-beta'
+    grok: 'grok-2',
+    xai: 'grok-2',
+    mistral: 'mistral-small',
+    meta: 'llama-3.1-70b',
+    deepseek: 'deepseek-v3.2',
+    alibaba: 'qwen3-max',
+    minimax: 'minimax-m2.1',
+    moonshotai: 'kimi-k2',
+    perplexity: 'sonar',
+    amazon: 'nova-lite',
+    zai: 'glm-4.7',
+    voyage: 'voyage-3-large',
+    cohere: 'command-a',
+    morph: 'morph-v3-fast',
+    nvidia: 'nemotron-nano-9b-v2',
+    bfl: 'flux-2-pro',
+    vercel: 'v0-1.5-md'
 };
 
 // Searchable model selector
