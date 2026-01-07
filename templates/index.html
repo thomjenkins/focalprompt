@@ -53,11 +53,19 @@
                     </div>
                     <div>
                         <label for="model-select" style="display: block; margin-bottom: 6px; font-weight: 500;">Model</label>
-                        <select id="model-select" style="width: 100%; padding: 10px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 14px; background: white; cursor: pointer;">
-                            <option value="gpt-4o-mini">gpt-4o-mini (Fast, Cheap)</option>
-                            <option value="gpt-4o">gpt-4o (Balanced)</option>
-                            <option value="gpt-4-turbo">gpt-4-turbo (High Quality)</option>
-                            <option value="gpt-3.5-turbo">gpt-3.5-turbo (Legacy)</option>
+                        <div style="position: relative;">
+                            <input 
+                                type="text" 
+                                id="model-search" 
+                                placeholder="Search models (e.g., gpt-4, claude, gemini)..." 
+                                autocomplete="off"
+                                style="width: 100%; padding: 10px 30px 10px 10px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 14px; background: white; box-sizing: border-box;"
+                            />
+                            <span style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); pointer-events: none; color: #999;">🔍</span>
+                            <div id="model-dropdown" style="display: none; position: absolute; top: 100%; left: 0; right: 0; max-height: 300px; overflow-y: auto; background: white; border: 1px solid var(--border-color); border-top: none; border-radius: 0 0 6px 6px; z-index: 1000; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-top: -1px;"></div>
+                        </div>
+                        <select id="model-select" style="display: none;">
+                            <!-- Hidden select for form submission -->
                         </select>
                     </div>
                 </div>
