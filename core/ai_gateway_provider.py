@@ -123,7 +123,7 @@ class AIGatewayProvider(LLMProvider):
         
         # Retry configuration
         max_retries = 3
-        base_timeout = 90  # Increased base timeout to 90 seconds
+        base_timeout = 120  # Increased base timeout to 120 seconds for slow models
         retry_delays = [2, 5, 10]  # Exponential backoff delays in seconds
         
         for attempt in range(max_retries):
