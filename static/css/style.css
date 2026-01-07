@@ -281,6 +281,15 @@ header img {
     border-radius: 8px;
     background: var(--bg-color);
     position: relative;
+    transition: opacity 0.2s, transform 0.2s;
+}
+
+.focus-item.dragging {
+    opacity: 0.5;
+}
+
+.focus-item.drag-over {
+    border-top: 3px solid var(--primary-color) !important;
 }
 
 .focus-item-header {
