@@ -344,7 +344,7 @@ def get_provider_models(provider_name: str) -> List[str]:
     model_lists = {
         'openai': ['gpt-4o-mini', 'gpt-4o', 'gpt-4-turbo', 'gpt-3.5-turbo'],
         'anthropic': ['claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022', 'claude-3-opus-20240229', 'claude-3-sonnet-20240229', 'claude-3-haiku-20240307'],
-        'google': ['gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-pro'],
+        'google': ['gemini-3-pro-preview', 'gemini-3-pro-image', 'gemini-3-flash', 'gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.5-flash-preview-09-2025', 'gemini-2.5-flash-image', 'gemini-2.5-flash-image-preview', 'gemini-2.5-flash-lite-preview-09-2025', 'gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-pro', 'gemini-1.5-flash'],
         'grok': ['grok-beta', 'grok-2']
     }
     
