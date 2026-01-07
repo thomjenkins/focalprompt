@@ -122,9 +122,18 @@ class AIGatewayProvider(LLMProvider):
             headers['X-Vercel-Project-ID'] = vercel_project_id
         
         # Retry configuration
-        max_retries = 3
+        # NOTE: Vercel serverless function limits:
+        # - Free: 10 seconds
+        # - Pro: 60 seconds  
+        # - Enterprise: 300 seconds (5 minutes)
+        # - Fluid Compute: up to 14 minutes on paid plans
+        # 
+        # IMPORTANT: We don't retry on timeouts to avoid wasting tokens.
+        # If a request times out, it may have already consumed tokens.
+        # Only retry on connection errors (which don't consume tokens).
+        max_retries = 2  # Retry only for connection errors (not timeouts)
         base_timeout = 120  # Increased base timeout to 120 seconds for slow models
-        retry_delays = [2, 5, 10]  # Exponential backoff delays in seconds
+        retry_delays = [2, 5]  # Exponential backoff delays in seconds
         
         for attempt in range(max_retries):
             try:
