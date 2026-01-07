@@ -108,7 +108,7 @@ class AIGatewayProvider(LLMProvider):
                 payload['response_format'] = response_format
             # For mini models or others, skip response_format - prompt will request JSON
         
-        # Make direct HTTP request to gateway
+        # Make direct HTTP request to gateway with retry logic
         requests = _check_requests()  # Lazy import
         url = f"{self.base_url}/chat/completions"
         headers = {
@@ -121,23 +121,61 @@ class AIGatewayProvider(LLMProvider):
         if vercel_project_id:
             headers['X-Vercel-Project-ID'] = vercel_project_id
         
-        try:
-            response = requests.post(url, json=payload, headers=headers, timeout=60)
-            
-            # Check for HTTP errors
-            response.raise_for_status()
-            
-            # Parse response
-            data = response.json()
-            
-            return {
-                'content': data['choices'][0]['message']['content'],
-                'usage': {
-                    'prompt_tokens': data['usage']['prompt_tokens'],
-                    'completion_tokens': data['usage']['completion_tokens'],
-                    'total_tokens': data['usage']['total_tokens']
+        # Retry configuration
+        max_retries = 3
+        base_timeout = 90  # Increased base timeout to 90 seconds
+        retry_delays = [2, 5, 10]  # Exponential backoff delays in seconds
+        
+        for attempt in range(max_retries):
+            try:
+                # Increase timeout for retries (some models are slower)
+                timeout = base_timeout + (attempt * 30)  # 90s, 120s, 150s
+                
+                if attempt > 0:
+                    import sys
+                    print(f"Retry attempt {attempt + 1}/{max_retries} for {gateway_model} (timeout: {timeout}s)", file=sys.stderr)
+                    time.sleep(retry_delays[attempt - 1])
+                
+                response = requests.post(url, json=payload, headers=headers, timeout=timeout)
+                
+                # Check for HTTP errors
+                response.raise_for_status()
+                
+                # Parse response
+                data = response.json()
+                
+                return {
+                    'content': data['choices'][0]['message']['content'],
+                    'usage': {
+                        'prompt_tokens': data['usage']['prompt_tokens'],
+                        'completion_tokens': data['usage']['completion_tokens'],
+                        'total_tokens': data['usage']['total_tokens']
+                    }
                 }
-            }
+                
+            except requests.exceptions.Timeout as e:
+                import sys
+                if attempt < max_retries - 1:
+                    print(f"Request timeout (attempt {attempt + 1}/{max_retries}), will retry...", file=sys.stderr)
+                    continue
+                else:
+                    # Last attempt failed
+                    print(f"AI Gateway Timeout Error: Request timed out after {timeout}s", file=sys.stderr)
+                    print(f"Exception type: {type(e).__name__}", file=sys.stderr)
+                    print(f"Gateway URL: {self.base_url}", file=sys.stderr)
+                    print(f"Model: {gateway_model} (provider={provider}, model={model})", file=sys.stderr)
+                    raise Exception("Request timed out. The model may be slow or overloaded. Please try again or use a faster model.")
+                    
+            except requests.exceptions.ConnectionError as e:
+                import sys
+                if attempt < max_retries - 1:
+                    print(f"Connection error (attempt {attempt + 1}/{max_retries}), will retry...", file=sys.stderr)
+                    continue
+                else:
+                    print(f"AI Gateway Connection Error: {str(e)}", file=sys.stderr)
+                    print(f"Gateway URL: {self.base_url}", file=sys.stderr)
+                    print(f"Model: {gateway_model} (provider={provider}, model={model})", file=sys.stderr)
+                    raise Exception("Connection error. Please check your internet connection and try again.")
                 
         except requests.exceptions.HTTPError as e:
             # HTTP error from requests library
@@ -191,10 +229,14 @@ class AIGatewayProvider(LLMProvider):
             else:
                 user_error_msg = "Service temporarily unavailable. Please try again in a moment. If the problem persists, please contact support."
             
-            raise Exception(user_error_msg)
+                raise Exception(user_error_msg)
+        
+        # If we get here, all retries failed (shouldn't happen due to exceptions above)
+        if last_exception:
+            raise last_exception
                     
         except requests.exceptions.RequestException as e:
-            # Network or connection error
+            # Other network or connection errors (not timeout/connection)
             import sys
             print(f"AI Gateway Network Error: {str(e)}", file=sys.stderr)
             print(f"Gateway URL: {self.base_url}", file=sys.stderr)
