@@ -253,6 +253,7 @@ class AIGatewayProvider(LLMProvider):
                 'gemini-1.5-flash'
                 # Note: gemini-1.5-pro may not be available in all gateway setups
             ]
+            ]
         elif provider == 'grok':
             return [
                 'grok-beta',
