@@ -248,24 +248,26 @@ class AIGatewayProvider(LLMProvider):
                     user_error_msg = "Service temporarily unavailable. Please try again in a moment. If the problem persists, please contact support."
                     raise Exception(user_error_msg)
                     
-        except requests.exceptions.RequestException as e:
-            # Other network or connection errors (not timeout/connection)
-            import sys
-            print(f"AI Gateway Network Error: {str(e)}", file=sys.stderr)
-            print(f"Gateway URL: {self.base_url}", file=sys.stderr)
-            print(f"Model: {gateway_model} (provider={provider}, model={model})", file=sys.stderr)
-            
-            raise Exception("Service temporarily unavailable. Please try again in a moment. If the problem persists, please contact support.")
-            
-        except Exception as e:
-            # Other unexpected errors
-            import sys
-            print(f"AI Gateway Unexpected Error: {str(e)}", file=sys.stderr)
-            print(f"Exception type: {type(e).__name__}", file=sys.stderr)
-            print(f"Gateway URL: {self.base_url}", file=sys.stderr)
-            print(f"Model: {gateway_model} (provider={provider}, model={model})", file=sys.stderr)
-            
-            raise Exception("Service temporarily unavailable. Please try again in a moment. If the problem persists, please contact support.")
+            except requests.exceptions.RequestException as e:
+                # Other network or connection errors (not timeout/connection/HTTP)
+                import sys
+                if attempt < max_retries - 1:
+                    print(f"Network error (attempt {attempt + 1}/{max_retries}), will retry...", file=sys.stderr)
+                    continue
+                else:
+                    print(f"AI Gateway Network Error: {str(e)}", file=sys.stderr)
+                    print(f"Gateway URL: {self.base_url}", file=sys.stderr)
+                    print(f"Model: {gateway_model} (provider={provider}, model={model})", file=sys.stderr)
+                    raise Exception("Service temporarily unavailable. Please try again in a moment. If the problem persists, please contact support.")
+                    
+            except Exception as e:
+                # Other unexpected errors
+                import sys
+                print(f"AI Gateway Unexpected Error: {str(e)}", file=sys.stderr)
+                print(f"Exception type: {type(e).__name__}", file=sys.stderr)
+                print(f"Gateway URL: {self.base_url}", file=sys.stderr)
+                print(f"Model: {gateway_model} (provider={provider}, model={model})", file=sys.stderr)
+                raise Exception("Service temporarily unavailable. Please try again in a moment. If the problem persists, please contact support.")
     
     def fetch_models_from_gateway(self) -> Optional[List[Dict[str, Any]]]:
         """
