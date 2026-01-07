@@ -129,7 +129,7 @@ class AIGatewayProvider(LLMProvider):
         for attempt in range(max_retries):
             try:
                 # Increase timeout for retries (some models are slower)
-                timeout = base_timeout + (attempt * 30)  # 90s, 120s, 150s
+                timeout = base_timeout + (attempt * 30)  # 120s, 150s, 180s
                 
                 if attempt > 0:
                     import sys
@@ -178,62 +178,67 @@ class AIGatewayProvider(LLMProvider):
                     raise Exception("Connection error. Please check your internet connection and try again.")
                     
             except requests.exceptions.HTTPError as e:
-            # HTTP error from requests library
-            error_code = e.response.status_code
-            error_msg = str(e)
-            error_details = {}
-            exception_type = type(e).__name__
-            
-            # Try to extract JSON error details from response
-            try:
-                error_data = e.response.json()
-                if isinstance(error_data, dict):
-                    error_details = error_data
-                    if 'error' in error_data:
-                        if isinstance(error_data['error'], dict):
-                            error_msg = error_data['error'].get('message', str(error_data['error']))
-                        else:
-                            error_msg = str(error_data['error'])
-            except:
-                # If JSON parsing fails, use response text
+                # HTTP error from requests library
+                error_code = e.response.status_code
+                error_msg = str(e)
+                error_details = {}
+                exception_type = type(e).__name__
+                
+                # Try to extract JSON error details from response
                 try:
-                    error_msg = e.response.text
+                    error_data = e.response.json()
+                    if isinstance(error_data, dict):
+                        error_details = error_data
+                        if 'error' in error_data:
+                            if isinstance(error_data['error'], dict):
+                                error_msg = error_data['error'].get('message', str(error_data['error']))
+                            else:
+                                error_msg = str(error_data['error'])
                 except:
-                    pass
-            
-            # Log detailed error for debugging (server-side only)
-            import sys
-            print(f"AI Gateway Error (code {error_code}): {error_msg}", file=sys.stderr)
-            print(f"Exception type: {exception_type}", file=sys.stderr)
-            if error_details:
-                print(f"Error details: {error_details}", file=sys.stderr)
-            print(f"Gateway URL: {self.base_url}", file=sys.stderr)
-            print(f"Model: {gateway_model} (provider={provider}, model={model})", file=sys.stderr)
-            print(f"API Key (first 20 chars): {self.gateway_api_key[:20] if self.gateway_api_key else 'None'}...", file=sys.stderr)
-            
-            # Provide user-friendly error messages (no technical details)
-            if error_code == 404:
-                # Check if it's a model not found error
-                if 'model' in error_msg.lower() or 'not found' in error_msg.lower():
-                    user_error_msg = f"Model '{model}' is not available for provider '{provider}'. Please try a different model or provider."
+                    # If JSON parsing fails, use response text
+                    try:
+                        error_msg = e.response.text
+                    except:
+                        pass
+                
+                # Log detailed error for debugging (server-side only)
+                import sys
+                print(f"AI Gateway Error (code {error_code}): {error_msg}", file=sys.stderr)
+                print(f"Exception type: {exception_type}", file=sys.stderr)
+                if error_details:
+                    print(f"Error details: {error_details}", file=sys.stderr)
+                print(f"Gateway URL: {self.base_url}", file=sys.stderr)
+                print(f"Model: {gateway_model} (provider={provider}, model={model})", file=sys.stderr)
+                print(f"API Key (first 20 chars): {self.gateway_api_key[:20] if self.gateway_api_key else 'None'}...", file=sys.stderr)
+                
+                # Provide user-friendly error messages (no technical details)
+                if error_code == 404:
+                    # Check if it's a model not found error
+                    if 'model' in error_msg.lower() or 'not found' in error_msg.lower():
+                        user_error_msg = f"Model '{model}' is not available for provider '{provider}'. Please try a different model or provider."
+                    else:
+                        user_error_msg = "Service temporarily unavailable. Please try again in a moment. If the problem persists, please contact support."
+                    raise Exception(user_error_msg)
+                elif error_code == 401:
+                    user_error_msg = "Service temporarily unavailable. Please try again in a moment. If the problem persists, please contact support."
+                    raise Exception(user_error_msg)
+                elif error_code == 403:
+                    user_error_msg = "Service temporarily unavailable. Please try again in a moment. If the problem persists, please contact support."
+                    raise Exception(user_error_msg)
+                elif error_code == 429:
+                    user_error_msg = "Rate limit exceeded. Please wait a moment and try again."
+                    raise Exception(user_error_msg)
+                elif error_code == 500 or error_code == 502 or error_code == 503:
+                    # Retry on server errors
+                    if attempt < max_retries - 1:
+                        import sys
+                        print(f"Server error {error_code} (attempt {attempt + 1}/{max_retries}), will retry...", file=sys.stderr)
+                        continue
+                    user_error_msg = "Service temporarily unavailable. Please try again in a moment. If the problem persists, please contact support."
+                    raise Exception(user_error_msg)
                 else:
                     user_error_msg = "Service temporarily unavailable. Please try again in a moment. If the problem persists, please contact support."
-            elif error_code == 401:
-                user_error_msg = "Service temporarily unavailable. Please try again in a moment. If the problem persists, please contact support."
-            elif error_code == 403:
-                user_error_msg = "Service temporarily unavailable. Please try again in a moment. If the problem persists, please contact support."
-            elif error_code == 429:
-                user_error_msg = "Rate limit exceeded. Please wait a moment and try again."
-            elif error_code == 500 or error_code == 502 or error_code == 503:
-                user_error_msg = "Service temporarily unavailable. Please try again in a moment. If the problem persists, please contact support."
-            else:
-                user_error_msg = "Service temporarily unavailable. Please try again in a moment. If the problem persists, please contact support."
-            
-                raise Exception(user_error_msg)
-        
-        # If we get here, all retries failed (shouldn't happen due to exceptions above)
-        if last_exception:
-            raise last_exception
+                    raise Exception(user_error_msg)
                     
         except requests.exceptions.RequestException as e:
             # Other network or connection errors (not timeout/connection)
