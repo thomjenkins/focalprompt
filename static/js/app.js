@@ -2327,15 +2327,70 @@ if (generateFocusedOutputBtn) {
             return;
         }
         
+        // Estimate cost before making the request
+        try {
+            // Estimate tokens: rewritten prompt + system message + output
+            const promptTokens = Math.ceil(rewrittenPromptText.length / 4);
+            const systemTokens = 200; // System message overhead
+            const estimatedInputTokens = promptTokens + systemTokens;
+            const estimatedOutputTokens = Math.ceil(promptTokens * 1.5); // Output is typically 1.5x input length
+            
+            const estimateResponse = await fetch('/api/pricing/estimate', {
+                method: 'POST',
+                headers: getApiHeaders(),
+                body: JSON.stringify({
+                    estimated_input_tokens: estimatedInputTokens,
+                    estimated_output_tokens: estimatedOutputTokens,
+                    model: userModel,
+                    provider: userProvider
+                })
+            });
+            
+            if (estimateResponse.ok) {
+                const estimate = await estimateResponse.json();
+                const cost = estimate.total_cost || 0;
+                
+                if (cost > 0) {
+                    // Check credit balance if logged in
+                    const sessionId = localStorage.getItem('session_id');
+                    if (sessionId) {
+                        try {
+                            const creditResponse = await fetch('/api/credit/balance', {
+                                headers: { 'X-Session-ID': sessionId }
+                            });
+                            if (creditResponse.ok) {
+                                const creditData = await creditResponse.json();
+                                const balance = creditData.balance || 0;
+                                
+                                if (balance < cost) {
+                                    showErrorModal(
+                                        `Insufficient credit.\n\n` +
+                                        `You have: $${balance.toFixed(2)}\n` +
+                                        `Required: $${cost.toFixed(4)}\n\n` +
+                                        `Please top up your account to continue.`
+                                    );
+                                    return;
+                                }
+                            }
+                        } catch (error) {
+                            console.warn('Could not check credit balance:', error);
+                            // Continue anyway - don't block the request
+                        }
+                    }
+                }
+            }
+        } catch (error) {
+            console.warn('Could not estimate cost:', error);
+            // Continue anyway - don't block the request
+        }
+        
         showLoading('Generating output with focused prompt...');
         
         try {
             const response = await fetch('/api/generate-output', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ prompt: rewrittenPromptText }),
+                headers: getApiHeaders(),
+                body: JSON.stringify(getApiBody({ prompt: rewrittenPromptText })),
             });
             
             const data = await response.json();
