@@ -6,6 +6,7 @@ Handles running ablation analysis to determine focus influence on outputs.
 """
 
 import numpy as np
+import time
 from typing import List, Dict, Optional
 from services.embedding_service import EmbeddingService
 from services.cost_calculator import CostCalculator
@@ -67,12 +68,41 @@ class AblationService:
         
         # Step 1: Generate baseline output (full prompt)
         baseline_outputs = []
-        for _ in range(num_samples):
-            response = self.provider.chat_completion(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.7 if num_samples > 1 else 0.7
-            )
+        for i in range(num_samples):
+            # Add delay between requests to avoid rate limits (except for first request)
+            if i > 0:
+                time.sleep(0.5)  # 500ms delay between baseline samples
+            
+            # Retry logic for rate limits
+            max_retries = 3
+            retry_delay = 2  # Start with 2 seconds
+            response = None
+            
+            for attempt in range(max_retries):
+                try:
+                    response = self.provider.chat_completion(
+                        model=self.model,
+                        messages=[{"role": "user", "content": prompt}],
+                        temperature=0.7 if num_samples > 1 else 0.7
+                    )
+                    break  # Success, exit retry loop
+                except Exception as e:
+                    error_msg = str(e).lower()
+                    if 'rate limit' in error_msg or '429' in error_msg:
+                        if attempt < max_retries - 1:
+                            # Exponential backoff: 2s, 4s, 8s
+                            wait_time = retry_delay * (2 ** attempt)
+                            time.sleep(wait_time)
+                            continue
+                        else:
+                            raise Exception(f"Rate limit exceeded after {max_retries} retries. Please wait a few minutes and try again with fewer samples.")
+                    else:
+                        # Not a rate limit error, re-raise immediately
+                        raise
+            
+            if response is None:
+                raise Exception("Failed to generate baseline output after retries")
+            
             baseline_outputs.append(response['content'])
             
             # Track token usage
@@ -124,12 +154,39 @@ class AblationService:
                 if not ablated_prompt:
                     ablated_prompt = prompt  # Fallback to original if no dynamic inputs
             
-            # Generate output for ablated prompt
-            response = self.provider.chat_completion(
-                model=self.model,
-                messages=[{"role": "user", "content": ablated_prompt}],
-                temperature=0.7
-            )
+            # Add delay between ablated requests to avoid rate limits
+            time.sleep(0.5)  # 500ms delay between ablated outputs
+            
+            # Retry logic for rate limits
+            max_retries = 3
+            retry_delay = 2  # Start with 2 seconds
+            response = None
+            
+            for attempt in range(max_retries):
+                try:
+                    response = self.provider.chat_completion(
+                        model=self.model,
+                        messages=[{"role": "user", "content": ablated_prompt}],
+                        temperature=0.7
+                    )
+                    break  # Success, exit retry loop
+                except Exception as e:
+                    error_msg = str(e).lower()
+                    if 'rate limit' in error_msg or '429' in error_msg:
+                        if attempt < max_retries - 1:
+                            # Exponential backoff: 2s, 4s, 8s
+                            wait_time = retry_delay * (2 ** attempt)
+                            time.sleep(wait_time)
+                            continue
+                        else:
+                            raise Exception(f"Rate limit exceeded after {max_retries} retries. Please wait a few minutes and try again with fewer samples.")
+                    else:
+                        # Not a rate limit error, re-raise immediately
+                        raise
+            
+            if response is None:
+                raise Exception(f"Failed to generate ablated output for focus '{focus_name}' after retries")
+            
             ablated_output = response['content']
             
             # Track token usage
