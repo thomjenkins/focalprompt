@@ -2285,10 +2285,10 @@ if (rewritePromptBtn) {
             const response = await fetch('/api/rewrite-prompt', {
                 method: 'POST',
                 headers: getApiHeaders(),
-                body: JSON.stringify({ 
+                body: JSON.stringify(getApiBody({ 
                     prompt,
                     foci: weights
-                }),
+                })),
             });
             
             const data = await response.json();
