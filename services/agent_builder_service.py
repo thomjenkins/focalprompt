@@ -130,13 +130,14 @@ CRITICAL: You must include ALL {len(foci_list)} foci from the list above, even i
         
         result = json.loads(response['content'])
         
-        # Calculate costs
+        # Calculate costs - use the actual provider
+        provider_for_cost = getattr(self, 'provider_name', 'openai')
         cost_breakdown = self.cost_calculator.calculate_cost(
             total_input_tokens,
             total_output_tokens,
             0,  # No embeddings
             self.model,
-            'openai'  # Default, should be provider-specific
+            provider_for_cost
         )
         
         # Ensure all foci are included

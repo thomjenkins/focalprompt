@@ -2960,6 +2960,17 @@ if (assessChatBtn) {
                 throw new Error(data.error || 'Failed to assess chat');
             }
             
+            // Validate response data
+            if (!data.foci_weights || !Array.isArray(data.foci_weights)) {
+                console.error('Invalid response data:', data);
+                throw new Error('Invalid response: missing or invalid foci_weights');
+            }
+            
+            // Make sure results container is visible
+            if (fociWeightsResults) {
+                fociWeightsResults.style.display = 'block';
+            }
+            
             renderFociWeights(data);
             generateAgentResponseBtn.disabled = false;
             
@@ -2977,7 +2988,17 @@ if (assessChatBtn) {
 
 // Agent Builder: Render Foci Weights
 function renderFociWeights(data) {
-    if (!fociWeightsResults) return;
+    if (!fociWeightsResults) {
+        console.error('fociWeightsResults element not found');
+        return;
+    }
+    
+    // Validate data structure
+    if (!data || !data.foci_weights || !Array.isArray(data.foci_weights)) {
+        console.error('Invalid data structure:', data);
+        fociWeightsResults.innerHTML = '<p class="error-message">Error: Invalid response data structure</p>';
+        return;
+    }
     
     let html = '<h3 style="margin-bottom: 16px;">Selected Foci with Weights</h3>';
     
