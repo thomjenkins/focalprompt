@@ -70,36 +70,19 @@ class UsageService:
         """
         Check if user has reached limit for endpoint.
         
+        NOTE: Monthly limits are disabled - only credit limits are enforced.
+        This method always returns True to allow requests, as credit checks
+        are handled separately in the route handlers.
+        
         Args:
             user_id: User ID
             endpoint: API endpoint
             
         Returns:
-            Tuple of (allowed, error_message)
+            Tuple of (allowed, error_message) - always (True, None)
         """
-        # Get user
-        user = self.db.get_user_by_id(user_id)
-        if not user:
-            return False, 'User not found'
-        
-        tier = user['tier']
-        limits = self.TIER_LIMITS.get(tier, self.TIER_LIMITS['free'])
-        
-        # Get limit key for endpoint
-        limit_key = self.ENDPOINT_LIMITS.get(endpoint)
-        if not limit_key:
-            return True, None  # No limit for this endpoint
-        
-        limit = limits.get(limit_key)
-        if limit == -1:
-            return True, None  # Unlimited
-        
-        # Get current month usage
-        usage_count = self.db.get_monthly_usage(user_id, endpoint)
-        
-        if usage_count >= limit:
-            return False, f'Monthly limit reached: {limit} {limit_key.replace("_per_month", "")}'
-        
+        # Monthly limits disabled - only credit limits are enforced
+        # Credit checks are done separately in route handlers before calling this
         return True, None
     
     def record_usage(
