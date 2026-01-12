@@ -59,9 +59,9 @@ class AgentBuilderService:
         Returns:
             Dict with foci_weights, chat_weight, and cost_breakdown
         """
-        # Build foci list for prompt
+        # Build foci list for prompt - include full focus names for better matching
         foci_text = '\n'.join([
-            f"{i+1}. {f.get('focus', 'Unknown')}: {f.get('prompt_section', '')[:200]}..."
+            f"{i+1}. Focus Name: \"{f.get('focus', 'Unknown')}\"\n   Content: {f.get('prompt_section', '')[:300]}"
             for i, f in enumerate(foci_list)
         ])
         
@@ -103,7 +103,7 @@ Return a JSON object with this structure:
 {{
   "foci_weights": [
     {{
-      "focus": "The exact focus name from the list above",
+      "focus": "The EXACT focus name from the list above (must match exactly, including quotes)",
       "weight": 0.85,
       "explanation": "Brief explanation of why this focus is relevant/irrelevant"
     }}
@@ -112,7 +112,10 @@ Return a JSON object with this structure:
   "chat_weight_explanation": "Brief explanation of how much emphasis to place on the chat content"
 }}
 
-CRITICAL: You must include ALL {len(foci_list)} foci from the list above, even if weight is 0.0."""
+CRITICAL REQUIREMENTS:
+1. You must include ALL {len(foci_list)} foci from the list above, even if weight is 0.0.
+2. The "focus" field must EXACTLY match the "Focus Name" from the list above (including any quotes or capitalization).
+3. Distribute weights meaningfully - not all foci should be 0.0 unless they are truly irrelevant."""
                 }
             ],
             'response_format': {"type": "json_object"},
@@ -140,30 +143,70 @@ CRITICAL: You must include ALL {len(foci_list)} foci from the list above, even i
             provider_for_cost
         )
         
-        # Ensure all foci are included
+        # Ensure all foci are included with improved matching
         foci_weights = []
+        result_foci_weights = result.get('foci_weights', [])
+        
+        # Log for debugging
+        import sys
+        print(f"DEBUG: LLM returned {len(result_foci_weights)} foci weights", file=sys.stderr)
+        for item in result_foci_weights:
+            print(f"  - LLM focus: '{item.get('focus', '')}' weight: {item.get('weight', 0.0)}", file=sys.stderr)
+        
         for focus in foci_list:
             focus_name = focus.get('focus', '')
-            # Find matching weight from result
+            # Try multiple matching strategies
             matched = None
-            for item in result.get('foci_weights', []):
-                if item.get('focus', '').lower() == focus_name.lower():
+            
+            # Strategy 1: Exact match (case-insensitive)
+            for item in result_foci_weights:
+                item_focus = item.get('focus', '').strip()
+                if item_focus.lower() == focus_name.lower():
                     matched = item
                     break
             
+            # Strategy 2: Remove quotes and compare
+            if not matched:
+                focus_name_clean = focus_name.strip().strip('"').strip("'")
+                for item in result_foci_weights:
+                    item_focus_clean = item.get('focus', '').strip().strip('"').strip("'")
+                    if item_focus_clean.lower() == focus_name_clean.lower():
+                        matched = item
+                        break
+            
+            # Strategy 3: Partial match (focus name contains or is contained in LLM response)
+            if not matched:
+                focus_name_clean = focus_name.strip().strip('"').strip("'").lower()
+                for item in result_foci_weights:
+                    item_focus_clean = item.get('focus', '').strip().strip('"').strip("'").lower()
+                    if focus_name_clean in item_focus_clean or item_focus_clean in focus_name_clean:
+                        matched = item
+                        break
+            
             if matched:
+                weight = float(matched.get('weight', 0.0))
                 foci_weights.append({
                     'focus': focus_name,
-                    'weight': float(matched.get('weight', 0.0)),
+                    'weight': weight,
                     'explanation': matched.get('explanation', '')
                 })
+                print(f"DEBUG: Matched '{focus_name}' with weight {weight}", file=sys.stderr)
             else:
                 # If not found, add with 0 weight
                 foci_weights.append({
                     'focus': focus_name,
                     'weight': 0.0,
-                    'explanation': 'Not assessed'
+                    'explanation': 'Not assessed - focus name did not match LLM response'
                 })
+                print(f"DEBUG: No match for '{focus_name}'", file=sys.stderr)
+        
+        # Normalize foci weights to sum to 100% (excluding chat_weight)
+        total_foci_weight = sum(fw['weight'] for fw in foci_weights)
+        if total_foci_weight > 0:
+            # Normalize so foci weights sum to 1.0 (100%)
+            normalization_factor = 1.0 / total_foci_weight
+            for fw in foci_weights:
+                fw['weight'] = fw['weight'] * normalization_factor
         
         return {
             'foci_weights': foci_weights,
