@@ -1787,6 +1787,65 @@ assessBtn.addEventListener('click', async () => {
         return;
     }
     
+    // Estimate cost before making the request
+    try {
+        // Estimate tokens: prompt + output + foci descriptions + system message
+        const promptTokens = Math.ceil(prompt.length / 4);
+        const outputTokens = Math.ceil(output.length / 4);
+        const fociTokens = foci.length > 0 ? foci.reduce((sum, f) => sum + Math.ceil((f.name?.length || 0) / 4) + Math.ceil((f.description?.length || 0) / 4), 0) : 0;
+        const systemTokens = 1000; // System message + instructions
+        const estimatedInputTokens = promptTokens + outputTokens + fociTokens + systemTokens;
+        const estimatedOutputTokens = Math.max(500, foci.length * 200); // Assessment response scales with number of foci
+        
+        const estimateResponse = await fetch('/api/pricing/estimate', {
+            method: 'POST',
+            headers: getApiHeaders(),
+            body: JSON.stringify({
+                estimated_input_tokens: estimatedInputTokens,
+                estimated_output_tokens: estimatedOutputTokens,
+                model: userModel,
+                provider: userProvider
+            })
+        });
+        
+        if (estimateResponse.ok) {
+            const estimate = await estimateResponse.json();
+            const cost = estimate.total_cost || 0;
+            
+            if (cost > 0) {
+                // Check credit balance if logged in
+                const sessionId = localStorage.getItem('session_id');
+                if (sessionId) {
+                    try {
+                        const creditResponse = await fetch('/api/credit/balance', {
+                            headers: { 'X-Session-ID': sessionId }
+                        });
+                        if (creditResponse.ok) {
+                            const creditData = await creditResponse.json();
+                            const balance = creditData.balance || 0;
+                            
+                            if (balance < cost) {
+                                showErrorModal(
+                                    `Insufficient credit.\n\n` +
+                                    `You have: $${balance.toFixed(2)}\n` +
+                                    `Required: $${cost.toFixed(4)}\n\n` +
+                                    `Please top up your account to continue.`
+                                );
+                                return;
+                            }
+                        }
+                    } catch (error) {
+                        console.warn('Could not check credit balance:', error);
+                        // Continue anyway - don't block the request
+                    }
+                }
+            }
+        }
+    } catch (error) {
+        console.warn('Could not estimate cost:', error);
+        // Continue anyway - don't block the request
+    }
+    
     showLoading('Assessing focus distribution...');
     
     try {
