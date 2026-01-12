@@ -200,17 +200,29 @@ CRITICAL REQUIREMENTS:
                 })
                 print(f"DEBUG: No match for '{focus_name}'", file=sys.stderr)
         
-        # Normalize foci weights to sum to 100% (excluding chat_weight)
+        # Normalize foci weights and chat_weight together to sum to 100%
+        chat_weight = float(result.get('chat_weight', 0.5))
         total_foci_weight = sum(fw['weight'] for fw in foci_weights)
-        if total_foci_weight > 0:
-            # Normalize so foci weights sum to 1.0 (100%)
-            normalization_factor = 1.0 / total_foci_weight
+        total_weight = total_foci_weight + chat_weight
+        
+        if total_weight > 0:
+            # Normalize so foci weights + chat_weight sum to 1.0 (100%)
+            normalization_factor = 1.0 / total_weight
             for fw in foci_weights:
                 fw['weight'] = fw['weight'] * normalization_factor
+            chat_weight = chat_weight * normalization_factor
+        else:
+            # If all weights are 0, distribute equally
+            num_foci = len(foci_weights)
+            if num_foci > 0:
+                equal_weight = 1.0 / (num_foci + 1)  # +1 for chat_weight
+                for fw in foci_weights:
+                    fw['weight'] = equal_weight
+                chat_weight = equal_weight
         
         return {
             'foci_weights': foci_weights,
-            'chat_weight': float(result.get('chat_weight', 0.5)),
+            'chat_weight': chat_weight,  # Use normalized chat_weight
             'chat_weight_explanation': result.get('chat_weight_explanation', ''),
             'cost_breakdown': cost_breakdown
         }

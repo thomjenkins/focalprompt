@@ -3041,28 +3041,30 @@ function renderFociWeights(data) {
         `;
     });
     
-    // Calculate total foci weight for display
+    // Calculate total weight (foci + chat) for display
     const totalFociWeight = sortedFoci.reduce((sum, item) => sum + item.weight, 0);
-    const totalFociPercent = (totalFociWeight * 100).toFixed(1);
+    const chatWeight = data.chat_weight || 0;
+    const totalWeight = totalFociWeight + chatWeight;
+    const totalWeightPercent = (totalWeight * 100).toFixed(1);
     
-    // Chat weight (separate from foci weights - indicates emphasis on chat content)
-    const chatWeightPercent = (data.chat_weight * 100).toFixed(1);
+    // Chat weight (part of the 100% total)
+    const chatWeightPercent = (chatWeight * 100).toFixed(1);
     html += `
         <div style="margin-top: 24px; padding-top: 24px; border-top: 2px solid var(--border-color);">
             <div style="margin-bottom: 16px; padding: 12px; background: #f0f9ff; border-radius: 6px; border: 1px solid #bae6fd;">
-                <strong>Total Foci Weight:</strong> ${totalFociPercent}%
+                <strong>Total Weight:</strong> ${totalWeightPercent}%
                 <p style="margin: 4px 0 0 0; font-size: 0.85em; color: var(--text-secondary);">
-                    Foci weights are normalized to sum to 100%. Chat weight is separate and indicates emphasis on chat content vs. foci.
+                    Foci weights and chat weight are normalized together to sum to 100%.
                 </p>
             </div>
             <div class="chat-weight-display">
-                <h4 style="margin: 0 0 8px 0;">Chat Content Emphasis</h4>
+                <h4 style="margin: 0 0 8px 0;">Chat Content Weight</h4>
                 <p style="margin: 4px 0; font-size: 0.9em;">${escapeHtml(data.chat_weight_explanation || '')}</p>
                 <div style="display: flex; align-items: center; gap: 12px; margin-top: 12px;">
                     <div class="weight-value">${chatWeightPercent}%</div>
                     <div class="weight-bar">
                         <div class="weight-bar-fill" style="width: ${chatWeightPercent}%">
-                            ${data.chat_weight >= 0.1 ? chatWeightPercent + '%' : ''}
+                            ${chatWeight >= 0.1 ? chatWeightPercent + '%' : ''}
                         </div>
                     </div>
                 </div>

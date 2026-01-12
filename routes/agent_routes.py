@@ -71,6 +71,58 @@ def assess_chat_foci():
         return jsonify({'error': str(e)}), 500
 
 
+@agent_bp.route('/api/build-agent-prompt', methods=['POST'])
+def build_agent_prompt():
+    """Build agent prompt from foci weights and chat content."""
+    try:
+        data = request.json
+        foci = data.get('foci', [])  # List of foci with weights
+        chat_content = data.get('chat_content', '')
+        chat_weight = data.get('chat_weight', 0.5)
+        
+        if not foci or len(foci) == 0:
+            return jsonify({'error': 'Foci are required'}), 400
+        
+        # Get model and provider from request
+        _, model, provider = get_api_key_and_model(data)
+        
+        # Build inputs dict for prompt builder
+        inputs = {
+            'chat_content': chat_content,
+            'rag_context': '',
+            'tool_results': ''
+        }
+        
+        # Get full foci list from agentFoci (we need prompt_section for each)
+        # For now, use the foci passed in (they should have prompt_section)
+        foci_list = foci  # These should already have prompt_section from frontend
+        
+        # Build prompt using the prompt builder
+        from utils.prompt_builder import build_prompt_with_dynamic_foci
+        constructed_prompt = build_prompt_with_dynamic_foci(
+            foci,  # relevant_foci (with weights)
+            foci_list,  # full foci list
+            inputs,
+            chat_weight
+        )
+        
+        if not constructed_prompt or not constructed_prompt.strip():
+            return jsonify({'error': 'Failed to build prompt - result was empty'}), 500
+        
+        return jsonify({
+            'constructed_prompt': constructed_prompt,
+            'foci_count': len(foci),
+            'chat_weight': chat_weight
+        })
+        
+    except Exception as e:
+        import sys
+        import traceback
+        print(f"Error building agent prompt: {type(e).__name__}: {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        return jsonify({'error': str(e)}), 500
+
+
 @agent_bp.route('/api/generate-agent-response', methods=['POST'])
 def generate_agent_response():
     """Generate response using agent prompt."""
