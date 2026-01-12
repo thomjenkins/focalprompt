@@ -23,7 +23,8 @@ class AgentBuilderService:
         model: str,
         cost_calculator: Optional[CostCalculator] = None,
         checkpoint_service: Optional[CheckpointService] = None,
-        max_workers: int = 10
+        max_workers: int = 10,
+        provider_name: Optional[str] = None
     ):
         """
         Initialize agent builder service.
@@ -34,9 +35,11 @@ class AgentBuilderService:
             cost_calculator: Optional CostCalculator instance
             checkpoint_service: Optional CheckpointService instance
             max_workers: Maximum parallel workers
+            provider_name: Provider name (e.g., 'openai', 'xai') for AI Gateway routing
         """
         self.provider = provider
         self.model = model
+        self.provider_name = provider_name or getattr(provider, 'provider_name', None) or 'openai'
         self.cost_calculator = cost_calculator or CostCalculator()
         self.checkpoint_service = checkpoint_service or CheckpointService()
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
@@ -63,9 +66,18 @@ class AgentBuilderService:
         ])
         
         # Use LLM to assess relevance of each focus
-        response = self.provider.chat_completion(
-            model=self.model,
-            messages=[
+        # Check if provider needs provider parameter (AI Gateway)
+        import inspect
+        sig = inspect.signature(self.provider.chat_completion)
+        needs_provider = 'provider' in sig.parameters
+        
+        # Get provider name from the provider instance if available
+        provider_name = getattr(self.provider, 'provider_name', None) or getattr(self, 'provider_name', 'openai')
+        
+        # Build chat_completion call with or without provider parameter
+        chat_kwargs = {
+            'model': self.model,
+            'messages': [
                 {
                     "role": "system",
                     "content": "You are an expert at analyzing chat conversations and determining which parts of a prompt (foci) are relevant for responding. You assign weights from 0.0 to 1.0 based on relevance."
@@ -169,11 +181,21 @@ CRITICAL: You must include ALL {len(foci_list)} foci from the list above, even i
         Returns:
             Generated response
         """
-        response = self.provider.chat_completion(
-            model=self.model,
-            messages=[{"role": "user", "content": constructed_prompt}],
-            temperature=temperature
-        )
+        # Check if provider needs provider parameter (AI Gateway)
+        import inspect
+        sig = inspect.signature(self.provider.chat_completion)
+        needs_provider = 'provider' in sig.parameters
+        
+        chat_kwargs = {
+            'model': self.model,
+            'messages': [{"role": "user", "content": constructed_prompt}],
+            'temperature': temperature
+        }
+        
+        if needs_provider:
+            chat_kwargs['provider'] = self.provider_name
+        
+        response = self.provider.chat_completion(**chat_kwargs)
         return response['content']
     
     def process_single_agent_pair(

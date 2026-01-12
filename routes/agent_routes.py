@@ -54,10 +54,14 @@ def assess_chat_foci():
         assessor = get_assessor(api_key=None, model=model, provider=provider)
         cost_calculator = CostCalculator()
         
+        # Get provider name from assessor
+        provider_name = getattr(assessor, 'provider_name', None) or provider
+        
         service = AgentBuilderService(
             assessor.provider,
             model,
-            cost_calculator
+            cost_calculator,
+            provider_name=provider_name
         )
         
         result = service.assess_chat_foci(chat_content, foci_list)
