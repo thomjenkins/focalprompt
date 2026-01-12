@@ -19,7 +19,7 @@ class AblationService:
         self,
         provider,
         model: str,
-        api_key: str,
+        api_key: Optional[str] = None,
         embedding_service: Optional[EmbeddingService] = None,
         cost_calculator: Optional[CostCalculator] = None
     ):
@@ -29,13 +29,13 @@ class AblationService:
         Args:
             provider: LLM provider instance
             model: Model name to use
-            api_key: API key (for embeddings)
+            api_key: API key (deprecated - not used, embeddings use AI Gateway)
             embedding_service: Optional EmbeddingService instance
             cost_calculator: Optional CostCalculator instance
         """
         self.provider = provider
         self.model = model
-        self.api_key = api_key
+        self.api_key = api_key  # Kept for backward compatibility but not used
         self.embedding_service = embedding_service or EmbeddingService()
         self.cost_calculator = cost_calculator or CostCalculator()
     

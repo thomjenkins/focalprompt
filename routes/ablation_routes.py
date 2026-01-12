@@ -70,9 +70,9 @@ def ablation_analysis():
         ablation_service = AblationService(
             provider_instance,
             model,
-            api_key,
-            embedding_service,
-            cost_calculator
+            api_key=None,  # Not used - embeddings use AI Gateway
+            embedding_service=embedding_service,
+            cost_calculator=cost_calculator
         )
         
         # Run ablation
