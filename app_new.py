@@ -141,6 +141,46 @@ def not_found(error):
     import sys
     from flask import request
     
+    # Emergency registration for assessment_bp if not found
+    if request.path.startswith('/api/detect-foci') or request.path.startswith('/api/generate-output'):
+        try:
+            print(f"🔧 404 for {request.path} - attempting emergency registration...", file=sys.stderr)
+            assessment_routes = [r for r in app.url_map.iter_rules() if 'assessment' in r.endpoint]
+            if len(assessment_routes) == 0:
+                print("🔄 assessment_bp not registered, attempting import...", file=sys.stderr)
+                from routes.assessment_routes import assessment_bp
+                app.register_blueprint(assessment_bp)
+                print("✅ Emergency registration successful!", file=sys.stderr)
+                # After successful registration, tell client to retry
+                return jsonify({
+                    'error': 'Route was not registered, but is now. Please retry your request.',
+                    'retry_possible': True
+                }), 503 # Service Unavailable, client should retry
+        except Exception as e:
+            print(f"❌ Emergency registration failed: {type(e).__name__}: {e}", file=sys.stderr)
+            import traceback
+            traceback.print_exc(file=sys.stderr)
+    
+    # Emergency registration for agent_bp if not found
+    if request.path.startswith('/api/assess-chat-foci') or request.path.startswith('/api/generate-agent-response') or request.path.startswith('/api/build-agent-prompt'):
+        try:
+            print(f"🔧 404 for {request.path} - attempting emergency registration...", file=sys.stderr)
+            agent_routes = [r for r in app.url_map.iter_rules() if 'agent' in r.endpoint]
+            if len(agent_routes) == 0:
+                print("🔄 agent_bp not registered, attempting import...", file=sys.stderr)
+                from routes.agent_routes import agent_bp
+                app.register_blueprint(agent_bp)
+                print("✅ Emergency registration successful!", file=sys.stderr)
+                # After successful registration, tell client to retry
+                return jsonify({
+                    'error': 'Route was not registered, but is now. Please retry your request.',
+                    'retry_possible': True
+                }), 503 # Service Unavailable, client should retry
+        except Exception as e:
+            print(f"❌ Emergency registration failed: {type(e).__name__}: {e}", file=sys.stderr)
+            import traceback
+            traceback.print_exc(file=sys.stderr)
+    
     # If this is generate-output, try to force register the blueprint
     if '/api/generate-output' in request.path:
         print(f"🔧 404 for /api/generate-output - attempting emergency registration...", file=sys.stderr)

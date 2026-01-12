@@ -101,6 +101,24 @@ try:
     # Try to register immediately
     _ensure_assessment_bp_registered()
     
+    # Force register agent_bp if not already registered (fallback)
+    def _ensure_agent_bp_registered():
+        """Ensure agent_bp is registered, register it if not."""
+        agent_routes = [r for r in app.url_map.iter_rules() if 'agent' in r.endpoint]
+        if len(agent_routes) == 0:
+            try:
+                print("🔄 FORCE REGISTERING agent_bp...", file=sys.stderr)
+                import routes.agent_routes
+                app.register_blueprint(routes.agent_routes.agent_bp)
+                print("✅ agent_bp force-registered successfully", file=sys.stderr)
+            except Exception as e:
+                print(f"❌ Failed to force-register agent_bp: {type(e).__name__}: {e}", file=sys.stderr)
+                import traceback
+                traceback.print_exc(file=sys.stderr)
+    
+    # Try to register immediately
+    _ensure_agent_bp_registered()
+    
     # Add a diagnostic endpoint
     from flask import jsonify as flask_jsonify
     @app.route('/api/diagnostic', methods=['GET'])
