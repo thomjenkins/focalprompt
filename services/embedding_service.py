@@ -6,6 +6,7 @@ Uses OpenAI embeddings through the AI Gateway.
 """
 
 import os
+import time
 import numpy as np
 from typing import List, Tuple
 
@@ -68,11 +69,35 @@ class EmbeddingService:
             'input': text
         }
         
-        response = requests.post(url, json=payload, headers=headers, timeout=60)
-        response.raise_for_status()
+        # Retry logic for rate limits
+        max_retries = 3
+        retry_delay = 2  # Start with 2 seconds
+        last_exception = None
         
-        data = response.json()
-        return np.array(data['data'][0]['embedding'])
+        for attempt in range(max_retries):
+            try:
+                response = requests.post(url, json=payload, headers=headers, timeout=60)
+                response.raise_for_status()
+                
+                data = response.json()
+                return np.array(data['data'][0]['embedding'])
+                
+            except requests.exceptions.HTTPError as e:
+                error_code = e.response.status_code if e.response else None
+                if error_code == 429:  # Rate limit
+                    if attempt < max_retries - 1:
+                        # Exponential backoff: 2s, 4s, 8s
+                        wait_time = retry_delay * (2 ** attempt)
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        raise Exception(f"Rate limit exceeded for embeddings after {max_retries} retries. Please wait a few minutes and try again.")
+                else:
+                    # Not a rate limit error, re-raise immediately
+                    raise
+            except Exception as e:
+                # Other errors, re-raise immediately
+                raise
     
     def batch_embeddings(self, texts: List[str]) -> List[np.ndarray]:
         """
@@ -110,12 +135,36 @@ class EmbeddingService:
             'input': text
         }
         
-        response = requests.post(url, json=payload, headers=headers, timeout=60)
-        response.raise_for_status()
+        # Retry logic for rate limits
+        max_retries = 3
+        retry_delay = 2  # Start with 2 seconds
+        last_exception = None
         
-        data = response.json()
-        embedding = np.array(data['data'][0]['embedding'])
-        token_count = data.get('usage', {}).get('total_tokens', 0)
-        return embedding, token_count
+        for attempt in range(max_retries):
+            try:
+                response = requests.post(url, json=payload, headers=headers, timeout=60)
+                response.raise_for_status()
+                
+                data = response.json()
+                embedding = np.array(data['data'][0]['embedding'])
+                token_count = data.get('usage', {}).get('total_tokens', 0)
+                return embedding, token_count
+                
+            except requests.exceptions.HTTPError as e:
+                error_code = e.response.status_code if e.response else None
+                if error_code == 429:  # Rate limit
+                    if attempt < max_retries - 1:
+                        # Exponential backoff: 2s, 4s, 8s
+                        wait_time = retry_delay * (2 ** attempt)
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        raise Exception(f"Rate limit exceeded for embeddings after {max_retries} retries. Please wait a few minutes and try again.")
+                else:
+                    # Not a rate limit error, re-raise immediately
+                    raise
+            except Exception as e:
+                # Other errors, re-raise immediately
+                raise
 
 

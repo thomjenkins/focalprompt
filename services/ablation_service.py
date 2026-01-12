@@ -210,7 +210,11 @@ class AblationService:
         
         if num_samples > 1:
             baseline_embeddings = []
-            for output in baseline_outputs:
+            for i, output in enumerate(baseline_outputs):
+                # Add delay between embedding requests to avoid rate limits
+                if i > 0:
+                    time.sleep(0.5)  # 500ms delay between embedding requests
+                
                 embedding, tokens = self.embedding_service.get_embedding_with_usage(output)
                 baseline_embeddings.append(embedding)
                 total_embedding_tokens += tokens
@@ -231,6 +235,8 @@ class AblationService:
                 noise_threshold = baseline_mean_similarity - (2 * baseline_std)
         
         # Use first baseline embedding for comparison with ablated outputs
+        # Add delay before embedding requests
+        time.sleep(0.5)
         baseline_embedding, tokens = self.embedding_service.get_embedding_with_usage(baseline_output)
         total_embedding_tokens += tokens
         
@@ -239,6 +245,9 @@ class AblationService:
         similarities = []
         
         for i, ablation in enumerate(ablation_results):
+            # Add delay between embedding requests to avoid rate limits
+            time.sleep(0.5)  # 500ms delay between embedding requests
+            
             ablated_embedding, tokens = self.embedding_service.get_embedding_with_usage(ablation['ablated_output'])
             total_embedding_tokens += tokens
             
