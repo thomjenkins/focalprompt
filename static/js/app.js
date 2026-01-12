@@ -3105,13 +3105,19 @@ if (generateAgentResponseBtn) {
                     foci: window.fociWeightsData.foci_weights.map(fw => {
                         // Find the original focus to get prompt_section
                         const originalFocus = agentFoci.find(f => f.focus === fw.focus);
+                        if (!originalFocus) {
+                            console.warn(`Could not find original focus for: ${fw.focus}`);
+                        }
                         return {
-                            ...fw,
+                            focus: fw.focus,
+                            weight: fw.weight,
                             prompt_section: originalFocus ? originalFocus.prompt_section : ''
                         };
                     }),
                     chat_content: chatContent,
-                    chat_weight: window.fociWeightsData.chat_weight
+                    chat_weight: window.fociWeightsData.chat_weight,
+                    model: userModel || 'gpt-4o-mini',
+                    provider: userProvider || 'openai'
                 }),
             });
             
