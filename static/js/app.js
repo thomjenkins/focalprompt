@@ -2401,6 +2401,35 @@ if (generateFocusedOutputBtn) {
             
             outputInput.value = data.output;
             
+            // Scroll to output area and highlight it briefly
+            if (outputInput) {
+                outputInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                
+                // Highlight the output field briefly
+                const originalBorder = outputInput.style.border;
+                outputInput.style.border = '2px solid #4F46E5';
+                outputInput.style.transition = 'border 0.3s ease';
+                
+                setTimeout(() => {
+                    outputInput.style.border = originalBorder;
+                }, 2000);
+            }
+            
+            // Show success message
+            const successMsg = document.createElement('div');
+            successMsg.className = 'success-message';
+            successMsg.style.cssText = 'position: fixed; top: 20px; right: 20px; background: #10b981; color: white; padding: 12px 20px; border-radius: 6px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); z-index: 10000; font-size: 14px;';
+            successMsg.textContent = '✓ Output generated and added to Output field below';
+            document.body.appendChild(successMsg);
+            
+            setTimeout(() => {
+                successMsg.style.opacity = '0';
+                successMsg.style.transition = 'opacity 0.3s ease';
+                setTimeout(() => {
+                    document.body.removeChild(successMsg);
+                }, 300);
+            }, 3000);
+            
             // Store that we've generated from adjusted prompt
             window.generatedFromAdjustedPrompt = true;
             
