@@ -86,7 +86,8 @@ def generate_agent_response():
         _, model, provider = get_api_key_and_model(data)
         
         assessor = get_assessor(api_key=None, model=model, provider=provider)
-        service = AgentBuilderService(assessor.provider, model)
+        provider_name = getattr(assessor, 'provider_name', None) or provider
+        service = AgentBuilderService(assessor.provider, model, provider_name=provider_name)
         
         output = service.generate_agent_response(constructed_prompt, temperature)
         return jsonify({'output': output})
@@ -135,12 +136,14 @@ def build_batch_agents_stream():
             assessor = get_assessor(api_key=None, model=model, provider=provider)
             cost_calculator = CostCalculator()
             checkpoint_service = CheckpointService()
+            provider_name = getattr(assessor, 'provider_name', None) or provider
             
             service = AgentBuilderService(
                 assessor.provider,
                 model,
                 cost_calculator,
-                checkpoint_service
+                checkpoint_service,
+                provider_name=provider_name
             )
             
             # Track usage for authenticated users
