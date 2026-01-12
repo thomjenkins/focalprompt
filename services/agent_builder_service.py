@@ -115,9 +115,14 @@ Return a JSON object with this structure:
 CRITICAL: You must include ALL {len(foci_list)} foci from the list above, even if weight is 0.0."""
                 }
             ],
-            response_format={"type": "json_object"},
-            temperature=0.3
-        )
+            'response_format': {"type": "json_object"},
+            'temperature': 0.3
+        }
+        
+        if needs_provider:
+            chat_kwargs['provider'] = provider_name
+        
+        response = self.provider.chat_completion(**chat_kwargs)
         
         # Track token usage
         total_input_tokens = response['usage']['prompt_tokens'] if 'usage' in response else 0
