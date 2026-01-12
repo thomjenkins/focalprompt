@@ -209,15 +209,10 @@ class AblationService:
         noise_threshold = None
         
         if num_samples > 1:
-            baseline_embeddings = []
-            for i, output in enumerate(baseline_outputs):
-                # Add delay between embedding requests to avoid rate limits
-                if i > 0:
-                    time.sleep(0.5)  # 500ms delay between embedding requests
-                
-                embedding, tokens = self.embedding_service.get_embedding_with_usage(output)
-                baseline_embeddings.append(embedding)
-                total_embedding_tokens += tokens
+            # Use batch embedding API to get all baseline embeddings in one request
+            baseline_embeddings_list, tokens = self.embedding_service.batch_embeddings_with_usage(baseline_outputs)
+            baseline_embeddings = baseline_embeddings_list
+            total_embedding_tokens += tokens
             
             for i in range(len(baseline_embeddings)):
                 for j in range(i+1, len(baseline_embeddings)):
@@ -235,48 +230,54 @@ class AblationService:
                 noise_threshold = baseline_mean_similarity - (2 * baseline_std)
         
         # Use first baseline embedding for comparison with ablated outputs
-        # Add delay before embedding requests
-        time.sleep(0.5)
-        baseline_embedding, tokens = self.embedding_service.get_embedding_with_usage(baseline_output)
-        total_embedding_tokens += tokens
+        # If we already have baseline embeddings from batch, use the first one
+        if num_samples > 1 and baseline_embeddings:
+            baseline_embedding = baseline_embeddings[0]
+        else:
+            # Single sample case - get embedding separately
+            baseline_embedding, tokens = self.embedding_service.get_embedding_with_usage(baseline_output)
+            total_embedding_tokens += tokens
         
         # Step 4: Calculate similarities and influence scores
         influence_scores = []
         similarities = []
         
-        for i, ablation in enumerate(ablation_results):
-            # Add delay between embedding requests to avoid rate limits
-            time.sleep(0.5)  # 500ms delay between embedding requests
-            
-            ablated_embedding, tokens = self.embedding_service.get_embedding_with_usage(ablation['ablated_output'])
+        # Batch all ablated outputs into a single embedding request
+        ablated_outputs = [ablation['ablated_output'] for ablation in ablation_results]
+        if ablated_outputs:
+            ablated_embeddings_list, tokens = self.embedding_service.batch_embeddings_with_usage(ablated_outputs)
             total_embedding_tokens += tokens
             
-            # Cosine similarity
-            similarity = np.dot(baseline_embedding, ablated_embedding) / (
-                np.linalg.norm(baseline_embedding) * np.linalg.norm(ablated_embedding)
-            )
-            
-            # Influence = 1 - similarity (higher influence = more different from baseline)
-            influence = 1 - similarity
-            
-            similarities.append(similarity)
-            
-            # Get focus name from original foci list
-            focus_name = foci_list[i].get('focus', f'Focus {i+1}')
-            
-            # Determine if influence is significant (beyond noise)
-            is_significant = None
-            if noise_threshold is not None:
-                is_significant = bool(similarity < noise_threshold)
-            
-            influence_scores.append({
-                'focus': focus_name,
-                'focus_name': focus_name,  # Include both for compatibility
-                'prompt_section': ablation['prompt_section'],
-                'similarity': float(similarity),
-                'influence': float(influence),
-                'is_significant': is_significant
-            })
+            # Match embeddings back to ablation results and calculate similarities
+            for i, ablation in enumerate(ablation_results):
+                ablated_embedding = ablated_embeddings_list[i]
+                
+                # Cosine similarity
+                similarity = np.dot(baseline_embedding, ablated_embedding) / (
+                    np.linalg.norm(baseline_embedding) * np.linalg.norm(ablated_embedding)
+                )
+                
+                # Influence = 1 - similarity (higher influence = more different from baseline)
+                influence = 1 - similarity
+                
+                similarities.append(similarity)
+                
+                # Get focus name from original foci list
+                focus_name = foci_list[i].get('focus', f'Focus {i+1}')
+                
+                # Determine if influence is significant (beyond noise)
+                is_significant = None
+                if noise_threshold is not None:
+                    is_significant = bool(similarity < noise_threshold)
+                
+                influence_scores.append({
+                    'focus': focus_name,
+                    'focus_name': focus_name,  # Include both for compatibility
+                    'prompt_section': ablation['prompt_section'],
+                    'similarity': float(similarity),
+                    'influence': float(influence),
+                    'is_significant': is_significant
+                })
         
         # Step 5: Normalize influence scores to sum to 1
         total_influence = sum(item['influence'] for item in influence_scores)

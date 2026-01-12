@@ -101,7 +101,7 @@ class EmbeddingService:
     
     def batch_embeddings(self, texts: List[str]) -> List[np.ndarray]:
         """
-        Get embeddings for multiple texts.
+        Get embeddings for multiple texts using batch API (more efficient).
         
         Args:
             texts: List of texts to embed
@@ -109,10 +109,104 @@ class EmbeddingService:
         Returns:
             List of numpy arrays
         """
-        embeddings = []
-        for text in texts:
-            embeddings.append(self.get_embedding(text))
-        return embeddings
+        if not texts:
+            return []
+        
+        requests = _check_requests()  # Lazy import
+        url = f"{self.base_url}/embeddings"
+        headers = {
+            'Authorization': f'Bearer {self.gateway_api_key}',
+            'Content-Type': 'application/json'
+        }
+        payload = {
+            'model': self.model,
+            'input': texts  # Send all texts in one request
+        }
+        
+        # Retry logic for rate limits
+        max_retries = 3
+        retry_delay = 2  # Start with 2 seconds
+        
+        for attempt in range(max_retries):
+            try:
+                response = requests.post(url, json=payload, headers=headers, timeout=60)
+                response.raise_for_status()
+                
+                data = response.json()
+                # Return list of embeddings
+                return [np.array(item['embedding']) for item in data['data']]
+                
+            except requests.exceptions.HTTPError as e:
+                error_code = e.response.status_code if e.response else None
+                if error_code == 429:  # Rate limit
+                    if attempt < max_retries - 1:
+                        # Exponential backoff: 2s, 4s, 8s
+                        wait_time = retry_delay * (2 ** attempt)
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        raise Exception(f"Rate limit exceeded for batch embeddings after {max_retries} retries. Please wait a few minutes and try again.")
+                else:
+                    # Not a rate limit error, re-raise immediately
+                    raise
+            except Exception as e:
+                # Other errors, re-raise immediately
+                raise
+    
+    def batch_embeddings_with_usage(self, texts: List[str]) -> Tuple[List[np.ndarray], int]:
+        """
+        Get embeddings for multiple texts with token usage (batch API).
+        
+        Args:
+            texts: List of texts to embed
+            
+        Returns:
+            Tuple of (list of embedding arrays, total_token_count)
+        """
+        if not texts:
+            return [], 0
+        
+        requests = _check_requests()  # Lazy import
+        url = f"{self.base_url}/embeddings"
+        headers = {
+            'Authorization': f'Bearer {self.gateway_api_key}',
+            'Content-Type': 'application/json'
+        }
+        payload = {
+            'model': self.model,
+            'input': texts  # Send all texts in one request
+        }
+        
+        # Retry logic for rate limits
+        max_retries = 3
+        retry_delay = 2  # Start with 2 seconds
+        
+        for attempt in range(max_retries):
+            try:
+                response = requests.post(url, json=payload, headers=headers, timeout=60)
+                response.raise_for_status()
+                
+                data = response.json()
+                embeddings = [np.array(item['embedding']) for item in data['data']]
+                token_count = data.get('usage', {}).get('total_tokens', 0)
+                return embeddings, token_count
+                
+            except requests.exceptions.HTTPError as e:
+                error_code = e.response.status_code if e.response else None
+                if error_code == 429:  # Rate limit
+                    if attempt < max_retries - 1:
+                        # Exponential backoff: 2s, 4s, 8s
+                        wait_time = retry_delay * (2 ** attempt)
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        raise Exception(f"Rate limit exceeded for batch embeddings after {max_retries} retries. Please wait a few minutes and try again.")
+                else:
+                    # Not a rate limit error, re-raise immediately
+                    raise
+            except Exception as e:
+                # Other errors, re-raise immediately
+                raise
     
     def get_embedding_with_usage(self, text: str) -> Tuple[np.ndarray, int]:
         """
