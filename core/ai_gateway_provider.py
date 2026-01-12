@@ -234,8 +234,18 @@ class AIGatewayProvider(LLMProvider):
                     user_error_msg = "Service temporarily unavailable. Please try again in a moment. If the problem persists, please contact support."
                     raise Exception(user_error_msg)
                 elif error_code == 429:
-                    user_error_msg = "Rate limit exceeded. Please wait a moment and try again."
-                    raise Exception(user_error_msg)
+                    # Retry on rate limits with exponential backoff
+                    if attempt < max_retries - 1:
+                        import sys
+                        # Exponential backoff: 2s, 4s, 8s
+                        wait_time = 2 * (2 ** attempt)
+                        print(f"Rate limit exceeded (attempt {attempt + 1}/{max_retries}), waiting {wait_time}s before retry...", file=sys.stderr)
+                        time.sleep(wait_time)
+                        last_exception = e  # Store exception for potential re-raise
+                        continue
+                    user_error_msg = "Rate limit exceeded. Please wait a few minutes and try again."
+                    last_exception = Exception(user_error_msg)
+                    break # Exit retry loop
                 elif error_code == 500 or error_code == 502 or error_code == 503:
                     # Retry on server errors
                     if attempt < max_retries - 1:
