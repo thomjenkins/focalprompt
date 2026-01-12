@@ -2210,21 +2210,81 @@ if (rewritePromptBtn) {
             return;
         }
         
+        // Use assessment foci with their weights
+        const weights = assessmentFoci.map((focus, index) => ({
+            focus: focus.focus,
+            prompt_section: focus.prompt_section,
+            weight: focusWeights[index] || 0
+        }));
+        
+        // Estimate cost before making the request
+        try {
+            // Estimate tokens: prompt + foci descriptions + system message + output
+            const promptTokens = Math.ceil(prompt.length / 4);
+            const fociTokens = weights.reduce((sum, f) => {
+                const focusDesc = f.prompt_section?.length || 0;
+                const focusName = f.focus?.length || 0;
+                return sum + Math.ceil((focusDesc + focusName) / 4);
+            }, 0);
+            const systemTokens = 1000; // System message + rewrite instructions
+            const estimatedInputTokens = promptTokens + fociTokens + systemTokens;
+            const estimatedOutputTokens = Math.ceil(prompt.length / 4) + 500; // Rewritten prompt is typically similar length to original
+            
+            const estimateResponse = await fetch('/api/pricing/estimate', {
+                method: 'POST',
+                headers: getApiHeaders(),
+                body: JSON.stringify({
+                    estimated_input_tokens: estimatedInputTokens,
+                    estimated_output_tokens: estimatedOutputTokens,
+                    model: userModel,
+                    provider: userProvider
+                })
+            });
+            
+            if (estimateResponse.ok) {
+                const estimate = await estimateResponse.json();
+                const cost = estimate.total_cost || 0;
+                
+                if (cost > 0) {
+                    // Check credit balance if logged in
+                    const sessionId = localStorage.getItem('session_id');
+                    if (sessionId) {
+                        try {
+                            const creditResponse = await fetch('/api/credit/balance', {
+                                headers: { 'X-Session-ID': sessionId }
+                            });
+                            if (creditResponse.ok) {
+                                const creditData = await creditResponse.json();
+                                const balance = creditData.balance || 0;
+                                
+                                if (balance < cost) {
+                                    showErrorModal(
+                                        `Insufficient credit.\n\n` +
+                                        `You have: $${balance.toFixed(2)}\n` +
+                                        `Required: $${cost.toFixed(4)}\n\n` +
+                                        `Please top up your account to continue.`
+                                    );
+                                    return;
+                                }
+                            }
+                        } catch (error) {
+                            console.warn('Could not check credit balance:', error);
+                            // Continue anyway - don't block the request
+                        }
+                    }
+                }
+            }
+        } catch (error) {
+            console.warn('Could not estimate cost:', error);
+            // Continue anyway - don't block the request
+        }
+        
         showLoading('Rewriting prompt with focus emphasis...');
         
         try {
-            // Use assessment foci with their weights
-            const weights = assessmentFoci.map((focus, index) => ({
-                focus: focus.focus,
-                prompt_section: focus.prompt_section,
-                weight: focusWeights[index] || 0
-            }));
-            
             const response = await fetch('/api/rewrite-prompt', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
+                headers: getApiHeaders(),
                 body: JSON.stringify({ 
                     prompt,
                     foci: weights
