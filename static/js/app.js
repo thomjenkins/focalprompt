@@ -3860,8 +3860,8 @@ async function handleRunBatchAnalysis(e) {
     let completedCount = 0;
     
     try {
-        console.log('Sending streaming request to /api/batch-ablation-analysis-stream');
-        const response = await fetch('/api/batch-ablation-analysis-stream', {
+        console.log('Sending streaming request to /api/batch-analysis-stream');
+        const response = await fetch('/api/batch-analysis-stream', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -3977,18 +3977,22 @@ async function handleRunBatchAnalysis(e) {
                 break;
                 
             case 'complete':
-                // Final results
+                // Final results (server sends pair_results + statistics; results is an alias)
+                {
+                const pairResults = data.pair_results || data.results || [];
                 const completeData = {
-                    results: data.results || [],
+                    results: pairResults,
+                    pair_results: pairResults,
                     statistics: data.statistics || {},
+                    focus_distribution_statistics: data.focus_distribution_statistics || {},
                     cost_breakdown: data.cost_breakdown || {}
                 };
-                // Store globally for batch agent building
                 window.batchResultsData = completeData;
                 renderBatchResults(completeData);
                 if (exportResultsBtn) exportResultsBtn.disabled = false;
                 if (batchProgressText) {
-                    batchProgressText.textContent = `Analysis complete! ${data.results.length} pairs processed.`;
+                    batchProgressText.textContent = `Analysis complete! ${pairResults.length} pairs processed.`;
+                }
                 }
                 break;
                 
@@ -4267,7 +4271,9 @@ async function loadCheckpointData(sessionId, checkpointType = 'batch_analysis') 
             // Load batch analysis results
             const checkpointData = {
                 results: checkpoint.pair_results || [],
+                pair_results: checkpoint.pair_results || [],
                 statistics: checkpoint.statistics || {},
+                focus_distribution_statistics: checkpoint.focus_distribution_statistics || {},
                 cost_breakdown: checkpoint.cost_breakdown || {}
             };
             
@@ -4421,13 +4427,58 @@ function renderBatchResults(data) {
     
     let html = '<h3 style="margin-bottom: 16px;">Batch Analysis Results</h3>';
     
-    // Statistics Table
+    const fdStats = data.focus_distribution_statistics || {};
+    const fdKeys = Object.keys(fdStats);
+    if (fdKeys.length > 0) {
+        html += '<div style="margin-bottom: 28px;">';
+        html += '<h4 style="margin-bottom: 8px;">1. Focus distribution (LLM assessment)</h4>';
+        html += '<p style="margin: 0 0 12px 0; font-size: 0.9em; color: var(--text-secondary); max-width: 900px;">';
+        html += 'Per pair, the same scoring step as <strong>Assess Focus Distribution</strong> in the main tab: ';
+        html += 'the model assigns points (total 100 per pair) to each focus for how much attention the ';
+        html += 'output gives them. If a pair includes a saved <strong>output</strong>, that text is assessed; ';
+        html += 'otherwise the freshly generated baseline for that pair is used. Below are averages across pairs.';
+        html += '</p>';
+        html += '<table class="batch-stats-table" style="width: 100%; border-collapse: collapse;">';
+        html += '<thead><tr style="background: #eef2ff; border-bottom: 2px solid var(--border-color);">';
+        html += '<th style="padding: 12px; text-align: left;">Focus</th>';
+        html += '<th style="padding: 12px; text-align: right;">Mean points</th>';
+        html += '<th style="padding: 12px; text-align: right;">Variance</th>';
+        html += '<th style="padding: 12px; text-align: right;">Std Dev</th>';
+        html += '<th style="padding: 12px; text-align: right;">Min</th>';
+        html += '<th style="padding: 12px; text-align: right;">Max</th>';
+        html += '<th style="padding: 12px; text-align: right;">Pairs</th>';
+        html += '</tr></thead><tbody>';
+        const meanVarFd = Math.max(...fdKeys.map(k => fdStats[k].variance || 0), 0);
+        fdKeys.forEach(focusName => {
+            const st = fdStats[focusName];
+            const variance = st.variance || 0;
+            const varianceColor = variance > meanVarFd * 0.7 ? '#ef4444' : variance > meanVarFd * 0.4 ? '#f59e0b' : '#10b981';
+            html += `<tr style="border-bottom: 1px solid var(--border-color);">`;
+            html += `<td style="padding: 12px;"><strong>${escapeHtml(focusName)}</strong></td>`;
+            html += `<td style="padding: 12px; text-align: right;">${(st.mean || 0).toFixed(2)}</td>`;
+            html += `<td style="padding: 12px; text-align: right; color: ${varianceColor};">${(variance).toFixed(4)}</td>`;
+            html += `<td style="padding: 12px; text-align: right;">${(st.std_dev || 0).toFixed(2)}</td>`;
+            html += `<td style="padding: 12px; text-align: right;">${(st.min || 0).toFixed(2)}</td>`;
+            html += `<td style="padding: 12px; text-align: right;">${(st.max || 0).toFixed(2)}</td>`;
+            html += `<td style="padding: 12px; text-align: right;">${st.n_pairs != null ? st.n_pairs : '—'}</td>`;
+            html += `</tr>`;
+        });
+        html += '</tbody></table></div>';
+    }
+    
+    // Statistics Table — primary metric is normalized share (same idea as single-run ablation)
     html += '<div style="margin-bottom: 24px;">';
-    html += '<h4 style="margin-bottom: 12px;">Statistics Summary</h4>';
+    html += '<h4 style="margin-bottom: 8px;">2. Ablation influence (embedding-based shares)</h4>';
+    html += '<p style="margin: 0 0 12px 0; font-size: 0.9em; color: var(--text-secondary); max-width: 900px;">';
+    html += '<strong>Mean share</strong> is the average percentage of total per-pair ablation effect ';
+    html += 'attributed to each focus (and chat). Within each pair, shares are computed from raw embedding ';
+    html += 'shifts and normalized to sum to 100% across all foci plus chat — so the means in this table ';
+    html += 'also sum to about 100% across rows (foci + chat), not independent 0–100% scores.';
+    html += '</p>';
     html += '<table class="batch-stats-table" style="width: 100%; border-collapse: collapse;">';
     html += '<thead><tr style="background: #f8fafc; border-bottom: 2px solid var(--border-color);">';
     html += '<th style="padding: 12px; text-align: left;">Focus</th>';
-    html += '<th style="padding: 12px; text-align: right;">Mean Influence</th>';
+    html += '<th style="padding: 12px; text-align: right;" title="Average share of per-pair ablation effect">Mean share</th>';
     html += '<th style="padding: 12px; text-align: right;">Variance</th>';
     html += '<th style="padding: 12px; text-align: right;">Std Dev</th>';
     html += '<th style="padding: 12px; text-align: right;">Min</th>';
@@ -4502,7 +4553,7 @@ function renderBatchResults(data) {
         html += ` <span style="font-size: 0.85em; font-weight: normal; color: #666;">(Model: ${cost.model || 'gpt-4o-mini'})</span>`;
         html += '</div>';
         html += `<p style="margin-top: 12px; font-size: 0.9em;"><strong>Total Pairs Analyzed:</strong> ${data.results ? data.results.length : 0}</p>`;
-        html += `<p style="margin-top: 4px; font-size: 0.9em;"><strong>Cost per Pair:</strong> $${(cost.total_cost / (data.results ? data.results.length : 1)).toFixed(4)}</p>`;
+        html += `<p style="margin-top: 4px; font-size: 0.9em;"><strong>Cost per Pair:</strong> $${(cost.total_cost / ((data.pair_results || data.results) ? (data.pair_results || data.results).length : 1)).toFixed(4)}</p>`;
         html += '</div>';
     }
     
@@ -4522,19 +4573,37 @@ if (exportResultsBtn) {
         
         const data = window.batchResultsData;
         const stats = data.statistics || {};
+        const fdStats = data.focus_distribution_statistics || {};
         
-        // Create CSV
-        let csv = 'Focus,Mean Influence,Variance,Std Dev,Min,Max\n';
+        // Create CSV (ablation section first, then optional LLM focus-distribution aggregates)
+        let csv = '=== ABLATION (embedding shares) ===\n';
+        csv += 'Focus,Mean_Share_pct,Variance,Std_Dev_pct,Min_pct,Max_pct,Mean_Raw_Shift_pct,Variance_Raw,Std_Dev_Raw_pct,Min_Raw_pct,Max_Raw_pct\n';
         
         Object.keys(stats).forEach(focusName => {
             if (focusName === 'noise') return; // Skip noise row
             const stat = stats[focusName];
-            csv += `"${focusName}",${stat.mean},${stat.variance},${stat.std_dev},${stat.min},${stat.max}\n`;
+            const raw = stat.mean_raw !== undefined ? [
+                (stat.mean_raw * 100).toFixed(4),
+                stat.variance_raw ?? '',
+                stat.std_dev_raw !== undefined ? (stat.std_dev_raw * 100).toFixed(4) : '',
+                stat.min_raw !== undefined ? (stat.min_raw * 100).toFixed(4) : '',
+                stat.max_raw !== undefined ? (stat.max_raw * 100).toFixed(4) : ''
+            ].join(',') : ',,,,';
+            csv += `"${focusName}",${(stat.mean * 100).toFixed(4)},${stat.variance},${(stat.std_dev * 100).toFixed(4)},${(stat.min * 100).toFixed(4)},${(stat.max * 100).toFixed(4)},${raw}\n`;
         });
         
         // Add noise separately
         if (stats.noise) {
             csv += `"Noise (Baseline Similarity)",${stats.noise.mean},${stats.noise.variance},${stats.noise.std_dev || ''},${stats.noise.noise_threshold !== null && stats.noise.noise_threshold !== undefined ? stats.noise.noise_threshold : ''},${stats.noise.num_samples || ''}\n`;
+        }
+        
+        if (Object.keys(fdStats).length > 0) {
+            csv += '\n=== FOCUS DISTRIBUTION (LLM assessment, mean points per pair) ===\n';
+            csv += 'Focus,Mean_Points,Variance,Std_Dev,Min,Max,N_Pairs\n';
+            Object.keys(fdStats).forEach(focusName => {
+                const s = fdStats[focusName];
+                csv += `"${focusName}",${(s.mean || 0).toFixed(4)},${(s.variance || 0).toFixed(6)},${(s.std_dev || 0).toFixed(4)},${(s.min || 0).toFixed(4)},${(s.max || 0).toFixed(4)},${s.n_pairs != null ? s.n_pairs : ''}\n`;
+            });
         }
         
         const blob = new Blob([csv], { type: 'text/csv' });

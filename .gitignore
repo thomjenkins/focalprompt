@@ -44,4 +44,7 @@ data/
 # Vercel
 .vercel
 
+# Local git worktree for running an old commit side-by-side
+original-snapshot/
+
 

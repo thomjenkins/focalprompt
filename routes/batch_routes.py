@@ -14,7 +14,10 @@ from services.usage_service import UsageService
 from services.billing_service import BillingService
 from services.database import Database
 from middleware.auth import optional_auth
-from utils.data_processing import calculate_statistics_from_results
+from utils.data_processing import (
+    calculate_statistics_from_results,
+    calculate_focus_distribution_statistics,
+)
 
 
 batch_bp = Blueprint('batch', __name__)
@@ -58,11 +61,14 @@ def get_checkpoint():
         checkpoint = checkpoint_service.load_checkpoint(session_id, checkpoint_type)
         
         if checkpoint:
-            # Calculate statistics if missing
-            if checkpoint_type == 'batch_analysis' and 'statistics' not in checkpoint:
+            # Always derive batch statistics from pair results so logic stays in sync
+            if checkpoint_type == 'batch_analysis':
                 pair_results = checkpoint.get('pair_results', [])
                 if pair_results:
                     checkpoint['statistics'] = calculate_statistics_from_results(pair_results)
+                    checkpoint['focus_distribution_statistics'] = (
+                        calculate_focus_distribution_statistics(pair_results)
+                    )
             
             return jsonify(checkpoint)
         else:
@@ -72,6 +78,7 @@ def get_checkpoint():
 
 
 @batch_bp.route('/api/batch-analysis-stream', methods=['POST'])
+@batch_bp.route('/api/batch-ablation-analysis-stream', methods=['POST'])  # legacy URL
 @stream_with_context
 @optional_auth
 def batch_analysis_stream():
@@ -81,6 +88,7 @@ def batch_analysis_stream():
     from services.embedding_service import EmbeddingService
     from services.cost_calculator import CostCalculator
     from services.checkpoint_service import CheckpointService
+    from services.assessment_service import AssessmentService
     
     def generate():
         try:
@@ -113,6 +121,7 @@ def batch_analysis_stream():
             
             assessor = get_assessor(api_key=None, model=model, provider=provider)
             provider_instance = assessor.provider
+            assessment_service = AssessmentService(assessor)
             
             # Create services - embedding service uses AI Gateway
             embedding_service = EmbeddingService()
@@ -122,10 +131,11 @@ def batch_analysis_stream():
             batch_service = BatchAnalysisService(
                 provider_instance,
                 model,
-                api_key,
+                None,
                 embedding_service,
                 cost_calculator,
-                checkpoint_service
+                checkpoint_service,
+                assessment_service=assessment_service
             )
             
             # Track usage for authenticated users

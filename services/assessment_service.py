@@ -294,6 +294,7 @@ Only mark as dynamic if confidence > 0.6."""
         Returns:
             Dict with assessment results
         """
+        usage = None
         # If user provided foci, use them for assessment
         if user_foci and len(user_foci) > 0:
             # Build a custom assessment that uses the user-defined foci
@@ -330,6 +331,7 @@ Only mark as dynamic if confidence > 0.6."""
                 chat_kwargs['provider'] = provider_name
             
             response = provider.chat_completion(**chat_kwargs)
+            usage = response.get('usage')
             
             result = json.loads(response['content'])
             
@@ -361,6 +363,8 @@ Only mark as dynamic if confidence > 0.6."""
         
         # Convert to dictionary for JSON response
         result = assessment.to_dict()
+        if usage:
+            result['usage'] = usage
         
         return result
 

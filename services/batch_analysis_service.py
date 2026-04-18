@@ -14,6 +14,11 @@ from services.embedding_service import EmbeddingService
 from services.cost_calculator import CostCalculator
 from services.checkpoint_service import CheckpointService
 from utils.prompt_builder import get_pair_inputs, build_prompt_with_dynamic_foci
+from utils.data_processing import (
+    calculate_statistics_from_results,
+    calculate_focus_distribution_statistics,
+)
+from services.assessment_service import AssessmentService
 
 
 class BatchAnalysisService:
@@ -27,6 +32,7 @@ class BatchAnalysisService:
         embedding_service: Optional[EmbeddingService] = None,
         cost_calculator: Optional[CostCalculator] = None,
         checkpoint_service: Optional[CheckpointService] = None,
+        assessment_service: Optional[AssessmentService] = None,
         max_workers: int = 10
     ):
         """
@@ -47,6 +53,7 @@ class BatchAnalysisService:
         self.embedding_service = embedding_service or EmbeddingService()
         self.cost_calculator = cost_calculator or CostCalculator()
         self.checkpoint_service = checkpoint_service or CheckpointService()
+        self.assessment_service = assessment_service
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
     
     def process_single_pair(
@@ -89,6 +96,33 @@ class BatchAnalysisService:
             
             input_tokens = response['usage']['prompt_tokens'] if 'usage' in response else 0
             output_tokens = response['usage']['completion_tokens'] if 'usage' in response else 0
+            
+            # Focus distribution assessment (same logic as /api/assess with user-defined foci)
+            focus_distribution_assessment = None
+            assessment_error = None
+            if self.assessment_service:
+                provided_out = (pair_data.get('output') or '').strip()
+                output_for_assessment = provided_out if provided_out else baseline_output
+                assessment_source = 'provided_output' if provided_out else 'generated_baseline'
+                user_foci_for_assess = [
+                    {'focus': f.get('focus', ''), 'prompt_section': f.get('prompt_section', '')}
+                    for f in foci_list
+                ]
+                try:
+                    fd = self.assessment_service.assess_focus(
+                        prompt, output_for_assessment, user_foci=user_foci_for_assess
+                    )
+                    usage_fd = fd.pop('usage', None)
+                    focus_distribution_assessment = {
+                        'foci': fd.get('foci', []),
+                        'overall_summary': fd.get('overall_summary', ''),
+                        'assessment_source': assessment_source,
+                    }
+                    if usage_fd:
+                        input_tokens += usage_fd.get('prompt_tokens', 0) or usage_fd.get('input_tokens', 0)
+                        output_tokens += usage_fd.get('completion_tokens', 0) or usage_fd.get('output_tokens', 0)
+                except Exception as ex:
+                    assessment_error = str(ex)
             
             # Get baseline embedding
             baseline_embedding, embedding_tokens = self.embedding_service.get_embedding_with_usage(baseline_output)
@@ -181,7 +215,21 @@ class BatchAnalysisService:
             influence_chat = 1 - similarity_chat
             is_significant_chat = bool(similarity_chat < batch_noise_threshold) if batch_noise_threshold else None
             
-            return {
+            # Per-pair shares (consistent with single-run ablation): raw embedding shifts are not additive;
+            # normalize so foci + chat sum to 100% for this pair.
+            total_raw = sum(d['influence'] for d in focus_influences.values()) + float(influence_chat)
+            if total_raw > 0:
+                for d in focus_influences.values():
+                    d['normalized_influence'] = d['influence'] / total_raw
+                chat_normalized = float(influence_chat) / total_raw
+            else:
+                n = len(focus_influences) + 1
+                share = 1.0 / n if n else 0.0
+                for d in focus_influences.values():
+                    d['normalized_influence'] = share
+                chat_normalized = share
+            
+            out = {
                 'success': True,
                 'pair_index': pair_idx,
                 'pair_data': pair_data,
@@ -189,7 +237,8 @@ class BatchAnalysisService:
                 'chat_content_influence': {
                     'influence': float(influence_chat),
                     'similarity': float(similarity_chat),
-                    'is_significant': is_significant_chat
+                    'is_significant': is_significant_chat,
+                    'normalized_influence': chat_normalized
                 },
                 'noise_metrics': {
                     'variance': baseline_variance,
@@ -204,6 +253,11 @@ class BatchAnalysisService:
                     'embedding': embedding_tokens
                 }
             }
+            if focus_distribution_assessment is not None:
+                out['focus_distribution_assessment'] = focus_distribution_assessment
+            if assessment_error is not None:
+                out['focus_distribution_assessment_error'] = assessment_error
+            return out
         except Exception as e:
             return {
                 'success': False,
@@ -356,8 +410,11 @@ class BatchAnalysisService:
             else:
                 yield f"data: {json.dumps({'type': 'error', 'pair_index': pair_idx, 'error': result.get('error', 'Unknown error')})}\n\n"
         
-        # Calculate final statistics
+        # Calculate final statistics (normalized shares, consistent with single-run ablation)
         yield f"data: {json.dumps({'type': 'progress', 'stage': 'calculating_statistics', 'message': 'Calculating statistics...'})}\n\n"
+        
+        statistics = calculate_statistics_from_results(pair_results)
+        focus_distribution_statistics = calculate_focus_distribution_statistics(pair_results)
         
         # Calculate costs
         cost_breakdown = self.cost_calculator.calculate_cost(
@@ -368,13 +425,31 @@ class BatchAnalysisService:
             'openai'  # Embeddings only work with OpenAI
         )
         
-        # Final result
+        # Persist checkpoint with statistics for reload / export
+        checkpoint_data = {
+            'session_id': session_id,
+            'timestamp': datetime.now().isoformat(),
+            'type': 'batch_analysis',
+            'completed': completed_count,
+            'total_pairs': total_pairs,
+            'pair_results': pair_results,
+            'statistics': statistics,
+            'focus_distribution_statistics': focus_distribution_statistics,
+            'cost_breakdown': cost_breakdown,
+            'complete': True
+        }
+        self.checkpoint_service.save_checkpoint(session_id, checkpoint_data, 'batch_analysis')
+        
+        # Final result (include `results` alias for frontend)
         final_result = {
             'type': 'complete',
             'session_id': session_id,
             'completed': completed_count,
             'total_pairs': total_pairs,
             'pair_results': pair_results,
+            'results': pair_results,
+            'statistics': statistics,
+            'focus_distribution_statistics': focus_distribution_statistics,
             'cost_breakdown': cost_breakdown
         }
         
