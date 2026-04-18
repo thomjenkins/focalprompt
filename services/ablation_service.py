@@ -11,6 +11,7 @@ from typing import List, Dict, Optional
 from services.embedding_service import EmbeddingService
 from services.cost_calculator import CostCalculator
 from utils.prompt_builder import build_prompt_with_dynamic_foci
+from utils.gateway_chat import chat_completion as gateway_chat_completion
 
 
 class AblationService:
@@ -22,7 +23,8 @@ class AblationService:
         model: str,
         api_key: Optional[str] = None,
         embedding_service: Optional[EmbeddingService] = None,
-        cost_calculator: Optional[CostCalculator] = None
+        cost_calculator: Optional[CostCalculator] = None,
+        provider_name: Optional[str] = None,
     ):
         """
         Initialize ablation service.
@@ -36,6 +38,7 @@ class AblationService:
         """
         self.provider = provider
         self.model = model
+        self.provider_name = provider_name or 'openai'
         self.api_key = api_key  # Kept for backward compatibility but not used
         self.embedding_service = embedding_service or EmbeddingService()
         self.cost_calculator = cost_calculator or CostCalculator()
@@ -80,15 +83,17 @@ class AblationService:
             
             for attempt in range(max_retries):
                 try:
-                    response = self.provider.chat_completion(
-                        model=self.model,
-                        messages=[{"role": "user", "content": prompt}],
-                        temperature=0.7 if num_samples > 1 else 0.7
+                    response = gateway_chat_completion(
+                        self.provider,
+                        self.model,
+                        self.provider_name,
+                        [{"role": "user", "content": prompt}],
+                        temperature=0.7,
                     )
                     break  # Success, exit retry loop
                 except Exception as e:
                     error_msg = str(e).lower()
-                    if 'rate limit' in error_msg or '429' in error_msg:
+                    if 'rate limit' in error_msg or '429' in error_msg or 'too many requests' in error_msg:
                         if attempt < max_retries - 1:
                             # Exponential backoff: 2s, 4s, 8s
                             wait_time = retry_delay * (2 ** attempt)
@@ -101,7 +106,10 @@ class AblationService:
                         raise
             
             if response is None:
-                raise Exception("Failed to generate baseline output after retries")
+                raise Exception(
+                    "Failed to generate baseline output after retries. "
+                    "Check model/provider selection, rate limits, and Vercel function timeouts."
+                )
             
             baseline_outputs.append(response['content'])
             
@@ -164,15 +172,17 @@ class AblationService:
             
             for attempt in range(max_retries):
                 try:
-                    response = self.provider.chat_completion(
-                        model=self.model,
-                        messages=[{"role": "user", "content": ablated_prompt}],
-                        temperature=0.7
+                    response = gateway_chat_completion(
+                        self.provider,
+                        self.model,
+                        self.provider_name,
+                        [{"role": "user", "content": ablated_prompt}],
+                        temperature=0.7,
                     )
                     break  # Success, exit retry loop
                 except Exception as e:
                     error_msg = str(e).lower()
-                    if 'rate limit' in error_msg or '429' in error_msg:
+                    if 'rate limit' in error_msg or '429' in error_msg or 'too many requests' in error_msg:
                         if attempt < max_retries - 1:
                             # Exponential backoff: 2s, 4s, 8s
                             wait_time = retry_delay * (2 ** attempt)

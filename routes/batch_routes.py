@@ -136,7 +136,8 @@ def batch_analysis_stream():
                 embedding_service,
                 cost_calculator,
                 checkpoint_service,
-                assessment_service=assessment_service
+                assessment_service=assessment_service,
+                provider_name=getattr(assessor, 'provider_name', provider),
             )
             
             # Track usage for authenticated users

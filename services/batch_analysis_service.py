@@ -19,6 +19,7 @@ from utils.data_processing import (
     calculate_focus_distribution_statistics,
 )
 from services.assessment_service import AssessmentService
+from utils.gateway_chat import chat_completion as gateway_chat_completion
 
 
 class BatchAnalysisService:
@@ -33,6 +34,7 @@ class BatchAnalysisService:
         cost_calculator: Optional[CostCalculator] = None,
         checkpoint_service: Optional[CheckpointService] = None,
         assessment_service: Optional[AssessmentService] = None,
+        provider_name: Optional[str] = None,
         max_workers: int = 10
     ):
         """
@@ -54,6 +56,7 @@ class BatchAnalysisService:
         self.cost_calculator = cost_calculator or CostCalculator()
         self.checkpoint_service = checkpoint_service or CheckpointService()
         self.assessment_service = assessment_service
+        self.provider_name = provider_name or 'openai'
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
     
     def process_single_pair(
@@ -87,10 +90,12 @@ class BatchAnalysisService:
             chat_content = inputs['chat_content']
             
             # Generate baseline output
-            response = self.provider.chat_completion(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.7
+            response = gateway_chat_completion(
+                self.provider,
+                self.model,
+                self.provider_name,
+                [{"role": "user", "content": prompt}],
+                temperature=0.7,
             )
             baseline_output = response['content']
             
@@ -166,10 +171,12 @@ class BatchAnalysisService:
                         ablated_prompt = prompt
                 
                 # Generate ablated output
-                response = self.provider.chat_completion(
-                    model=self.model,
-                    messages=[{"role": "user", "content": ablated_prompt}],
-                    temperature=0.7
+                response = gateway_chat_completion(
+                    self.provider,
+                    self.model,
+                    self.provider_name,
+                    [{"role": "user", "content": ablated_prompt}],
+                    temperature=0.7,
                 )
                 ablated_output = response['content']
                 
@@ -196,10 +203,12 @@ class BatchAnalysisService:
             ablated_prompt_no_chat = prompt.replace(chat_content, '').strip()
             ablated_prompt_no_chat = '\n'.join([line for line in ablated_prompt_no_chat.split('\n') if line.strip()])
             
-            response = self.provider.chat_completion(
-                model=self.model,
-                messages=[{"role": "user", "content": ablated_prompt_no_chat}],
-                temperature=0.7
+            response = gateway_chat_completion(
+                self.provider,
+                self.model,
+                self.provider_name,
+                [{"role": "user", "content": ablated_prompt_no_chat}],
+                temperature=0.7,
             )
             ablated_output_no_chat = response['content']
             
@@ -331,10 +340,12 @@ class BatchAnalysisService:
             
             baseline_outputs = []
             for i in range(num_samples):
-                response = self.provider.chat_completion(
-                    model=self.model,
-                    messages=[{"role": "user", "content": representative_prompt}],
-                    temperature=0.7
+                response = gateway_chat_completion(
+                    self.provider,
+                    self.model,
+                    self.provider_name,
+                    [{"role": "user", "content": representative_prompt}],
+                    temperature=0.7,
                 )
                 baseline_outputs.append(response['content'])
                 
