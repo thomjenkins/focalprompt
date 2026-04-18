@@ -405,17 +405,28 @@
                         <!-- Manual Entry Form -->
                         <div class="manual-entry-form" style="margin-bottom: 24px; padding: 16px; background: #f8fafc; border-radius: 6px;">
                             <h3 style="margin-bottom: 12px;">Add Pair Manually</h3>
+                            <p class="info-text" style="margin-bottom: 12px; font-size: 0.9em;">
+                                Enter the variable <strong>input</strong> for this row (e.g. user message or chat turn) and the model <strong>output</strong> you want to analyze. The shared system prompt is set below.
+                            </p>
+                            <label for="manual-pair-input" style="display: block; font-weight: 600; margin-bottom: 6px;">Input</label>
+                            <textarea 
+                                id="manual-pair-input" 
+                                class="textarea-large" 
+                                placeholder="Input for this pair (e.g. chat content / user message)..."
+                                rows="4"
+                                style="margin-bottom: 16px;"
+                            ></textarea>
                             <div id="manual-input-fields" style="display: flex; flex-direction: column; gap: 12px;">
-                                <!-- Dynamic input fields will be inserted here based on foci -->
+                                <!-- Extra dynamic fields (RAG, tools, …) inserted here when foci need them -->
                             </div>
+                            <label for="manual-output" style="display: block; font-weight: 600; margin-bottom: 6px; margin-top: 8px;">Output</label>
                             <textarea 
                                 id="manual-output" 
                                 class="textarea-large" 
-                                placeholder="Output (Suggested Message)..."
-                                rows="3"
-                                style="margin-top: 12px;"
+                                placeholder="Output for this pair (model response to assess)..."
+                                rows="4"
                             ></textarea>
-                            <button id="add-pair-btn" class="btn btn-primary" style="margin-top: 12px;">
+                            <button type="button" id="add-pair-btn" class="btn btn-primary" style="margin-top: 12px;">
                                 ➕ Add Pair
                             </button>
                         </div>

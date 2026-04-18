@@ -434,6 +434,7 @@ const agentResponseResults = document.getElementById('agent-response-results');
 const csvUpload = document.getElementById('csv-upload');
 const clearPairsBtn = document.getElementById('clear-pairs-btn');
 const manualInputFields = document.getElementById('manual-input-fields');
+const manualPairInput = document.getElementById('manual-pair-input');
 const manualOutput = document.getElementById('manual-output');
 const batchPromptInput = document.getElementById('batch-prompt-input');
 const addPairBtn = document.getElementById('add-pair-btn');
@@ -767,6 +768,8 @@ window.addEventListener('DOMContentLoaded', async () => {
             console.error('Error auto-loading saved batch:', error);
         }
     }
+    
+    updateManualInputFields();
     
     // Initialize settings UI
     const providerSelect = document.getElementById('provider-select');
@@ -3256,11 +3259,10 @@ if (csvUpload) {
     });
 }
 
-// Update manual input fields based on dynamic foci
+// Extra manual fields (RAG, tools, …). Primary pair input is always #manual-pair-input (chat_content).
 function updateManualInputFields() {
     if (!manualInputFields) return;
     
-    // Get unique dynamic types from batchFoci
     const dynamicTypes = new Set();
     batchFoci.forEach(focus => {
         if (focus.is_dynamic && focus.dynamic_type) {
@@ -3268,45 +3270,29 @@ function updateManualInputFields() {
         }
     });
     
-    // Field labels mapping
     const fieldLabels = {
-        'chat': 'Chat Content',
-        'rag': 'RAG Context',
-        'tools': 'Tool Results',
-        'other': 'Other Dynamic Input'
+        'rag': 'RAG context (this pair)',
+        'tools': 'Tool results (this pair)',
+        'other': 'Other dynamic input (this pair)'
     };
-    
-    // Field IDs mapping
     const fieldIds = {
-        'chat': 'manual-chat-content',
         'rag': 'manual-rag-context',
         'tools': 'manual-tool-results',
         'other': 'manual-other-input'
     };
     
-    // Build HTML for dynamic input fields
     let html = '';
-    if (dynamicTypes.size === 0) {
-        // Default to chat_content if no dynamic foci
-        html = `<textarea 
-            id="manual-chat-content" 
-            class="textarea-large" 
-            placeholder="Chat Content (Input)..."
-            rows="3"
-        ></textarea>`;
-    } else {
-        // Show fields for each dynamic type
-        ['chat', 'rag', 'tools', 'other'].forEach(type => {
-            if (dynamicTypes.has(type)) {
-                html += `<textarea 
-                    id="${fieldIds[type]}" 
-                    class="textarea-large" 
-                    placeholder="${fieldLabels[type]} (Dynamic Input)..."
-                    rows="3"
-                ></textarea>`;
-            }
-        });
-    }
+    ['rag', 'tools', 'other'].forEach(type => {
+        if (dynamicTypes.has(type)) {
+            html += `<label for="${fieldIds[type]}" style="display:block;font-weight:600;margin-bottom:6px;">${fieldLabels[type]}</label>`;
+            html += `<textarea 
+                id="${fieldIds[type]}" 
+                class="textarea-large" 
+                placeholder="${fieldLabels[type]} — optional if unused"
+                rows="3"
+            ></textarea>`;
+        }
+    });
     
     manualInputFields.innerHTML = html;
 }
@@ -3314,17 +3300,20 @@ function updateManualInputFields() {
 // Batch Analysis: Manual Entry
 if (addPairBtn) {
     addPairBtn.addEventListener('click', () => {
+        const inputText = manualPairInput ? manualPairInput.value.trim() : '';
         const output = manualOutput ? manualOutput.value.trim() : '';
         
+        if (!inputText) {
+            showErrorModal('Please fill in the Input field.');
+            return;
+        }
         if (!output) {
             showErrorModal('Please fill in the Output field.');
             return;
         }
         
-        // Collect all dynamic inputs
-        const inputs = {};
+        const inputs = { chat_content: inputText };
         
-        // Get dynamic types from foci
         const dynamicTypes = new Set();
         batchFoci.forEach(focus => {
             if (focus.is_dynamic && focus.dynamic_type) {
@@ -3332,39 +3321,30 @@ if (addPairBtn) {
             }
         });
         
-        // Field IDs mapping
         const fieldIds = {
-            'chat': 'manual-chat-content',
+            'chat': 'manual-pair-input',
             'rag': 'manual-rag-context',
             'tools': 'manual-tool-results',
             'other': 'manual-other-input'
         };
         
-        // Collect values from each dynamic input field
-        if (dynamicTypes.size === 0) {
-            // Default to chat_content if no dynamic foci
-            const chatField = document.getElementById('manual-chat-content');
-            if (chatField) {
-                inputs.chat_content = chatField.value.trim();
+        dynamicTypes.forEach(type => {
+            if (type === 'chat') {
+                return;
             }
-        } else {
-            dynamicTypes.forEach(type => {
-                const fieldId = fieldIds[type];
-                const field = document.getElementById(fieldId);
-                if (field) {
-                    const value = field.value.trim();
-                    if (type === 'chat') {
-                        inputs.chat_content = value;
-                    } else if (type === 'rag') {
-                        inputs.rag_context = value;
-                    } else if (type === 'tools') {
-                        inputs.tool_results = value;
-                    } else if (type === 'other') {
-                        inputs.other_input = value;
-                    }
+            const fieldId = fieldIds[type];
+            const field = document.getElementById(fieldId);
+            if (field) {
+                const value = field.value.trim();
+                if (type === 'rag') {
+                    inputs.rag_context = value;
+                } else if (type === 'tools') {
+                    inputs.tool_results = value;
+                } else if (type === 'other') {
+                    inputs.other_input = value;
                 }
-            });
-        }
+            }
+        });
         
         batchPairs.push({
             inputs: inputs,
@@ -3375,10 +3355,9 @@ if (addPairBtn) {
         updateBatchAnalysisButton();
         updateCostEstimate();
         
-        // Clear form
+        if (manualPairInput) manualPairInput.value = '';
         if (manualInputFields) {
-            const textareas = manualInputFields.querySelectorAll('textarea');
-            textareas.forEach(ta => ta.value = '');
+            manualInputFields.querySelectorAll('textarea').forEach(ta => { ta.value = ''; });
         }
         if (manualOutput) manualOutput.value = '';
     });
@@ -3751,6 +3730,7 @@ if (batchClearFociBtn) {
         if (confirm('Are you sure you want to clear all foci?')) {
             batchFoci = [];
             renderBatchFoci();
+            updateManualInputFields();
             updateBatchAnalysisButton();
             updateCostEstimate();
         }
