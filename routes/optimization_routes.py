@@ -8,6 +8,7 @@ import os
 from services.assessor_factory import get_assessor
 from services.optimization_service import OptimizationService
 from services.cost_calculator import CostCalculator
+from utils.model_provider import resolve_model_and_provider
 
 optimization_bp = Blueprint('optimization', __name__)
 
@@ -17,6 +18,7 @@ def get_api_key_and_model(data):
     api_key = data.get('api_key') or os.getenv("OPENAI_API_KEY")
     model = data.get('model', 'gpt-4o')
     provider = data.get('provider', 'openai')
+    model, provider = resolve_model_and_provider(model, provider)
     return api_key, model, provider
 
 

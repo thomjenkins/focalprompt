@@ -16,6 +16,7 @@ from services.usage_service import UsageService
 from services.billing_service import BillingService
 from services.database import Database
 from middleware.auth import optional_auth
+from utils.model_provider import resolve_model_and_provider
 
 
 ablation_bp = Blueprint('ablation', __name__)
@@ -30,7 +31,7 @@ def get_api_key_and_model(data):
     """Extract model and provider from request data. API key no longer needed (uses AI Gateway)."""
     model = data.get('model', 'gpt-4o-mini')
     provider = data.get('provider', 'openai')
-    # API key is ignored - we use AI Gateway now
+    model, provider = resolve_model_and_provider(model, provider)
     return None, model, provider
 
 

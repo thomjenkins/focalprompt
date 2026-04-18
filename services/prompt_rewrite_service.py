@@ -5,6 +5,7 @@ Prompt rewrite service.
 Handles rewriting prompts with emphasis based on focus weights.
 """
 
+import inspect
 from typing import List, Dict
 from core.focal_assessor import FocalAssessor
 
@@ -36,7 +37,8 @@ class PromptRewriteService:
         Returns:
             Rewritten prompt string
         """
-        provider = self.assessor.provider
+        llm = self.assessor.provider
+        provider_name = getattr(self.assessor, 'provider_name', 'openai')
         
         # Build the rewrite instruction
         weights_text = '\n'.join([
@@ -68,9 +70,9 @@ INSTRUCTIONS:
 
 Return only the rewritten prompt, without any additional explanation or formatting."""
 
-        response = provider.chat_completion(
-            model=self.assessor.model,
-            messages=[
+        kwargs = {
+            'model': self.assessor.model,
+            'messages': [
                 {
                     "role": "system",
                     "content": "You are an expert at rewriting prompts to emphasize different aspects while maintaining clarity and coherence."
@@ -80,8 +82,13 @@ Return only the rewritten prompt, without any additional explanation or formatti
                     "content": rewrite_instruction
                 }
             ],
-            temperature=0.7
-        )
+            'temperature': 0.7
+        }
+        if hasattr(llm, 'chat_completion'):
+            sig = inspect.signature(llm.chat_completion)
+            if 'provider' in sig.parameters:
+                kwargs['provider'] = provider_name
+        response = llm.chat_completion(**kwargs)
         
         rewritten = response['content'].strip()
         return rewritten

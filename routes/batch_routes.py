@@ -18,6 +18,7 @@ from utils.data_processing import (
     calculate_statistics_from_results,
     calculate_focus_distribution_statistics,
 )
+from utils.model_provider import resolve_model_and_provider
 
 
 batch_bp = Blueprint('batch', __name__)
@@ -32,7 +33,7 @@ def get_api_key_and_model(data):
     """Extract model and provider from request data. API key no longer needed (uses AI Gateway)."""
     model = data.get('model', 'gpt-4o-mini')
     provider = data.get('provider', 'openai')
-    # API key is ignored - we use AI Gateway now
+    model, provider = resolve_model_and_provider(model, provider)
     return None, model, provider
 
 
