@@ -116,6 +116,18 @@ try:
 except Exception as e:
     print(f"Error registering credit_bp: {e}", file=sys.stderr)
 
+try:
+    from routes.api_key_routes import api_key_bp
+    app.register_blueprint(api_key_bp)
+except Exception as e:
+    print(f"Error registering api_key_bp: {e}", file=sys.stderr)
+
+try:
+    from routes.api_v1_routes import register_v1_routes
+    register_v1_routes(app)
+except Exception as e:
+    print(f"Error registering v1 API routes: {e}", file=sys.stderr)
+
 
 @app.route('/')
 def index():

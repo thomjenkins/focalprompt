@@ -384,6 +384,36 @@ class Database:
                         )
                     """)
                 
+                # API keys (machine-to-machine; secret shown once, only hash stored)
+                if self.use_postgres:
+                    cursor.execute("""
+                        CREATE TABLE IF NOT EXISTS api_keys (
+                            id VARCHAR(255) PRIMARY KEY,
+                            user_id VARCHAR(255) NOT NULL,
+                            key_hash VARCHAR(64) NOT NULL UNIQUE,
+                            key_prefix VARCHAR(32) NOT NULL,
+                            name TEXT,
+                            created_at TIMESTAMP NOT NULL,
+                            last_used_at TIMESTAMP,
+                            revoked_at TIMESTAMP,
+                            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                        )
+                    """)
+                else:
+                    cursor.execute("""
+                        CREATE TABLE IF NOT EXISTS api_keys (
+                            id TEXT PRIMARY KEY,
+                            user_id TEXT NOT NULL,
+                            key_hash TEXT NOT NULL UNIQUE,
+                            key_prefix TEXT NOT NULL,
+                            name TEXT,
+                            created_at TEXT NOT NULL,
+                            last_used_at TEXT,
+                            revoked_at TEXT,
+                            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                        )
+                    """)
+                
                 # Create indexes for performance
                 indexes = [
                     "CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)",
@@ -393,7 +423,8 @@ class Database:
                     "CREATE INDEX IF NOT EXISTS idx_usage_endpoint ON usage(endpoint)",
                     "CREATE INDEX IF NOT EXISTS idx_charges_user_id ON charges(user_id)",
                     "CREATE INDEX IF NOT EXISTS idx_charges_status ON charges(status)",
-                    "CREATE INDEX IF NOT EXISTS idx_charges_created_at ON charges(created_at)"
+                    "CREATE INDEX IF NOT EXISTS idx_charges_created_at ON charges(created_at)",
+                    "CREATE INDEX IF NOT EXISTS idx_api_keys_user_id ON api_keys(user_id)",
                 ]
                 
                 for index_sql in indexes:
@@ -726,3 +757,101 @@ class Database:
                 'month': target_month,
                 'year': target_year
             }
+    
+    # API key operations (hashed secrets for integration / product apps)
+    def insert_api_key(
+        self,
+        key_id: str,
+        user_id: str,
+        key_hash: str,
+        key_prefix: str,
+        name: Optional[str] = None,
+    ) -> bool:
+        """Store a new API key row (hash only)."""
+        with self._get_conn() as conn:
+            try:
+                now = datetime.now()
+                if self.use_postgres:
+                    cursor = self._execute(conn, """
+                        INSERT INTO api_keys (id, user_id, key_hash, key_prefix, name, created_at)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                    """, (key_id, user_id, key_hash, key_prefix, name, now))
+                else:
+                    cursor = self._execute(conn, """
+                        INSERT INTO api_keys (id, user_id, key_hash, key_prefix, name, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, (key_id, user_id, key_hash, key_prefix, name, now.isoformat()))
+                cursor.close()
+                return True
+            except Exception as e:
+                print(f"Error inserting api key: {e}")
+                return False
+    
+    def get_api_key_by_hash(self, key_hash: str) -> Optional[Dict]:
+        """Return api_keys row (including id, user_id) for an active (non-revoked) key."""
+        with self._get_conn() as conn:
+            if self.use_postgres:
+                cursor = self._execute(conn, """
+                    SELECT * FROM api_keys
+                    WHERE key_hash = %s AND revoked_at IS NULL
+                """, (key_hash,))
+            else:
+                cursor = self._execute(conn, """
+                    SELECT * FROM api_keys
+                    WHERE key_hash = ? AND (revoked_at IS NULL OR revoked_at = '')
+                """, (key_hash,))
+            row = self._fetchone(cursor)
+            cursor.close()
+            return row
+    
+    def list_api_keys(self, user_id: str) -> List[Dict]:
+        """List API keys for a user (no secrets)."""
+        with self._get_conn() as conn:
+            if self.use_postgres:
+                cursor = self._execute(conn, """
+                    SELECT id, user_id, key_prefix, name, created_at, last_used_at, revoked_at
+                    FROM api_keys
+                    WHERE user_id = %s
+                    ORDER BY created_at DESC
+                """, (user_id,))
+            else:
+                cursor = self._execute(conn, """
+                    SELECT id, user_id, key_prefix, name, created_at, last_used_at, revoked_at
+                    FROM api_keys
+                    WHERE user_id = ?
+                    ORDER BY created_at DESC
+                """, (user_id,))
+            rows = self._fetchall(cursor)
+            cursor.close()
+            return rows
+    
+    def touch_api_key_last_used(self, key_id: str) -> bool:
+        with self._get_conn() as conn:
+            now = datetime.now()
+            if self.use_postgres:
+                cursor = self._execute(conn, """
+                    UPDATE api_keys SET last_used_at = %s WHERE id = %s AND revoked_at IS NULL
+                """, (now, key_id))
+            else:
+                cursor = self._execute(conn, """
+                    UPDATE api_keys SET last_used_at = ? WHERE id = ? AND (revoked_at IS NULL OR revoked_at = '')
+                """, (now.isoformat(), key_id))
+            cursor.close()
+            return True
+    
+    def revoke_api_key(self, key_id: str, user_id: str) -> bool:
+        with self._get_conn() as conn:
+            now = datetime.now()
+            if self.use_postgres:
+                cursor = self._execute(conn, """
+                    UPDATE api_keys SET revoked_at = %s
+                    WHERE id = %s AND user_id = %s AND revoked_at IS NULL
+                """, (now, key_id, user_id))
+            else:
+                cursor = self._execute(conn, """
+                    UPDATE api_keys SET revoked_at = ?
+                    WHERE id = ? AND user_id = ? AND (revoked_at IS NULL OR revoked_at = '')
+                """, (now.isoformat(), key_id, user_id))
+            ok = cursor.rowcount > 0 if hasattr(cursor, 'rowcount') else True
+            cursor.close()
+            return bool(ok)

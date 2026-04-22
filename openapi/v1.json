@@ -1,0 +1,134 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "FocalPrompt API",
+    "version": "1.0.0",
+    "description": "Version 1 JSON API. Use Authorization: Bearer fp_live_... for server-to-server calls (same user as the key). Create keys with POST /api/v1/keys using a browser session (X-Session-ID or session cookie), not a Bearer key. Legacy /api/... paths behave the same and also accept API keys where optional_auth/require_auth apply."
+  },
+  "servers": [
+    { "url": "https://focalprompt.com", "description": "Production" }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerApiKey": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "fp_live_...",
+        "description": "API key from POST /api/v1/keys (session-only create)"
+      },
+      "sessionId": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Session-ID",
+        "description": "Session from POST /api/auth/login"
+      }
+    }
+  },
+  "security": [{ "bearerApiKey": [] }],
+  "paths": {
+    "/api/v1": {
+      "get": {
+        "summary": "API v1 index",
+        "responses": { "200": { "description": "Metadata and doc links" } }
+      }
+    },
+    "/api/v1/openapi.json": {
+      "get": {
+        "summary": "This specification (JSON)",
+        "responses": { "200": { "description": "OpenAPI document" } }
+      }
+    },
+    "/api/v1/keys": {
+      "get": {
+        "summary": "List API keys (masked)",
+        "security": [{ "bearerApiKey": [] }, { "sessionId": [] }],
+        "responses": { "200": { "description": "List of keys" } }
+      },
+      "post": {
+        "summary": "Create API key (session only; full secret returned once)",
+        "security": [{ "sessionId": [] }],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": { "name": { "type": "string" } }
+              }
+            }
+          }
+        },
+        "responses": { "201": { "description": "Key created" } }
+      }
+    },
+    "/api/v1/keys/{keyId}": {
+      "delete": {
+        "summary": "Revoke an API key",
+        "security": [{ "bearerApiKey": [] }, { "sessionId": [] }],
+        "parameters": [
+          { "name": "keyId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "Revoked" } }
+      }
+    },
+    "/api/v1/assess": {
+      "post": {
+        "summary": "Assess focus distribution for prompt and output",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["prompt", "output"],
+                "properties": {
+                  "prompt": { "type": "string" },
+                  "output": { "type": "string" },
+                  "foci": { "type": "array" },
+                  "max_foci": { "type": "integer" },
+                  "model": { "type": "string" },
+                  "provider": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Assessment result" } }
+      }
+    },
+    "/api/v1/detect-foci": {
+      "post": {
+        "summary": "Detect foci in a prompt (agent)",
+        "responses": { "200": { "description": "Foci and related data" } }
+      }
+    },
+    "/api/v1/detect-dynamic-foci": {
+      "post": {
+        "summary": "Classify which foci are dynamic",
+        "responses": { "200": { "description": "Dynamic foci" } }
+      }
+    },
+    "/api/v1/generate-output": {
+      "post": {
+        "summary": "Generate a single model output for a prompt",
+        "responses": { "200": { "description": "Generated output" } }
+      }
+    },
+    "/api/v1/rewrite-prompt": {
+      "post": {
+        "summary": "Rewrite prompt with emphasis from focus weights",
+        "responses": { "200": { "description": "Rewritten prompt" } }
+      }
+    },
+    "/api/v1/build-agent-prompt": {
+      "post": {
+        "summary": "Build agent prompt from foci and dynamic inputs",
+        "responses": { "200": { "description": "Constructed prompt" } }
+      }
+    },
+    "/api/v1/ablation-analysis": {
+      "post": {
+        "summary": "Run ablation analysis",
+        "responses": { "200": { "description": "Ablation results" } }
+      }
+    }
+  }
+}
