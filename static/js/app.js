@@ -438,6 +438,11 @@ const ablationResults = document.getElementById('ablation-results');
 if (window.FocalPromptExperiment) {
     window.FocalPromptExperiment.bind();
 }
+document.querySelectorAll('.experiment-config').forEach(function (root) {
+    root.addEventListener('input', function () {
+        if (typeof updateCostEstimate === 'function') updateCostEstimate();
+    });
+});
 
 // Agent Builder elements
 const chatInput = document.getElementById('chat-input');
@@ -2582,9 +2587,18 @@ if (runAblationBtn) {
             }
         }
 
+        var nTested = window.FocalPromptExperiment
+            ? window.FocalPromptExperiment.countPreviewAttributable(foci)
+            : foci.filter(function (f) { return !f.is_dynamic; }).length;
         showLoading(
-            'Running ablation analysis... This may take several minutes (' +
-            cfg.n_baseline + ' baseline samples + ' + cfg.n_ablated + ' ablated samples per focus).'
+            window.FocalPromptExperiment
+                ? window.FocalPromptExperiment.formatAblationLoading(
+                    cfg.temperature, cfg.n_baseline, cfg.n_ablated, nTested
+                )
+                : ('Running ablation analysis at temperature ' + Number(cfg.temperature).toFixed(1) +
+                   ': ' + cfg.n_baseline + ' baseline samples and ' + cfg.n_ablated +
+                   ' ablated samples for each of ' + nTested +
+                   (nTested === 1 ? ' focus' : ' foci') + '.')
         );
         
         try {
@@ -2594,17 +2608,14 @@ if (runAblationBtn) {
             
             const response = await fetch('/api/ablation-analysis', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
+                headers: getApiHeaders(),
+                body: JSON.stringify(getApiBody({
                     prompt: prompt,
                     foci: foci,
-                    model: 'gpt-4o-mini',
                     n_baseline: cfg.n_baseline,
                     n_ablated: cfg.n_ablated,
                     temperature: cfg.temperature
-                }),
+                })),
                 signal: controller.signal
             });
             
@@ -3338,8 +3349,17 @@ function updateCostEstimate() {
     if (!batchCostEstimate || !batchCostEstimateContent) return;
     
     const numPairs = batchPairs.length;
-    const numFoci = batchFoci.length;
-    const numSamples = 20; // Default baseline samples
+    const numFoci = window.FocalPromptExperiment
+        ? window.FocalPromptExperiment.countPreviewAttributable(batchFoci)
+        : batchFoci.filter(function (f) { return !f.is_dynamic; }).length;
+    const cfg = window.FocalPromptExperiment ? window.FocalPromptExperiment.getState() : {
+        temperature: 0.7, n_baseline: 10, n_ablated: 5
+    };
+    const nBaseline = cfg.n_baseline;
+    const nAblated = cfg.n_ablated;
+    const callsPerPair = window.FocalPromptExperiment
+        ? window.FocalPromptExperiment.modelCallCount(nBaseline, nAblated, numFoci)
+        : nBaseline + nAblated * numFoci;
     const model = 'gpt-4o-mini'; // Default model
     
     // Hide if no pairs or no foci
@@ -3362,40 +3382,18 @@ function updateCostEstimate() {
     // Token estimates per pair (conservative estimates)
     const promptTokens = 2500; // Full prompt
     const ablatedPromptTokens = 2000; // Ablated prompt (slightly shorter)
-    const chatAblatedPromptTokens = 1800; // Prompt without chat content
     const outputTokens = 200; // Typical output length
-    
-    // Token estimates match current per-pair sampling (baseline + ablated), not a shared threshold.
-    const baselineNoiseInputTokens = numSamples * promptTokens;
-    const baselineNoiseOutputTokens = numSamples * outputTokens;
-    
-    // 2. Per pair: ONE baseline output (not 20)
-    const baselineInputTokensPerPair = promptTokens;
-    const baselineOutputTokensPerPair = outputTokens;
-    
-    // 3. Ablated outputs: N foci per pair
-    const ablatedInputTokensPerPair = numFoci * ablatedPromptTokens;
-    const ablatedOutputTokensPerPair = numFoci * outputTokens;
-    
-    // 4. Chat ablation: 1 sample per pair
-    const chatAblatedInputTokensPerPair = chatAblatedPromptTokens;
-    const chatAblatedOutputTokensPerPair = outputTokens;
-    
-    // Total tokens per pair (excluding the shared baseline sample count used only for this estimate)
-    const totalInputTokensPerPair = baselineInputTokensPerPair + ablatedInputTokensPerPair + chatAblatedInputTokensPerPair;
-    const totalOutputTokensPerPair = baselineOutputTokensPerPair + ablatedOutputTokensPerPair + chatAblatedOutputTokensPerPair;
-    
-    // Embeddings per pair
-    // 1 baseline output + N ablated + 1 chat-ablated
-    const embeddingTokensPerPair = (1 + numFoci + 1) * outputTokens;
-    
-    // Embeddings for the estimated baseline repeats
-    const embeddingTokensForNoise = numSamples * outputTokens;
-    
-    // Total for all pairs (including estimated baseline repeats)
-    const totalInputTokens = baselineNoiseInputTokens + (totalInputTokensPerPair * numPairs);
-    const totalOutputTokens = baselineNoiseOutputTokens + (totalOutputTokensPerPair * numPairs);
-    const totalEmbeddingTokens = embeddingTokensForNoise + (embeddingTokensPerPair * numPairs);
+
+    const baselineInputTokensPerPair = nBaseline * promptTokens;
+    const baselineOutputTokensPerPair = nBaseline * outputTokens;
+    const ablatedInputTokensPerPair = nAblated * numFoci * ablatedPromptTokens;
+    const ablatedOutputTokensPerPair = nAblated * numFoci * outputTokens;
+    const totalInputTokensPerPair = baselineInputTokensPerPair + ablatedInputTokensPerPair;
+    const totalOutputTokensPerPair = baselineOutputTokensPerPair + ablatedOutputTokensPerPair;
+    const embeddingTokensPerPair = callsPerPair * outputTokens;
+    const totalInputTokens = totalInputTokensPerPair * numPairs;
+    const totalOutputTokens = totalOutputTokensPerPair * numPairs;
+    const totalEmbeddingTokens = embeddingTokensPerPair * numPairs;
     
     // Calculate costs
     const chatInputCost = totalInputTokens * modelPricing.input;
@@ -3409,7 +3407,10 @@ function updateCostEstimate() {
     html += '<div><strong>Configuration:</strong><br>';
     html += `Pairs: ${numPairs.toLocaleString()}<br>`;
     html += `Foci: ${numFoci}<br>`;
-    html += `Baseline Samples: ${numSamples} (once for batch)<br>`;
+    html += `Temperature: ${Number(cfg.temperature).toFixed(1)}<br>`;
+    html += `Baseline samples: ${nBaseline} per pair<br>`;
+    html += `Ablated samples: ${nAblated} per focus per pair<br>`;
+    html += `Model calls: ${callsPerPair.toLocaleString()} per pair (${(callsPerPair * numPairs).toLocaleString()} total)<br>`;
     html += `Model: ${model}</div>`;
     html += '<div><strong>Estimated Tokens:</strong><br>';
     html += `Input: ${totalInputTokens.toLocaleString()}<br>`;
@@ -3421,7 +3422,6 @@ function updateCostEstimate() {
     html += ` <span style="font-size: 0.85em; font-weight: normal; color: #666;">($${costPerPair.toFixed(4)} per pair)</span>`;
     html += '</div>';
     html += '<p style="margin-top: 8px; font-size: 0.85em; color: #856404;">⚠️ This is an estimate. Actual costs may vary based on actual token usage.</p>';
-    html += '<p style="margin-top: 4px; font-size: 0.85em; color: #856404;">💡 Optimized: Noise calculated once for entire batch (not per pair).</p>';
     
     batchCostEstimateContent.innerHTML = html;
     batchCostEstimate.classList.remove('hidden');
@@ -3711,7 +3711,17 @@ async function handleRunBatchAnalysis(e) {
     // Generate session ID for checkpointing
     const sessionId = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
     
-    showLoading(`Running batch analysis on ${batchPairs.length} pair(s)... This may take a very long time.`);
+    showLoading(
+        window.FocalPromptExperiment
+            ? window.FocalPromptExperiment.formatBatchLoading(
+                batchPairs.length, cfg.temperature, cfg.n_baseline, cfg.n_ablated
+            )
+            : ('Running batch analysis on ' + batchPairs.length +
+               (batchPairs.length === 1 ? ' pair' : ' pairs') +
+               ' at temperature ' + Number(cfg.temperature).toFixed(1) + ': ' +
+               cfg.n_baseline + ' baseline samples and ' + cfg.n_ablated +
+               ' ablated samples per focus per pair.')
+    );
     if (batchProgress) {
         batchProgress.classList.remove('hidden');
         batchProgressText.textContent = `Starting analysis...`;
@@ -3726,19 +3736,16 @@ async function handleRunBatchAnalysis(e) {
         console.log('Sending streaming request to /api/batch-analysis-stream');
         const response = await fetch('/api/batch-analysis-stream', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
+            headers: getApiHeaders(),
+            body: JSON.stringify(getApiBody({
                 pairs: pairsWithPrompt,
                 foci: batchFoci,
-                model: 'gpt-4o-mini',
                 n_baseline: cfg.n_baseline,
                 n_ablated: cfg.n_ablated,
                 temperature: cfg.temperature,
                 session_id: sessionId,
                 resume: false
-            })
+            }))
         });
         
         if (!response.ok) {

@@ -238,15 +238,13 @@ class AIGatewayProvider(LLMProvider):
                     # Retry on rate limits with exponential backoff
                     if attempt < max_retries - 1:
                         import sys
-                        # Exponential backoff: 2s, 4s, 8s
                         wait_time = 2 * (2 ** attempt)
                         print(f"Rate limit exceeded (attempt {attempt + 1}/{max_retries}), waiting {wait_time}s before retry...", file=sys.stderr)
                         time.sleep(wait_time)
-                        last_exception = e  # Store exception for potential re-raise
                         continue
-                    user_error_msg = "Rate limit exceeded. Please wait a few minutes and try again."
-                    last_exception = Exception(user_error_msg)
-                    break # Exit retry loop
+                    raise Exception(
+                        "Rate limit exceeded. Please wait a few minutes and try again."
+                    )
                 elif error_code == 500 or error_code == 502 or error_code == 503:
                     # Retry on server errors
                     if attempt < max_retries - 1:
@@ -279,7 +277,10 @@ class AIGatewayProvider(LLMProvider):
                 print(f"Gateway URL: {self.base_url}", file=sys.stderr)
                 print(f"Model: {gateway_model} (provider={provider}, model={model})", file=sys.stderr)
                 raise Exception("Service temporarily unavailable. Please try again in a moment. If the problem persists, please contact support.")
-    
+        raise Exception(
+            "Failed to get a model response. Check model/provider selection, rate limits, and try again."
+        )
+
     def fetch_models_from_gateway(self) -> Optional[List[Dict[str, Any]]]:
         """
         Fetch all available models from the AI Gateway API.
