@@ -8,6 +8,8 @@ from pathlib import Path
 import pytest
 
 from utils.experiment_config import (
+    ABLATION_LOADING_TEMPLATE,
+    BATCH_LOADING_TEMPLATE,
     COST_LINE_COUNTED,
     COST_LINE_FORMULA,
     EXACT_DISCLOSURE_TEMPLATE,
@@ -20,6 +22,8 @@ from utils.experiment_config import (
     TEMPERATURE_HELP,
     TEMPERATURE_HIGH,
     experiment_preview,
+    format_ablation_loading,
+    format_batch_loading,
     format_cost_line,
     format_permutation_disclosure,
     format_power_preview_line,
@@ -86,6 +90,31 @@ def test_cost_line_arithmetic():
     )
     assert '{n_calls}' in COST_LINE_COUNTED
     assert 'n_foci' in COST_LINE_FORMULA
+
+
+def test_ablation_loading_copy_uses_live_experiment_settings():
+    msg = format_ablation_loading(0.7, 10, 5, 3)
+    assert msg == (
+        "Running ablation analysis at temperature 0.7: "
+        "10 baseline samples and 5 ablated samples "
+        "for each of 3 foci (25 model calls). "
+        "This may take several minutes."
+    )
+    assert '20 baseline' not in msg
+    assert format_ablation_loading(0.7, 10, 5, 1).endswith(
+        "for each of 1 focus (15 model calls). This may take several minutes."
+    )
+    assert '{n_calls}' in ABLATION_LOADING_TEMPLATE
+
+    batch = format_batch_loading(4, 0.7, 10, 5)
+    assert batch == (
+        "Running batch analysis on 4 pairs at temperature 0.7: "
+        "10 baseline samples and 5 ablated samples per focus per pair. "
+        "This may take a long time."
+    )
+    assert 'pair at temperature' in format_batch_loading(1, 0.7, 10, 5)
+    assert 'pairs at temperature' not in format_batch_loading(1, 0.7, 10, 5)
+    assert '{n_pairs}' in BATCH_LOADING_TEMPLATE
 
 
 def test_exact_vs_sampled_disclosure_switches_at_enumeration_budget():
@@ -203,6 +232,8 @@ def test_js_cost_and_suggestion_match_python():
         "  calls: m.modelCallCount(10,5,3),"
         "  costTagged: m.formatCostLine(10,5,3,true),"
         "  costOpen: m.formatCostLine(10,5,0,false),"
+        "  loadAbl: m.formatAblationLoading(0.7,10,5,3),"
+        "  loadBatch: m.formatBatchLoading(4,0.7,10,5),"
         "  s03: m.suggestedSampleSizes(0.3),"
         "  s07: m.suggestedSampleSizes(0.7),"
         "  s10: m.suggestedSampleSizes(1.0),"
@@ -223,6 +254,8 @@ def test_js_cost_and_suggestion_match_python():
     assert out['calls'] == 25
     assert out['costTagged'] == format_cost_line(10, 5, 3, foci_tagged=True)
     assert out['costOpen'] == format_cost_line(10, 5, foci_tagged=False)
+    assert out['loadAbl'] == format_ablation_loading(0.7, 10, 5, 3)
+    assert out['loadBatch'] == format_batch_loading(4, 0.7, 10, 5)
     assert out['s03'] == {'n_baseline': 10, 'n_ablated': 5}
     assert out['s07'] == {'n_baseline': 10, 'n_ablated': 5}
     assert out['s10'] == {'n_baseline': 10, 'n_ablated': 5}

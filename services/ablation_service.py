@@ -46,7 +46,7 @@ class AblationService:
     def _complete(self, user_content: str, temperature: float) -> Dict:
         max_retries = 3
         retry_delay = 2
-        response = None
+        last_error = None
         for attempt in range(max_retries):
             try:
                 response = gateway_chat_completion(
@@ -56,8 +56,14 @@ class AblationService:
                     [{"role": "user", "content": user_content}],
                     temperature=temperature,
                 )
-                break
+                if not response or not response.get('content'):
+                    raise Exception(
+                        "Model returned an empty response. "
+                        "Check model/provider selection and try again."
+                    )
+                return response
             except Exception as e:
+                last_error = e
                 error_msg = str(e).lower()
                 if 'rate limit' in error_msg or '429' in error_msg or 'too many requests' in error_msg:
                     if attempt < max_retries - 1:
@@ -67,14 +73,12 @@ class AblationService:
                     raise Exception(
                         f"Rate limit exceeded after {max_retries} retries. "
                         "Please wait a few minutes and try again with fewer samples."
-                    )
+                    ) from e
                 raise
-        if response is None:
-            raise Exception(
-                "Failed to generate output after retries. "
-                "Check model/provider selection, rate limits, and Vercel function timeouts."
-            )
-        return response
+        raise Exception(
+            "Failed to generate output after retries. "
+            "Check model/provider selection, rate limits, and Vercel function timeouts."
+        ) from last_error
     
     def _sample_outputs(self, prompt: str, n: int, temperature: float):
         outputs = []
@@ -123,7 +127,10 @@ class AblationService:
         
         classified = classify_foci_for_ablation(prompt, foci_list)
         
-        baseline_outputs, tin, tout = self._sample_outputs(prompt, n_baseline, temperature)
+        try:
+            baseline_outputs, tin, tout = self._sample_outputs(prompt, n_baseline, temperature)
+        except Exception as e:
+            raise Exception(f"Failed to generate baseline output: {e}") from e
         total_input_tokens += tin
         total_output_tokens += tout
         baseline_output = baseline_outputs[0]

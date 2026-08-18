@@ -82,6 +82,19 @@ RUN_HEADER_TEMPLATE = (
     "{test_type} test."
 )
 
+ABLATION_LOADING_TEMPLATE = (
+    "Running ablation analysis at temperature {temperature}: "
+    "{n_baseline} baseline samples and {n_ablated} ablated samples "
+    "for each of {n_foci} {foci_word} ({n_calls} model calls). "
+    "This may take several minutes."
+)
+
+BATCH_LOADING_TEMPLATE = (
+    "Running batch analysis on {n_pairs} {pairs_word} at temperature {temperature}: "
+    "{n_baseline} baseline samples and {n_ablated} ablated samples per focus per pair. "
+    "This may take a long time."
+)
+
 EXPERIMENT_COPY = {
     'TEMPERATURE_HELP': TEMPERATURE_HELP,
     'TEMPERATURE_HIGH': TEMPERATURE_HIGH,
@@ -94,6 +107,8 @@ EXPERIMENT_COPY = {
     'EXACT_DISCLOSURE_TEMPLATE': EXACT_DISCLOSURE_TEMPLATE,
     'SAMPLED_DISCLOSURE_TEMPLATE': SAMPLED_DISCLOSURE_TEMPLATE,
     'RUN_HEADER_TEMPLATE': RUN_HEADER_TEMPLATE,
+    'ABLATION_LOADING_TEMPLATE': ABLATION_LOADING_TEMPLATE,
+    'BATCH_LOADING_TEMPLATE': BATCH_LOADING_TEMPLATE,
     'STOCHASTIC_TEMPERATURE_TEMPLATE': STOCHASTIC_TEMPERATURE_TEMPLATE,
 }
 
@@ -199,6 +214,43 @@ def format_power_preview_line(
     if info['can_reach_significance']:
         return POWER_OK
     return POWER_FAIL.format(n_foci=int(n_foci))
+
+
+def _plural(n: int, singular: str, plural: str) -> str:
+    return singular if int(n) == 1 else plural
+
+
+def format_ablation_loading(
+    temperature: float,
+    n_baseline: int,
+    n_ablated: int,
+    n_foci: int,
+) -> str:
+    n_foci = int(n_foci)
+    return ABLATION_LOADING_TEMPLATE.format(
+        temperature=format_temperature(temperature),
+        n_baseline=int(n_baseline),
+        n_ablated=int(n_ablated),
+        n_foci=n_foci,
+        foci_word=_plural(n_foci, 'focus', 'foci'),
+        n_calls=model_call_count(n_baseline, n_ablated, n_foci),
+    )
+
+
+def format_batch_loading(
+    n_pairs: int,
+    temperature: float,
+    n_baseline: int,
+    n_ablated: int,
+) -> str:
+    n_pairs = int(n_pairs)
+    return BATCH_LOADING_TEMPLATE.format(
+        n_pairs=n_pairs,
+        pairs_word=_plural(n_pairs, 'pair', 'pairs'),
+        temperature=format_temperature(temperature),
+        n_baseline=int(n_baseline),
+        n_ablated=int(n_ablated),
+    )
 
 
 def format_run_header(

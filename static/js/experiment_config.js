@@ -193,6 +193,33 @@
         return Number(t).toFixed(1);
     }
 
+    function formatAblationLoading(temperature, nBaseline, nAblated, nFoci) {
+        var C = copy();
+        nFoci = Number(nFoci) || 0;
+        var fociWord = nFoci === 1 ? 'focus' : 'foci';
+        return (C.ABLATION_LOADING_TEMPLATE ||
+            'Running ablation analysis at temperature {temperature}: {n_baseline} baseline samples and {n_ablated} ablated samples for each of {n_foci} {foci_word} ({n_calls} model calls). This may take several minutes.')
+            .replace('{temperature}', formatTemperature(temperature))
+            .replace('{n_baseline}', String(nBaseline))
+            .replace('{n_ablated}', String(nAblated))
+            .replace('{n_foci}', String(nFoci))
+            .replace('{foci_word}', fociWord)
+            .replace('{n_calls}', String(modelCallCount(nBaseline, nAblated, nFoci)));
+    }
+
+    function formatBatchLoading(nPairs, temperature, nBaseline, nAblated) {
+        var C = copy();
+        nPairs = Number(nPairs) || 0;
+        var pairsWord = nPairs === 1 ? 'pair' : 'pairs';
+        return (C.BATCH_LOADING_TEMPLATE ||
+            'Running batch analysis on {n_pairs} {pairs_word} at temperature {temperature}: {n_baseline} baseline samples and {n_ablated} ablated samples per focus per pair. This may take a long time.')
+            .replace('{n_pairs}', String(nPairs))
+            .replace('{pairs_word}', pairsWord)
+            .replace('{temperature}', formatTemperature(temperature))
+            .replace('{n_baseline}', String(nBaseline))
+            .replace('{n_ablated}', String(nAblated));
+    }
+
     function formatRunHeader(temperature, nBaseline, nAblated, testType) {
         var C = copy();
         var kind = testType === 'exact' ? 'exact' : 'sampled';
@@ -392,6 +419,8 @@
         formatCostLine: formatCostLine,
         formatPermutationDisclosure: formatPermutationDisclosure,
         formatPowerPreviewLine: formatPowerPreviewLine,
+        formatAblationLoading: formatAblationLoading,
+        formatBatchLoading: formatBatchLoading,
         formatRunHeader: formatRunHeader,
         formatRunHeaderFromData: formatRunHeaderFromData,
         getState: getState,
