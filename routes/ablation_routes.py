@@ -43,7 +43,13 @@ def ablation_analysis():
         data = request.json
         prompt = data.get('prompt', '')
         foci_list = data.get('foci', [])
-        num_samples = data.get('num_samples', 20)
+        num_samples = data.get('num_samples')
+        n_baseline = data.get('n_baseline', 10)
+        n_ablated = data.get('n_ablated', 5)
+        n_permutations = data.get('n_permutations', 10000)
+        alpha = data.get('alpha', 0.05)
+        permutation_seed = data.get('permutation_seed')
+        temperature = data.get('temperature', 0.7)
         inputs = data.get('inputs', {})
         
         if not prompt:
@@ -81,8 +87,14 @@ def ablation_analysis():
         result_data = ablation_service.run_ablation(
             prompt,
             foci_list,
-            num_samples,
-            inputs
+            num_samples=num_samples,
+            inputs=inputs,
+            n_baseline=n_baseline,
+            n_ablated=n_ablated,
+            n_permutations=n_permutations,
+            alpha=alpha,
+            permutation_seed=permutation_seed,
+            temperature=temperature,
         )
         
         # Save checkpoint

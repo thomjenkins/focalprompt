@@ -2,7 +2,7 @@
 """
 Batch analysis service.
 
-Handles batch ablation analysis with streaming support.
+Per-pair subtractive ablation with a permutation test.
 """
 
 import json
@@ -13,13 +13,22 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from services.embedding_service import EmbeddingService
 from services.cost_calculator import CostCalculator
 from services.checkpoint_service import CheckpointService
-from utils.prompt_builder import get_pair_inputs, build_prompt_with_dynamic_foci
+from utils.span_alignment import classify_foci_for_ablation, delete_span
 from utils.data_processing import (
     calculate_statistics_from_results,
     calculate_focus_distribution_statistics,
 )
 from services.assessment_service import AssessmentService
 from utils.gateway_chat import chat_completion as gateway_chat_completion
+from utils.permutation_test import (
+    DEFAULT_ALPHA,
+    DEFAULT_N_PERMUTATIONS,
+    benjamini_hochberg,
+    permutation_test,
+    power_guardrail_message,
+    require_stochastic_temperature,
+    design_test_type,
+)
 
 
 class BatchAnalysisService:
@@ -37,18 +46,6 @@ class BatchAnalysisService:
         provider_name: Optional[str] = None,
         max_workers: int = 10
     ):
-        """
-        Initialize batch analysis service.
-        
-        Args:
-            provider: LLM provider instance
-            model: Model name to use
-            api_key: API key (for embeddings)
-            embedding_service: Optional EmbeddingService instance
-            cost_calculator: Optional CostCalculator instance
-            checkpoint_service: Optional CheckpointService instance
-            max_workers: Maximum parallel workers
-        """
         self.provider = provider
         self.model = model
         self.api_key = api_key
@@ -59,50 +56,50 @@ class BatchAnalysisService:
         self.provider_name = provider_name or 'openai'
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
     
+    def _complete(self, prompt: str, temperature: float) -> Dict:
+        return gateway_chat_completion(
+            self.provider,
+            self.model,
+            self.provider_name,
+            [{"role": "user", "content": prompt}],
+            temperature=temperature,
+        )
+    
+    def _sample_outputs(self, prompt: str, n: int, temperature: float):
+        outputs = []
+        in_tok = 0
+        out_tok = 0
+        for _ in range(n):
+            response = self._complete(prompt, temperature)
+            outputs.append(response['content'])
+            if 'usage' in response:
+                in_tok += response['usage']['prompt_tokens']
+                out_tok += response['usage']['completion_tokens']
+        return outputs, in_tok, out_tok
+    
     def process_single_pair(
         self,
         pair_data: Dict,
         pair_idx: int,
         foci_list: List[Dict],
-        batch_noise_threshold: Optional[float],
-        baseline_variance: float,
-        baseline_std: float,
-        baseline_mean_similarity: float
+        n_baseline: int = 10,
+        n_ablated: int = 5,
+        n_permutations: int = DEFAULT_N_PERMUTATIONS,
+        alpha: float = DEFAULT_ALPHA,
+        permutation_seed: Optional[int] = None,
+        temperature: float = 0.7,
     ) -> Dict:
-        """
-        Process a single pair - designed to run in parallel.
-        
-        Args:
-            pair_data: Pair data dictionary
-            pair_idx: Index of the pair
-            foci_list: List of foci
-            batch_noise_threshold: Noise threshold for significance
-            baseline_variance: Baseline variance
-            baseline_std: Baseline standard deviation
-            baseline_mean_similarity: Baseline mean similarity
-            
-        Returns:
-            Dict with results
-        """
+        """Process one pair: shared baseline samples, per-focus ablated samples, permutation + BH."""
         try:
+            require_stochastic_temperature(temperature)
             prompt = pair_data.get('prompt', '')
-            inputs = get_pair_inputs(pair_data)
-            chat_content = inputs['chat_content']
+            classified = classify_foci_for_ablation(prompt, foci_list)
             
-            # Generate baseline output
-            response = gateway_chat_completion(
-                self.provider,
-                self.model,
-                self.provider_name,
-                [{"role": "user", "content": prompt}],
-                temperature=0.7,
+            baseline_outputs, input_tokens, output_tokens = self._sample_outputs(
+                prompt, n_baseline, temperature
             )
-            baseline_output = response['content']
+            baseline_output = baseline_outputs[0]
             
-            input_tokens = response['usage']['prompt_tokens'] if 'usage' in response else 0
-            output_tokens = response['usage']['completion_tokens'] if 'usage' in response else 0
-            
-            # Focus distribution assessment (same logic as /api/assess with user-defined foci)
             focus_distribution_assessment = None
             assessment_error = None
             if self.assessment_service:
@@ -129,133 +126,121 @@ class BatchAnalysisService:
                 except Exception as ex:
                     assessment_error = str(ex)
             
-            # Get baseline embedding
-            baseline_embedding, embedding_tokens = self.embedding_service.get_embedding_with_usage(baseline_output)
+            baseline_embeddings, embedding_tokens = self.embedding_service.batch_embeddings_with_usage(
+                baseline_outputs
+            )
+            baseline_embeddings = np.asarray(baseline_embeddings, dtype=float)
             
-            # Process each focus
-            focus_influences = {}
-            for focus_to_remove in foci_list:
-                focus_section = focus_to_remove.get('prompt_section', '')
-                focus_name = focus_to_remove.get('focus', '')
+            ablation_results = []
+            scored_payloads = []
+            rng = np.random.default_rng(
+                None if permutation_seed is None else permutation_seed + pair_idx
+            )
+            
+            for i, focus in enumerate(classified):
+                focus_name = focus.get('focus', f'Focus {i + 1}')
+                row = {
+                    'focus_index': i,
+                    'focus': focus_name,
+                    'prompt_section': focus.get('prompt_section', ''),
+                    'verified': bool(focus.get('verified')),
+                    'char_start': focus.get('char_start'),
+                    'char_end': focus.get('char_end'),
+                    'attributable': bool(focus.get('attributable')),
+                    'reason': focus.get('reason'),
+                    'overlap_with': list(focus.get('overlap_with') or []),
+                    'is_dynamic': bool(focus.get('is_dynamic')),
+                }
+                if not focus.get('attributable'):
+                    ablation_results.append(row)
+                    continue
                 
-                # Create ablated prompt by reconstructing from remaining foci
-                remaining_foci = [f for f in foci_list if f.get('focus', '') != focus_name]
-                
-                if len(remaining_foci) > 0:
-                    # Reconstruct prompt from remaining foci
-                    relevant_foci = []
-                    for f in remaining_foci:
-                        relevant_foci.append({
-                            'focus': f.get('focus', ''),
-                            'weight': 1.0,
-                            'prompt_section': f.get('prompt_section', '')
-                        })
-                    
-                    ablated_prompt = build_prompt_with_dynamic_foci(relevant_foci, remaining_foci, inputs, chat_weight=0.5)
-                    
-                    # Fallback
-                    if not ablated_prompt or ablated_prompt.strip() == '':
-                        if focus_section:
-                            ablated_prompt = prompt.replace(focus_section, '').strip()
-                            ablated_prompt = '\n'.join([line for line in ablated_prompt.split('\n') if line.strip()])
-                        else:
-                            ablated_prompt = prompt
-                else:
-                    # If no remaining foci, create minimal prompt
-                    ablated_prompt = ''
-                    if inputs.get('chat_content'):
-                        ablated_prompt = inputs['chat_content']
-                    if inputs.get('rag_context'):
-                        ablated_prompt += '\n' + inputs['rag_context'] if ablated_prompt else inputs['rag_context']
-                    if not ablated_prompt:
-                        ablated_prompt = prompt
-                
-                # Generate ablated output
-                response = gateway_chat_completion(
-                    self.provider,
-                    self.model,
-                    self.provider_name,
-                    [{"role": "user", "content": ablated_prompt}],
-                    temperature=0.7,
+                ablated_prompt, prompt_empty, _collapsed = delete_span(
+                    prompt, focus['char_start'], focus['char_end']
                 )
-                ablated_output = response['content']
+                row['ablated_prompt'] = ablated_prompt
+                row['prompt_empty'] = prompt_empty
                 
-                input_tokens += response['usage']['prompt_tokens'] if 'usage' in response else 0
-                output_tokens += response['usage']['completion_tokens'] if 'usage' in response else 0
+                ablated_outputs, tin, tout = self._sample_outputs(
+                    ablated_prompt, n_ablated, temperature
+                )
+                input_tokens += tin
+                output_tokens += tout
+                row['ablated_output'] = ablated_outputs[0]
+                row['ablated_outputs'] = ablated_outputs
                 
-                # Calculate similarity and influence
-                ablated_embedding, tokens = self.embedding_service.get_embedding_with_usage(ablated_output)
+                ablated_embeddings, tokens = self.embedding_service.batch_embeddings_with_usage(
+                    ablated_outputs
+                )
                 embedding_tokens += tokens
+                ablated_embeddings = np.asarray(ablated_embeddings, dtype=float)
                 
-                similarity = np.dot(baseline_embedding, ablated_embedding) / (
-                    np.linalg.norm(baseline_embedding) * np.linalg.norm(ablated_embedding)
+                perm = permutation_test(
+                    baseline_embeddings,
+                    ablated_embeddings,
+                    n_permutations=n_permutations,
+                    rng=rng,
                 )
-                influence = 1 - similarity
-                is_significant = bool(similarity < batch_noise_threshold) if batch_noise_threshold else None
-                
+                row['t_obs'] = perm['t_obs']
+                ablation_results.append(row)
+                scored_payloads.append((focus_name, row, perm))
+            
+            raw_p = [p['p_value'] for _, _, p in scored_payloads]
+            bh = benjamini_hochberg(raw_p, alpha=alpha)
+            focus_influences = {}
+            for (focus_name, row, perm), adj in zip(scored_payloads, bh):
+                t_obs = perm['t_obs']
                 focus_influences[focus_name] = {
-                    'influence': float(influence),
-                    'similarity': float(similarity),
-                    'is_significant': is_significant
+                    'influence': float(t_obs),
+                    'similarity': float(1.0 - t_obs),
+                    't_obs': float(t_obs),
+                    'p_value': adj['p_value'],
+                    'q_value': adj['q_value'],
+                    'is_significant': adj['significant'],
+                    'exact': perm['exact'],
+                    'n_permutations': perm['n_permutations'],
+                    'null_mean': perm['null_mean'],
+                    'null_p95': perm['null_p95'],
+                    'standardized_effect': perm['standardized_effect'],
+                    'null_deciles': perm['null_deciles'],
+                    'ablated_prompt': row['ablated_prompt'],
+                    'prompt_empty': row.get('prompt_empty', False),
+                    'verified': True,
+                    'attributable': True,
+                    'char_start': row['char_start'],
+                    'char_end': row['char_end'],
                 }
             
-            # Calculate chat_content influence
-            ablated_prompt_no_chat = prompt.replace(chat_content, '').strip()
-            ablated_prompt_no_chat = '\n'.join([line for line in ablated_prompt_no_chat.split('\n') if line.strip()])
-            
-            response = gateway_chat_completion(
-                self.provider,
-                self.model,
-                self.provider_name,
-                [{"role": "user", "content": ablated_prompt_no_chat}],
-                temperature=0.7,
-            )
-            ablated_output_no_chat = response['content']
-            
-            input_tokens += response['usage']['prompt_tokens'] if 'usage' in response else 0
-            output_tokens += response['usage']['completion_tokens'] if 'usage' in response else 0
-            
-            ablated_embedding_no_chat, tokens = self.embedding_service.get_embedding_with_usage(ablated_output_no_chat)
-            embedding_tokens += tokens
-            
-            similarity_chat = np.dot(baseline_embedding, ablated_embedding_no_chat) / (
-                np.linalg.norm(baseline_embedding) * np.linalg.norm(ablated_embedding_no_chat)
-            )
-            influence_chat = 1 - similarity_chat
-            is_significant_chat = bool(similarity_chat < batch_noise_threshold) if batch_noise_threshold else None
-            
-            # Per-pair shares (consistent with single-run ablation): raw embedding shifts are not additive;
-            # normalize so foci + chat sum to 100% for this pair.
-            total_raw = sum(d['influence'] for d in focus_influences.values()) + float(influence_chat)
+            total_raw = sum(d['influence'] for d in focus_influences.values())
             if total_raw > 0:
                 for d in focus_influences.values():
                     d['normalized_influence'] = d['influence'] / total_raw
-                chat_normalized = float(influence_chat) / total_raw
-            else:
-                n = len(focus_influences) + 1
-                share = 1.0 / n if n else 0.0
+            elif focus_influences:
+                share = 1.0 / len(focus_influences)
                 for d in focus_influences.values():
                     d['normalized_influence'] = share
-                chat_normalized = share
+            
+            n_attr = len(focus_influences)
+            power_warning = power_guardrail_message(
+                n_baseline, n_ablated, n_attr, alpha=alpha, n_permutations=n_permutations
+            )
             
             out = {
                 'success': True,
                 'pair_index': pair_idx,
                 'pair_data': pair_data,
                 'influence_scores': focus_influences,
-                'chat_content_influence': {
-                    'influence': float(influence_chat),
-                    'similarity': float(similarity_chat),
-                    'is_significant': is_significant_chat,
-                    'normalized_influence': chat_normalized
-                },
-                'noise_metrics': {
-                    'variance': baseline_variance,
-                    'std_dev': baseline_std,
-                    'mean_similarity': baseline_mean_similarity,
-                    'threshold': float(batch_noise_threshold) if batch_noise_threshold else None,
-                    'is_batch_wide': True
-                },
+                'ablation_results': ablation_results,
+                'foci_list': classified,
+                'baseline_outputs': baseline_outputs,
+                'n_baseline': n_baseline,
+                'n_ablated': n_ablated,
+                'n_permutations': n_permutations,
+                'alpha': alpha,
+                'temperature': temperature,
+                'test_type': design_test_type(n_baseline, n_ablated, n_permutations),
+                'power_warning': power_warning,
+                'significance_method': 'permutation_bh',
                 'tokens': {
                     'input': input_tokens,
                     'output': output_tokens,
@@ -278,37 +263,31 @@ class BatchAnalysisService:
         self,
         pairs: List[Dict],
         foci_list: List[Dict],
-        num_samples: int = 20,
+        num_samples: Optional[int] = None,
         session_id: Optional[str] = None,
-        resume: bool = False
+        resume: bool = False,
+        n_baseline: int = 10,
+        n_ablated: int = 5,
+        n_permutations: int = DEFAULT_N_PERMUTATIONS,
+        alpha: float = DEFAULT_ALPHA,
+        permutation_seed: Optional[int] = None,
+        temperature: float = 0.7,
     ) -> Generator[str, None, None]:
-        """
-        Stream batch analysis results.
-        
-        Args:
-            pairs: List of input-output pairs
-            foci_list: List of foci
-            num_samples: Number of baseline samples for noise calculation
-            session_id: Optional session ID for checkpointing
-            resume: Whether to resume from checkpoint
-            
-        Yields:
-            SSE-formatted strings with progress updates
-        """
+        """Stream batch analysis. Each pair is its own permutation experiment."""
+        require_stochastic_temperature(temperature)
+        if num_samples is not None:
+            n_baseline = int(num_samples)
         if not session_id:
             session_id = datetime.now().strftime('%Y%m%d_%H%M%S')
         
-        # Track costs
         total_input_tokens = 0
         total_output_tokens = 0
         total_embedding_tokens = 0
         
-        # Initialize variables
         pair_results = []
         total_pairs = len(pairs)
         completed_count = 0
         
-        # Load checkpoint if resuming
         completed_pairs = {}
         if resume:
             checkpoint = self.checkpoint_service.load_checkpoint(session_id, 'batch_analysis')
@@ -317,92 +296,37 @@ class BatchAnalysisService:
                 pair_results = list(completed_pairs.values())
                 yield f"data: {json.dumps({'type': 'resume', 'completed': len(completed_pairs), 'total': len(pairs)})}\n\n"
         
-        # Step 1: Calculate baseline noise ONCE for the entire batch
-        batch_noise_threshold = None
-        baseline_variance = 0.0
-        baseline_std = 0.0
-        baseline_mean_similarity = 1.0
-        
-        if len(pairs) > 0:
-            first_pair = pairs[0]
-            system_prompt = first_pair.get('prompt', '')
-            inputs = get_pair_inputs(first_pair)
-            chat_content = inputs['chat_content']
-            
-            # Use system prompt only (remove chat_content if present)
-            if chat_content and chat_content in system_prompt:
-                system_prompt = system_prompt.replace(chat_content, '').strip()
-                system_prompt = '\n'.join([line for line in system_prompt.split('\n') if line.strip()])
-            
-            representative_prompt = system_prompt
-            
-            yield f"data: {json.dumps({'type': 'progress', 'stage': 'noise_calculation', 'message': f'Calculating baseline noise from {num_samples} samples...'})}\n\n"
-            
-            baseline_outputs = []
-            for i in range(num_samples):
-                response = gateway_chat_completion(
-                    self.provider,
-                    self.model,
-                    self.provider_name,
-                    [{"role": "user", "content": representative_prompt}],
-                    temperature=0.7,
-                )
-                baseline_outputs.append(response['content'])
-                
-                if 'usage' in response:
-                    total_input_tokens += response['usage']['prompt_tokens']
-                    total_output_tokens += response['usage']['completion_tokens']
-                
-                yield f"data: {json.dumps({'type': 'progress', 'stage': 'noise_calculation', 'sample': i+1, 'total': num_samples})}\n\n"
-            
-            baseline_embeddings = []
-            for output in baseline_outputs:
-                embedding, tokens = self.embedding_service.get_embedding_with_usage(output)
-                baseline_embeddings.append(embedding)
-                total_embedding_tokens += tokens
-            
-            similarities_between_baselines = []
-            for i in range(len(baseline_embeddings)):
-                for j in range(i+1, len(baseline_embeddings)):
-                    sim = np.dot(baseline_embeddings[i], baseline_embeddings[j]) / (
-                        np.linalg.norm(baseline_embeddings[i]) * np.linalg.norm(baseline_embeddings[j])
-                    )
-                    similarities_between_baselines.append(sim)
-            
-            if similarities_between_baselines:
-                baseline_variance = float(np.var(similarities_between_baselines))
-                baseline_std = float(np.std(similarities_between_baselines))
-                baseline_mean_similarity = float(np.mean(similarities_between_baselines))
-                batch_noise_threshold = baseline_mean_similarity - (2 * baseline_std)
-        
-        # Step 2: Process pairs in parallel
         yield f"data: {json.dumps({'type': 'progress', 'stage': 'processing', 'message': f'Processing {total_pairs} pairs...'})}\n\n"
         
         futures = {}
         for pair_idx, pair in enumerate(pairs):
             if pair_idx in completed_pairs:
-                continue  # Skip already completed pairs
+                continue
             
             future = self.executor.submit(
                 self.process_single_pair,
                 pair,
                 pair_idx,
                 foci_list,
-                batch_noise_threshold,
-                baseline_variance,
-                baseline_std,
-                baseline_mean_similarity
+                n_baseline,
+                n_ablated,
+                n_permutations,
+                alpha,
+                permutation_seed,
+                temperature,
             )
             futures[future] = pair_idx
         
-        # Collect results as they complete
         for future in as_completed(futures):
             pair_idx = futures[future]
             result = future.result()
             pair_results.append(result)
             completed_count += 1
+            if result.get('success') and result.get('tokens'):
+                total_input_tokens += result['tokens'].get('input', 0)
+                total_output_tokens += result['tokens'].get('output', 0)
+                total_embedding_tokens += result['tokens'].get('embedding', 0)
             
-            # Update checkpoint
             checkpoint_data = {
                 'session_id': session_id,
                 'timestamp': datetime.now().isoformat(),
@@ -421,22 +345,19 @@ class BatchAnalysisService:
             else:
                 yield f"data: {json.dumps({'type': 'error', 'pair_index': pair_idx, 'error': result.get('error', 'Unknown error')})}\n\n"
         
-        # Calculate final statistics (normalized shares, consistent with single-run ablation)
         yield f"data: {json.dumps({'type': 'progress', 'stage': 'calculating_statistics', 'message': 'Calculating statistics...'})}\n\n"
         
         statistics = calculate_statistics_from_results(pair_results)
         focus_distribution_statistics = calculate_focus_distribution_statistics(pair_results)
         
-        # Calculate costs
         cost_breakdown = self.cost_calculator.calculate_cost(
             total_input_tokens,
             total_output_tokens,
             total_embedding_tokens,
             self.model,
-            'openai'  # Embeddings only work with OpenAI
+            'openai'
         )
         
-        # Persist checkpoint with statistics for reload / export
         checkpoint_data = {
             'session_id': session_id,
             'timestamp': datetime.now().isoformat(),
@@ -451,7 +372,6 @@ class BatchAnalysisService:
         }
         self.checkpoint_service.save_checkpoint(session_id, checkpoint_data, 'batch_analysis')
         
-        # Final result (include `results` alias for frontend)
         final_result = {
             'type': 'complete',
             'session_id': session_id,
@@ -461,9 +381,11 @@ class BatchAnalysisService:
             'results': pair_results,
             'statistics': statistics,
             'focus_distribution_statistics': focus_distribution_statistics,
-            'cost_breakdown': cost_breakdown
+            'cost_breakdown': cost_breakdown,
+            'significance_method': 'permutation_bh',
+            'n_baseline': n_baseline,
+            'n_ablated': n_ablated,
+            'alpha': alpha,
         }
         
         yield f"data: {json.dumps(final_result)}\n\n"
-
-

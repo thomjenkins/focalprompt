@@ -8,7 +8,12 @@ from typing import Optional, List, Dict
 
 @dataclass
 class InfluenceScore:
-    """Represents an influence score for a focus."""
+    """Observed centroid cosine distance (T_obs) for a focus.
+
+    The field name `influence` is kept for schema compatibility. It is a
+    distance, meaningful only against its permutation null — not a standalone
+    importance score.
+    """
     focus: str
     influence: float
     similarity: float

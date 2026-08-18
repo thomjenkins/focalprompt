@@ -50,5 +50,20 @@ def test_build_prompt_with_dynamic_foci():
     assert 'Focus 1' in result
     assert 'Focus 2' in result
     assert 'Test chat' in result
+    assert '{{CHAT_CONTENT}}' not in result
+    assert result.count('Test chat') == 1
+    assert 'Current Chat Context' not in result
+
+
+def test_build_prompt_appends_chat_only_without_placeholder():
+    relevant_foci = [
+        {'focus': 'Focus 1', 'weight': 0.8, 'prompt_section': 'Section 1'},
+    ]
+    foci_list = [
+        {'focus': 'Focus 1', 'prompt_section': 'Section 1', 'is_dynamic': False},
+    ]
+    result = build_prompt_with_dynamic_foci(relevant_foci, foci_list, {'chat_content': 'Test chat'})
+    assert 'Current Chat Context' in result
+    assert 'Test chat' in result
 
 

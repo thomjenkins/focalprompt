@@ -1,270 +1,45 @@
 # FocalPrompt
 
-A tool to assess the relative focus of attention given to different parts of a prompt in LLM outputs.
+FocalPrompt is a research prototype that measures **behavioural sensitivity**: whether deleting a tagged span of a prompt (a *focus*) shifts a language model's outputs in semantic embedding space. It samples the original prompt and each ablated prompt, compares the two clouds of embeddings with a permutation test, and reports which deletions produced a detectable shift after false-discovery-rate correction.
 
-## Overview
+## What it does not do
 
-FocalPrompt uses an LLM to analyze how well an output addresses different aspects (foci) of a given prompt. It breaks down the prompt into distinct focus points and assigns points to each one (totaling 100 points) based on the relative level of attention given in the output. Each focus references specific sections of the prompt.
+FocalPrompt detects whether removing each focus shifts the model's behaviour in semantic embedding space. It does not measure correctness, quality, or safety, and it does not tell you what to delete. A non-significant result means no shift was detected at this sample size — not that the text is inert, and not a recommendation. Short structural instructions (output formats, escalation rules, guardrails) can matter a great deal while barely moving embeddings.
 
-**Key Features:**
-- **Web Interface**: Beautiful browser-based UI for easy interaction
-- **Auto-Detect Foci**: Agent automatically breaks down prompts into structural components
-- **Manual Foci Tagging**: Option to manually define focus points
-- **Agent-generated output**: Optionally generate output using an LLM agent before assessment
-- **Prompt section references**: Each focus point references specific sections of the original prompt
-- **100-point scoring system**: Points are distributed across foci, totaling exactly 100 points
+## Status
 
-## Installation
+Research prototype. Results hold for the model, temperature, and surrounding prompt you actually ran. Schema fields such as `influence` remain for compatibility; they are the observed centroid distance \(T_{\mathrm{obs}}\), not a standalone importance score.
 
-### Option 1: Virtual Environment (Recommended)
+## Quickstart
 
 ```bash
-# Create a virtual environment
 python3 -m venv venv
-
-# Activate it (macOS/Linux)
-source venv/bin/activate
-
-# Or on Windows
-# venv\Scripts\activate
-
-# Install dependencies
+source venv/bin/activate   # Windows: venv\Scripts\activate
 pip install -r requirements.txt
+export OPENAI_API_KEY="your-key"   # or AI_GATEWAY_API_KEY
+python app_new.py
 ```
 
-### Option 2: Direct Installation
+Open `http://127.0.0.1:5000`.
 
-```bash
-pip install -r requirements.txt
-```
+1. Paste a prompt and tag it into foci (auto-detect or manual). Aim for span-accurate coverage of the original text.
+2. Optionally generate or paste an output and run **Assess Focus** (attention scoring; separate from sensitivity).
+3. Run **Ablation Analysis**. Defaults: 10 baseline samples, 5 ablated samples per tested focus, temperature 0.7, Benjamini–Hochberg \(\alpha = 0.05\).
 
-**Note:** On some systems (especially macOS with Homebrew Python), you may need to use a virtual environment or add `--user` flag.
+Batch analysis repeats the same per-pair experiment. Dynamic slots (chat, retrieved context) are reported as excluded, not tested.
 
-## Web Interface
+## Methods (summary)
 
-FocalPrompt includes a modern web interface for easy interaction:
+Full practitioner write-up is in the in-app **How this works** panel on every results view (same text as `utils/results_copy.py`).
 
-```bash
-# Make sure virtual environment is activated
-source venv/bin/activate
+- **Both arms are sampled.** Baseline = original prompt; ablated = that prompt with one verified span deleted.
+- **Statistic.** Cosine distance between the two embedding centroids.
+- **Null.** Permute group labels (exact enumeration when the split count is small); the p-value is how often a distance at least this large appears by chance.
+- **Correction.** Benjamini–Hochberg q-values across tested foci. **Significant** means \(q < 0.05\): a detectable behavioural shift after correction, not a recommendation.
+- **Limits.** Embeddings can miss structural change; leave-one-out can mask redundant text or misattribute interactions; results are local to this model and prompt.
 
-# Run the web server
-python app.py
-```
+See `IMPLEMENTATION_NOTES.md` for statistical definitions and schema.
 
-Then open your browser to `http://127.0.0.1:5000` (or `http://localhost:5000`)
+## Environment
 
-**Web Interface Features:**
-1. **Enter Your Prompt**: Paste or type your prompt in the text area
-2. **Define Foci**: 
-   - Click "Auto-Detect Foci" to have an agent automatically break down your prompt into structural components
-   - Or click "Add Focus Manually" to define your own focus points
-3. **Enter or Generate Output**: 
-   - Paste an existing LLM output, or
-   - Click "Generate Output" to have an agent create one based on your prompt
-4. **Assess Focus**: Click "Assess Focus" to see how attention is distributed across your foci
-
-## Usage
-
-### Basic Usage
-
-#### With Provided Output
-
-```python
-from focal_assessor import assess_focus
-
-prompt = """
-Write a comprehensive analysis of climate change that includes:
-1. The scientific evidence for climate change
-2. Economic impacts on different sectors
-3. Policy recommendations for governments
-4. Individual actions people can take
-"""
-
-output = """
-Climate change is a pressing issue. The scientific evidence shows rising temperatures
-and sea levels. Governments should implement carbon taxes and invest in renewable energy.
-"""
-
-# Assess the focus distribution
-assessment = assess_focus(
-    prompt=prompt,
-    output=output,
-    api_key="your-api-key-here",  # Optional if OPENAI_API_KEY env var is set
-    model="gpt-4o-mini"  # Optional, defaults to gpt-4o-mini
-)
-
-# Print human-readable summary
-assessment.print_summary()
-
-# Or get structured data
-print(assessment.to_json())
-```
-
-#### With Agent-Generated Output
-
-```python
-from focal_assessor import assess_focus
-
-prompt = """
-Write a comprehensive analysis of climate change that includes:
-1. The scientific evidence for climate change
-2. Economic impacts on different sectors
-3. Policy recommendations for governments
-4. Individual actions people can take
-"""
-
-# Generate output using an agent and assess it
-assessment = assess_focus(
-    prompt=prompt,
-    generate_output=True,  # Use agent to generate output
-    model="gpt-4o-mini",
-    agent_model="gpt-4o"  # Optional: different model for generation
-)
-
-assessment.print_summary()
-```
-
-### Advanced Usage
-
-```python
-from focal_assessor import FocalAssessor
-
-assessor = FocalAssessor(model="gpt-4o", agent_model="gpt-4o")
-
-# Generate output
-output = assessor.generate_output(prompt, temperature=0.7)
-
-# Limit the number of foci identified
-assessment = assessor.assess(
-    prompt=prompt,
-    output=output,
-    max_foci=5  # Limit to 5 focus points
-)
-
-# Access individual focus scores
-for focus_score in assessment.foci:
-    print(f"{focus_score.focus}")
-    print(f"  Prompt Section: {focus_score.prompt_section}")
-    print(f"  Points: {focus_score.score}/100")
-    print(f"  Explanation: {focus_score.explanation}")
-```
-
-## API Reference
-
-### `assess_focus(prompt, output=None, api_key=None, model="gpt-4o-mini", agent_model=None, max_foci=None, generate_output=False)`
-
-Convenience function to assess focus distribution.
-
-**Parameters:**
-- `prompt` (str): The original prompt/input given to the LLM
-- `output` (str, optional): The LLM's output/response. If None and `generate_output=True`, will generate it
-- `api_key` (str, optional): OpenAI API key. If None, uses `OPENAI_API_KEY` environment variable
-- `model` (str): Model to use for assessment (default: "gpt-4o-mini")
-- `agent_model` (str, optional): Model to use for generating output (default: same as `model`)
-- `max_foci` (int, optional): Maximum number of foci to identify
-- `generate_output` (bool): If True and output is None, generate output using an agent
-
-**Returns:**
-- `FocusAssessment`: Object containing foci, scores, and explanations
-
-### `FocalAssessor`
-
-Main class for focus assessment.
-
-**Methods:**
-- `assess(prompt, output, max_foci=None)`: Assess focus distribution
-
-### `FocusAssessment`
-
-Result object containing:
-- `foci`: List of `FocusScore` objects
-- `overall_summary`: Brief overall assessment
-- `print_summary()`: Print human-readable summary
-- `to_json()`: Convert to JSON string
-- `to_dict()`: Convert to dictionary
-
-### `FocusScore`
-
-Individual focus point with:
-- `focus`: Description of the focus point
-- `prompt_section`: Reference to the specific section of the prompt this focus relates to
-- `score`: Points assigned (out of 100 total; all scores sum to 100)
-- `explanation`: Brief explanation of the score, referencing specific parts of the output
-
-## Command Line Usage
-
-You can also use FocalPrompt from the command line:
-
-```bash
-# Basic usage with provided output
-python cli.py "Your prompt here" "LLM output here"
-
-# With files
-python cli.py prompt.txt output.txt
-
-# Generate output using agent (omit output argument)
-python cli.py prompt.txt --generate-output
-
-# Or simply omit the output argument
-python cli.py prompt.txt
-
-# Output as JSON
-python cli.py prompt.txt output.txt --json
-
-# Save results to file
-python cli.py prompt.txt output.txt --output-file results.json
-
-# Specify model and max foci
-python cli.py prompt.txt output.txt --model gpt-4o --max-foci 5
-
-# Use different models for generation and assessment
-python cli.py prompt.txt --generate-output --agent-model gpt-4o --model gpt-4o-mini
-```
-
-## Environment Variables
-
-Set `OPENAI_API_KEY` to avoid passing the API key in code:
-
-```bash
-export OPENAI_API_KEY="your-api-key-here"
-```
-
-## Example Output
-
-```
-============================================================
-FOCUS ASSESSMENT RESULTS
-============================================================
-
-Overall Summary: The output addresses some aspects but misses key components...
-
-------------------------------------------------------------
-Focus Scores (Total must equal 100 points):
-------------------------------------------------------------
-
-1. Focus: Scientific evidence for climate change
-   Prompt Section: Section 1: "The scientific evidence for climate change"
-   Points: 25.0/100
-   Explanation: Briefly mentioned rising temperatures and sea levels but lacks detail on specific evidence
-
-2. Focus: Economic impacts on different sectors
-   Prompt Section: Section 2: "Economic impacts on different sectors"
-   Points: 0.0/100
-   Explanation: Not addressed at all
-
-3. Focus: Policy recommendations for governments
-   Prompt Section: Section 3: "Policy recommendations for governments"
-   Points: 60.0/100
-   Explanation: Provides specific recommendations (carbon taxes, renewable energy investment)
-
-4. Focus: Individual actions people can take
-   Prompt Section: Section 4: "Individual actions people can take"
-   Points: 15.0/100
-   Explanation: Implied but not explicitly addressed
-
-Total Points: 100.0/100
-
-============================================================
-```
-
+Set `OPENAI_API_KEY` or `AI_GATEWAY_API_KEY`. Optional: `SECRET_KEY` for sessions.

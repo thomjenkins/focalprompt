@@ -12,6 +12,7 @@ import json
 from typing import List, Dict, Optional
 from core.focal_assessor import FocalAssessor, FocusScore, FocusAssessment
 from utils.prompt_builder import get_pair_inputs
+from utils.span_alignment import verify_foci
 
 
 class AssessmentService:
@@ -131,6 +132,8 @@ Identify all distinct structural components of the prompt."""
             # If still no result, raise error
             if 'result' not in locals():
                 raise ValueError(f"LLM did not return valid JSON. Response: {content[:200]}...")
+        
+        result['foci'] = verify_foci(prompt, result.get('foci') or [])
         
         # Add usage information to result
         result['usage'] = {

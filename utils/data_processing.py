@@ -12,37 +12,44 @@ from typing import Dict, List
 def _per_pair_normalized_from_result(result: Dict) -> tuple:
     """
     Return (focus_name -> normalized share, chat normalized share) for one pair.
-    Uses stored normalized_influence when present for all foci + chat; otherwise derives from raw.
+
+    Chat attribution is out of scope; if chat_content_influence is absent, chat share is 0
+    and shares are normalised over attributable foci only.
     """
-    influence_scores = result.get('influence_scores', {})
-    chat_influence = result.get('chat_content_influence', {})
-    chat_raw = float(chat_influence.get('influence', 0.0))
+    influence_scores = result.get('influence_scores', {}) or {}
+    scored = {
+        name: data for name, data in influence_scores.items()
+        if isinstance(data, dict) and 'influence' in data
+    }
+    chat_influence = result.get('chat_content_influence') or {}
+    has_chat = isinstance(chat_influence, dict) and 'influence' in chat_influence
+    chat_raw = float(chat_influence.get('influence', 0.0)) if has_chat else 0.0
     
     all_have_norm = (
-        influence_scores
-        and all('normalized_influence' in d for d in influence_scores.values())
-        and 'normalized_influence' in chat_influence
+        scored
+        and all('normalized_influence' in d for d in scored.values())
+        and (not has_chat or 'normalized_influence' in chat_influence)
     )
     if all_have_norm:
         focus_norm = {
-            name: float(d['normalized_influence']) for name, d in influence_scores.items()
+            name: float(d['normalized_influence']) for name, d in scored.items()
         }
-        chat_norm = float(chat_influence['normalized_influence'])
+        chat_norm = float(chat_influence['normalized_influence']) if has_chat else 0.0
         return focus_norm, chat_norm
     
-    raw_sum = sum(float(d.get('influence', 0.0)) for d in influence_scores.values()) + chat_raw
+    raw_sum = sum(float(d.get('influence', 0.0)) for d in scored.values()) + chat_raw
     if raw_sum > 0:
         focus_norm = {
             name: float(d.get('influence', 0.0)) / raw_sum
-            for name, d in influence_scores.items()
+            for name, d in scored.items()
         }
-        chat_norm = chat_raw / raw_sum
-    else:
-        n = len(influence_scores) + 1
-        share = (1.0 / n) if n else 0.0
-        focus_norm = {name: share for name in influence_scores}
-        chat_norm = share
+        chat_norm = chat_raw / raw_sum if has_chat else 0.0
+        return focus_norm, chat_norm
     
+    n = len(scored) + (1 if has_chat else 0)
+    share = (1.0 / n) if n else 0.0
+    focus_norm = {name: share for name in scored}
+    chat_norm = share if has_chat else 0.0
     return focus_norm, chat_norm
 
 
@@ -77,7 +84,7 @@ def calculate_statistics_from_results(pair_results: List[Dict]) -> Dict:
                 all_focus_influences[focus_name] = []
             all_focus_influences[focus_name].append(influence_data.get('influence', 0.0))
         
-        chat_influence = result.get('chat_content_influence', {})
+        chat_influence = result.get('chat_content_influence') or {}
         if 'influence' in chat_influence:
             all_chat_influences.append(chat_influence['influence'])
         
@@ -87,7 +94,8 @@ def calculate_statistics_from_results(pair_results: List[Dict]) -> Dict:
             if focus_name not in all_focus_shares:
                 all_focus_shares[focus_name] = []
             all_focus_shares[focus_name].append(share)
-        all_chat_shares.append(chat_norm)
+        if result.get('chat_content_influence') and 'influence' in (result.get('chat_content_influence') or {}):
+            all_chat_shares.append(chat_norm)
     
     def _stats(values):
         if len(values) == 0:
@@ -137,21 +145,6 @@ def calculate_statistics_from_results(pair_results: List[Dict]) -> Dict:
                         'min_raw': raw_st['min'],
                         'max_raw': raw_st['max']
                     })
-    
-    # Extract noise statistics from the first pair's noise_metrics (batch-wide calculation)
-    if pair_results and len(pair_results) > 0:
-        first_result = pair_results[0]
-        if first_result.get('success', False):
-            noise_metrics = first_result.get('noise_metrics', {})
-            if noise_metrics and noise_metrics.get('is_batch_wide', False):
-                # Extract noise statistics from the first pair (they're all the same for batch-wide)
-                statistics['noise'] = {
-                    'mean': noise_metrics.get('mean_similarity', 1.0),
-                    'variance': noise_metrics.get('variance', 0.0),
-                    'std_dev': noise_metrics.get('std_dev', 0.0),
-                    'noise_threshold': noise_metrics.get('threshold'),
-                    'num_samples': 20  # Default, could be stored in checkpoint if needed
-                }
     
     return statistics
 

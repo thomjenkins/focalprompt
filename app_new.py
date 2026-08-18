@@ -9,6 +9,9 @@ import os
 import sys
 from flask import Flask, render_template, jsonify
 
+from utils.experiment_config import EXPERIMENT_COPY
+from utils.results_copy import COPY
+
 # Load environment variables from .env file (for local development)
 # Note: python-dotenv is optional - not needed for Vercel
 try:
@@ -129,10 +132,14 @@ except Exception as e:
     print(f"Error registering v1 API routes: {e}", file=sys.stderr)
 
 
+def _page_copy():
+    return {**COPY, **EXPERIMENT_COPY}
+
+
 @app.route('/')
 def index():
     """Serve the main page."""
-    return render_template('index.html')
+    return render_template('index.html', results_copy=_page_copy())
 
 
 @app.route('/login')
@@ -258,7 +265,7 @@ def not_found(error):
             'matching_paths': [str(r) for r in matching_routes] if matching_routes else [],
             'hint': 'Check Vercel logs for route registration errors. Visit /api/routes to see all registered routes.'
         }), 404
-    return render_template('index.html'), 404
+    return render_template('index.html', results_copy=_page_copy()), 404
 
 
 @app.errorhandler(500)
@@ -269,7 +276,7 @@ def internal_error(error):
     print(f"Internal server error: {error}", file=sys.stderr)
     if request.path.startswith('/api/'):
         return jsonify({'error': 'Internal server error. Please try again later.'}), 500
-    return render_template('index.html'), 500
+    return render_template('index.html', results_copy=_page_copy()), 500
 
 
 @app.route('/api/health', methods=['GET'])
