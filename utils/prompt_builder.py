@@ -120,23 +120,25 @@ def build_prompt_with_dynamic_foci(
             else:
                 prompt_parts.append(prompt_section)
     
-    # Replace placeholders with actual values
-    constructed_prompt = '\n'.join(prompt_parts)
+    joined = '\n'.join(prompt_parts)
+    had_chat_placeholder = '{{CHAT_CONTENT}}' in joined
     
-    # Replace all placeholders with actual values
-    constructed_prompt = constructed_prompt.replace('{{CHAT_CONTENT}}', inputs.get('chat_content', ''))
+    constructed_prompt = joined.replace('{{CHAT_CONTENT}}', inputs.get('chat_content', ''))
     constructed_prompt = constructed_prompt.replace('{{RAG_CONTEXT}}', inputs.get('rag_context', ''))
     constructed_prompt = constructed_prompt.replace('{{TOOL_RESULTS}}', inputs.get('tool_results', ''))
     constructed_prompt = constructed_prompt.replace('{{OTHER_INPUT}}', inputs.get('other_input', ''))
+    constructed_prompt = constructed_prompt.replace('{{DYNAMIC_CONTENT}}', inputs.get('other_input', ''))
     
-    # Also handle chat_weight for backward compatibility (if chat_weight > 0.1 and no chat focus)
-    # This is for the old way where chat was added separately
-    if chat_weight > 0.1 and '{{CHAT_CONTENT}}' not in constructed_prompt:
+    # Backward compatibility: append chat only when no chat placeholder was in the template.
+    # Must not re-join unreplaced prompt_parts (that discarded substitutions).
+    if chat_weight > 0.1 and not had_chat_placeholder:
         chat_content = inputs.get('chat_content', '')
         if chat_content:
-            prompt_parts.append(f"\n## Current Chat Context (Weight: {chat_weight:.2f})")
-            prompt_parts.append(f"\n{chat_content}")
-            constructed_prompt = '\n'.join(prompt_parts)
+            constructed_prompt = (
+                constructed_prompt
+                + f"\n\n## Current Chat Context (Weight: {chat_weight:.2f})\n\n"
+                + chat_content
+            )
     
     return constructed_prompt
 

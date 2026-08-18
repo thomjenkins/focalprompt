@@ -97,7 +97,13 @@ def batch_analysis_stream():
             pairs = data.get('pairs', [])
             foci_list = data.get('foci', [])
             model = data.get('model', 'gpt-4o-mini')
-            num_samples = data.get('num_samples', 20)
+            num_samples = data.get('num_samples')
+            n_baseline = data.get('n_baseline', 10)
+            n_ablated = data.get('n_ablated', 5)
+            n_permutations = data.get('n_permutations', 10000)
+            alpha = data.get('alpha', 0.05)
+            permutation_seed = data.get('permutation_seed')
+            temperature = data.get('temperature', 0.7)
             session_id = data.get('session_id')
             resume = data.get('resume', False)
             
@@ -148,9 +154,15 @@ def batch_analysis_stream():
             for chunk in batch_service.stream_batch_analysis(
                 pairs,
                 foci_list,
-                num_samples,
-                session_id,
-                resume
+                num_samples=num_samples,
+                session_id=session_id,
+                resume=resume,
+                n_baseline=n_baseline,
+                n_ablated=n_ablated,
+                n_permutations=n_permutations,
+                alpha=alpha,
+                permutation_seed=permutation_seed,
+                temperature=temperature,
             ):
                 # Parse chunk to track usage
                 if chunk.startswith('data: '):

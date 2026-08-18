@@ -149,7 +149,8 @@ class CostCalculator:
         
         # For each pair:
         # - 1 baseline generation
-        # - num_samples baseline generations for noise calculation
+        # - num_samples baseline generations
+        # - num_foci ablated generations
         # - num_foci ablated generations
         # - (num_samples + num_foci + 1) embeddings
         

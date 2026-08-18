@@ -6,6 +6,9 @@ let batchFoci = []; // Separate foci for batch analysis
 let batchPairs = []; // Store input-output pairs for batch analysis
 let currentTab = 'documentation'; // Track current tab (defaults to documentation)
 
+window.getAblationFoci = function () { return foci; };
+window.getBatchFoci = function () { return batchFoci; };
+
 // Settings management
 let userProvider = localStorage.getItem('focalprompt_provider') || 'openai';
 let userApiKey = localStorage.getItem('focalprompt_api_key') || '';
@@ -418,6 +421,23 @@ const selectionText = document.getElementById('selection-text');
 const runAblationBtn = document.getElementById('run-ablation-btn');
 const loadAblationCheckpointBtn = document.getElementById('load-ablation-checkpoint-btn');
 const ablationResults = document.getElementById('ablation-results');
+
+(function fillDocsMethodsPanel() {
+    const el = document.getElementById('docs-methods-panel');
+    if (!el || !window.FOCALPROMPT_COPY) return;
+    const escape = window.FocalPromptResults
+        ? window.FocalPromptResults.escapeHtml
+        : function (t) { return String(t == null ? '' : t); };
+    el.innerHTML = window.FOCALPROMPT_COPY.METHODS_PANEL.split(/\n\n/).filter(function (p) {
+        return p.trim();
+    }).map(function (p) {
+        return '<p>' + escape(p.trim()) + '</p>';
+    }).join('');
+})();
+
+if (window.FocalPromptExperiment) {
+    window.FocalPromptExperiment.bind();
+}
 
 // Agent Builder elements
 const chatInput = document.getElementById('chat-input');
@@ -1252,6 +1272,7 @@ function renderFoci() {
         coverageIndicator.classList.add('hidden');
         coverageWarning.classList.add('hidden');
         if (mergeFociBtn) mergeFociBtn.style.display = 'none';
+        if (window.FocalPromptExperiment) window.FocalPromptExperiment.refreshAll();
         return;
     }
     
@@ -1312,6 +1333,7 @@ function renderFoci() {
     } else {
         runAblationBtn.disabled = true;
     }
+    if (window.FocalPromptExperiment) window.FocalPromptExperiment.refreshAll();
 }
 
 // Setup drag and drop for foci reordering
@@ -2548,8 +2570,22 @@ if (runAblationBtn) {
             showErrorModal('Please define foci first.');
             return;
         }
-        
-        showLoading('Running ablation analysis... This may take several minutes (20 baseline samples + ablated outputs).');
+
+        var cfg = window.FocalPromptExperiment ? window.FocalPromptExperiment.getState() : {
+            temperature: 0.7, n_baseline: 10, n_ablated: 5
+        };
+        if (window.FocalPromptExperiment) {
+            var tempErr = window.FocalPromptExperiment.temperatureRejection(cfg.temperature);
+            if (tempErr) {
+                showErrorModal(tempErr);
+                return;
+            }
+        }
+
+        showLoading(
+            'Running ablation analysis... This may take several minutes (' +
+            cfg.n_baseline + ' baseline samples + ' + cfg.n_ablated + ' ablated samples per focus).'
+        );
         
         try {
             // Create AbortController for timeout (10 minutes = 600000ms)
@@ -2565,7 +2601,9 @@ if (runAblationBtn) {
                     prompt: prompt,
                     foci: foci,
                     model: 'gpt-4o-mini',
-                    num_samples: 20  // Use 20 samples to determine baseline noise
+                    n_baseline: cfg.n_baseline,
+                    n_ablated: cfg.n_ablated,
+                    temperature: cfg.temperature
                 }),
                 signal: controller.signal
             });
@@ -2595,213 +2633,46 @@ if (runAblationBtn) {
 
 // Render Ablation Results
 function renderAblationResults(data) {
-    // Store results globally for optimization analysis
     window.singleAblationResults = data;
-    console.log('Ablation data:', data); // Debug log
-    let html = '<div class="ablation-summary">';
-    html += '<h3>Focus Influence Summary</h3>';
-    html += '<p>Ablation analysis measures how much each focus section contributes to the output by removing one focus at a time and comparing the results to the baseline.</p>';
-    html += '<div class="ablation-explanation" style="background: #f5f5f5; padding: 12px; border-radius: 6px; margin-top: 12px; font-size: 0.9em;">';
-    html += '<strong>Understanding the Numbers:</strong><ul style="margin: 8px 0 0 20px; padding: 0;">';
-    html += '<li><strong>Influence:</strong> How much removing this focus changes the output. Higher = more important. All values sum to 100%.</li>';
-    html += '<li><strong>Similarity:</strong> How similar the output is when this focus is removed (compared to full prompt). Higher = less impact. Inverse of influence.</li>';
-    html += '<li><strong>Visual:</strong> Bar chart representation of the influence percentage.</li>';
-    html += '</ul></div>';
-    html += '</div>';
-    
-    // Add noise information at the top
-    if (data.noise_threshold !== null && data.noise_threshold !== undefined) {
-        html += '<div class="noise-info" style="margin-bottom: 20px; padding: 16px; background: #fff3cd; border-radius: 6px; border: 1px solid #ffc107;">';
-        html += '<h4 style="margin: 0 0 8px 0; color: #856404;">📊 Baseline Noise Analysis</h4>';
-        html += `<p style="margin: 4px 0; font-size: 0.9em;"><strong>Baseline Samples:</strong> ${data.num_baseline_samples || 20}</p>`;
-        if (data.baseline_mean_similarity !== null) {
-            html += `<p style="margin: 4px 0; font-size: 0.9em;"><strong>Mean Baseline Similarity:</strong> ${(data.baseline_mean_similarity * 100).toFixed(2)}%</p>`;
-        }
-        if (data.baseline_std !== null) {
-            html += `<p style="margin: 4px 0; font-size: 0.9em;"><strong>Baseline Std Dev:</strong> ${(data.baseline_std * 100).toFixed(2)}%</p>`;
-        }
-        html += `<p style="margin: 4px 0; font-size: 0.9em;"><strong>Noise Threshold (95% CI):</strong> ${(data.noise_threshold * 100).toFixed(2)}%</p>`;
-        html += '<p style="margin: 8px 0 0 0; font-size: 0.85em; color: #856404;">If similarity is below the noise threshold, the influence is statistically significant (beyond baseline noise).</p>';
-        html += '</div>';
+    if (!ablationResults) return;
+    if (!window.FocalPromptResults) {
+        ablationResults.innerHTML = '<p class="empty-state">Results renderer failed to load.</p>';
+        return;
     }
-    
-    html += '<table class="ablation-influence-table">';
-    html += '<thead><tr><th>Focus</th><th>Influence</th><th>Similarity</th><th>Significant?</th><th>Visual</th></tr></thead>';
-    html += '<tbody>';
-    
-    // Sort by influence (highest first)
-    const sortedScores = [...data.influence_scores].sort((a, b) => 
-        b.normalized_influence - a.normalized_influence
-    );
-    
-    sortedScores.forEach((item, idx) => {
-        // Try multiple ways to get the focus name
-        let focusName = item.focus || item.focus_name;
-        
-        // If still not found, try to match with original foci
-        if (!focusName && data.ablation_results && data.ablation_results[idx]) {
-            focusName = data.ablation_results[idx].focus || data.ablation_results[idx].focus_name;
-        }
-        
-        // If still not found, use index
-        if (!focusName) {
-            focusName = `Focus ${idx + 1}`;
-        }
-        
-        // Ensure normalized_influence is treated as a number for calculations and display
-        const normalizedInfluence = parseFloat(item.normalized_influence) || 0;
-        const similarityValue = parseFloat(item.similarity) || 0;
-        
-        // Determine significance indicator
-        let significanceHtml = '';
-        if (item.is_significant === true) {
-            significanceHtml = '<span style="color: #28a745; font-weight: bold;">✓ Significant</span>';
-        } else if (item.is_significant === false) {
-            significanceHtml = '<span style="color: #6c757d;">Within Noise</span>';
-        } else {
-            significanceHtml = '<span style="color: #6c757d;">N/A</span>';
-        }
-        
-        html += `
-            <tr>
-                <td class="focus-name">${escapeHtml(focusName)}</td>
-                <td class="influence-value">${normalizedInfluence.toFixed(1)}%</td>
-                <td class="similarity-value">${(similarityValue * 100).toFixed(1)}%</td>
-                <td class="significance-value">${significanceHtml}</td>
-                <td>
-                    <div class="influence-bar">
-                        <div class="influence-bar-fill" style="width: ${normalizedInfluence}%"></div>
-                    </div>
-                </td>
-            </tr>
-        `;
-    });
-    
-    html += '</tbody></table>';
-    
-    // Add expandable section for all outputs
-    html += '<div class="ablation-outputs-section" style="margin-top: 24px;">';
-    html += '<button id="toggle-all-outputs" class="btn btn-outline" style="margin-bottom: 12px;">📄 Show All Outputs</button>';
-    html += '<div id="all-outputs-container" class="hidden" style="margin-top: 12px;">';
-    
-    // Baseline output
-    html += '<div class="output-comparison-item" style="margin-bottom: 20px; padding: 16px; border: 1px solid #ddd; border-radius: 6px; background: #f9f9f9;">';
-    html += '<h4 style="margin: 0 0 8px 0; color: #2c3e50;">📊 Baseline Output (Full Prompt)</h4>';
-    html += `<div class="output-text" style="background: white; padding: 12px; border-radius: 4px; max-height: 300px; overflow-y: auto; font-family: monospace; font-size: 0.9em; white-space: pre-wrap;">${escapeHtml(data.baseline_output)}</div>`;
-    html += '</div>';
-    
-    // Ablated outputs
-    if (data.ablation_results && data.ablation_results.length > 0) {
-        // Match ablation results with influence scores to show in order of influence
-        const ablationMap = new Map();
-        data.ablation_results.forEach(ablation => {
-            ablationMap.set(ablation.focus || ablation.focus_name, ablation);
-        });
-        
-        sortedScores.forEach((item, idx) => {
-            const focusName = item.focus || item.focus_name || `Focus ${idx + 1}`;
-            const ablation = ablationMap.get(focusName) || data.ablation_results[idx];
-            
-            if (ablation && ablation.ablated_output) {
-                const itemInfluence = parseFloat(item.normalized_influence) || 0;
-                const itemSimilarity = parseFloat(item.similarity) || 0;
-                
-                html += '<div class="output-comparison-item" style="margin-bottom: 20px; padding: 16px; border: 1px solid #ddd; border-radius: 6px; background: #f9f9f9;">';
-                html += `<h4 style="margin: 0 0 8px 0; color: #2c3e50;">🔍 Ablated Output: ${escapeHtml(focusName)}</h4>`;
-                html += `<p style="margin: 0 0 8px 0; font-size: 0.9em; color: #666;">Influence: ${itemInfluence.toFixed(1)}% | Similarity: ${(itemSimilarity * 100).toFixed(1)}%</p>`;
-                html += `<div class="output-text" style="background: white; padding: 12px; border-radius: 4px; max-height: 300px; overflow-y: auto; font-family: monospace; font-size: 0.9em; white-space: pre-wrap;">${escapeHtml(ablation.ablated_output)}</div>`;
-                html += '</div>';
-            }
-        });
-    }
-    
-    html += '</div>'; // all-outputs-container
-    html += '</div>'; // ablation-outputs-section
-    
-    // Add cost breakdown
-    if (data.cost_breakdown) {
-        const cost = data.cost_breakdown;
-        html += '<div class="cost-breakdown" style="margin-top: 20px; padding: 16px; background: #e8f4f8; border-radius: 6px; border: 1px solid #bee5eb;">';
-        html += '<h4 style="margin: 0 0 12px 0; color: #0c5460;">💰 Cost Breakdown</h4>';
-        html += '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; font-size: 0.9em;">';
-        html += '<div><strong>Chat Completions:</strong><br>';
-        html += `Input: ${cost.chat_completions.input_tokens.toLocaleString()} tokens<br>`;
-        html += `Output: ${cost.chat_completions.output_tokens.toLocaleString()} tokens<br>`;
-        html += `Cost: $${cost.chat_completions.cost.toFixed(4)}</div>`;
-        html += '<div><strong>Embeddings:</strong><br>';
-        html += `Tokens: ${cost.embeddings.tokens.toLocaleString()}<br>`;
-        html += `Cost: $${cost.embeddings.cost.toFixed(4)}</div>`;
-        html += '</div>';
-        html += `<div style="margin-top: 12px; padding-top: 12px; border-top: 2px solid #bee5eb; font-size: 1.1em; font-weight: bold; color: #0c5460;">`;
-        html += `Total Cost: $${cost.total_cost.toFixed(4)}`;
-        html += ` <span style="font-size: 0.85em; font-weight: normal; color: #666;">(Model: ${cost.model || 'gpt-4o-mini'})</span>`;
-        html += '</div>';
-        html += '</div>';
-    }
-    
-    // Add download button
-    html += '<div style="margin-top: 16px;">';
-    html += '<button id="download-ablation-results" class="btn btn-primary">💾 Download All Results (JSON)</button>';
-    html += '</div>';
-    
-    // Add details section
-    html += '<div class="ablation-details" style="margin-top: 24px;">';
-    html += '<h4>Analysis Details</h4>';
-    
-    if (data.baseline_variance !== null) {
-        html += `<p><strong>Baseline Variance:</strong> ${data.baseline_variance.toFixed(6)}</p>`;
-    }
-    
-    // Count significant influences
-    if (data.influence_scores) {
-        const significantCount = data.influence_scores.filter(item => item.is_significant === true).length;
-        const totalCount = data.influence_scores.length;
-        html += `<p style="margin-top: 12px;"><strong>Significant Influences:</strong> ${significantCount} out of ${totalCount} foci show influence beyond baseline noise.</p>`;
-    }
-    
-    html += '<p style="margin-top: 16px;"><strong>How It Works:</strong></p>';
-    html += '<ul style="margin-top: 8px; padding-left: 20px;">';
-    html += '<li>1. Generate baseline output using the full prompt</li>';
-    html += '<li>2. For each focus, remove it and generate a new output</li>';
-    html += '<li>3. Compare each ablated output to the baseline using semantic similarity (embeddings)</li>';
-    html += '<li>4. Calculate influence: <code>influence = 1 - similarity</code> (higher influence = more impact)</li>';
-    html += '<li>5. Normalize all influence scores to sum to 100%</li>';
-    html += '</ul>';
-    html += '<p style="margin-top: 12px;"><strong>Key Insight:</strong> A focus with high influence (e.g., 15%) means removing it significantly changes the output. A focus with low influence (e.g., 3%) means the output stays similar even without it.</p>';
-    html += '</div>';
-    
-    ablationResults.innerHTML = html;
-    
-    // Add event listeners for new buttons
+    ablationResults.innerHTML = window.FocalPromptResults.renderAblationResultsHtml(data);
+
     const toggleOutputsBtn = document.getElementById('toggle-all-outputs');
     const allOutputsContainer = document.getElementById('all-outputs-container');
     const downloadBtn = document.getElementById('download-ablation-results');
-    
+
     if (toggleOutputsBtn && allOutputsContainer) {
         toggleOutputsBtn.addEventListener('click', () => {
             if (allOutputsContainer.classList.contains('hidden')) {
                 allOutputsContainer.classList.remove('hidden');
-                toggleOutputsBtn.textContent = '📄 Hide All Outputs';
+                toggleOutputsBtn.textContent = 'Hide sampled outputs';
             } else {
                 allOutputsContainer.classList.add('hidden');
-                toggleOutputsBtn.textContent = '📄 Show All Outputs';
+                toggleOutputsBtn.textContent = 'Show sampled outputs';
             }
         });
     }
-    
+
     if (downloadBtn) {
         downloadBtn.addEventListener('click', () => {
-            // Create downloadable JSON with all results
             const downloadData = {
                 timestamp: new Date().toISOString(),
                 baseline_output: data.baseline_output,
                 ablation_results: data.ablation_results,
                 influence_scores: data.influence_scores,
                 summary: data.summary,
-                baseline_variance: data.baseline_variance,
+                n_baseline: data.n_baseline,
+                n_ablated: data.n_ablated,
+                temperature: data.temperature,
+                test_type: data.test_type,
+                power_warning: data.power_warning || null,
+                significance_method: data.significance_method || null,
                 cost_breakdown: data.cost_breakdown || null
             };
-            
             const blob = new Blob([JSON.stringify(downloadData, null, 2)], { type: 'application/json' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -3494,8 +3365,7 @@ function updateCostEstimate() {
     const chatAblatedPromptTokens = 1800; // Prompt without chat content
     const outputTokens = 200; // Typical output length
     
-    // Batch analysis optimization: noise calculated once for entire batch
-    // 1. Baseline noise calculation: numSamples (once for entire batch, not per pair)
+    // Token estimates match current per-pair sampling (baseline + ablated), not a shared threshold.
     const baselineNoiseInputTokens = numSamples * promptTokens;
     const baselineNoiseOutputTokens = numSamples * outputTokens;
     
@@ -3511,7 +3381,7 @@ function updateCostEstimate() {
     const chatAblatedInputTokensPerPair = chatAblatedPromptTokens;
     const chatAblatedOutputTokensPerPair = outputTokens;
     
-    // Total tokens per pair (excluding noise calculation)
+    // Total tokens per pair (excluding the shared baseline sample count used only for this estimate)
     const totalInputTokensPerPair = baselineInputTokensPerPair + ablatedInputTokensPerPair + chatAblatedInputTokensPerPair;
     const totalOutputTokensPerPair = baselineOutputTokensPerPair + ablatedOutputTokensPerPair + chatAblatedOutputTokensPerPair;
     
@@ -3519,10 +3389,10 @@ function updateCostEstimate() {
     // 1 baseline output + N ablated + 1 chat-ablated
     const embeddingTokensPerPair = (1 + numFoci + 1) * outputTokens;
     
-    // Embeddings for noise calculation (once for entire batch)
+    // Embeddings for the estimated baseline repeats
     const embeddingTokensForNoise = numSamples * outputTokens;
     
-    // Total for all pairs (including one-time noise calculation)
+    // Total for all pairs (including estimated baseline repeats)
     const totalInputTokens = baselineNoiseInputTokens + (totalInputTokensPerPair * numPairs);
     const totalOutputTokens = baselineNoiseOutputTokens + (totalOutputTokensPerPair * numPairs);
     const totalEmbeddingTokens = embeddingTokensForNoise + (embeddingTokensPerPair * numPairs);
@@ -3694,6 +3564,7 @@ function renderBatchFoci() {
     if (batchFoci.length === 0) {
         batchFociContainer.innerHTML = '<p class="empty-state">No foci defined yet. Click "Auto-Detect from First Prompt" or "Import from Prompt Analysis" to get started.</p>';
         updateBatchAnalysisButton();
+        if (window.FocalPromptExperiment) window.FocalPromptExperiment.refreshAll();
         return;
     }
     
@@ -3714,6 +3585,7 @@ function renderBatchFoci() {
     
     batchFociContainer.innerHTML = html;
     updateBatchAnalysisButton();
+    if (window.FocalPromptExperiment) window.FocalPromptExperiment.refreshAll();
 }
 
 // Batch Analysis: Remove Focus
@@ -3776,6 +3648,17 @@ async function handleRunBatchAnalysis(e) {
         }
         showErrorModal('Please ensure you have:\n- At least one pair (you have ' + batchPairs.length + ')\n- At least one focus (you have ' + batchFoci.length + ')\n- A prompt: ' + promptMsg);
         return;
+    }
+
+    var cfg = window.FocalPromptExperiment ? window.FocalPromptExperiment.getState() : {
+        temperature: 0.7, n_baseline: 10, n_ablated: 5
+    };
+    if (window.FocalPromptExperiment) {
+        var tempErr = window.FocalPromptExperiment.temperatureRejection(cfg.temperature);
+        if (tempErr) {
+            showErrorModal(tempErr);
+            return;
+        }
     }
     
     console.log('All checks passed - proceeding with batch analysis');
@@ -3850,7 +3733,9 @@ async function handleRunBatchAnalysis(e) {
                 pairs: pairsWithPrompt,
                 foci: batchFoci,
                 model: 'gpt-4o-mini',
-                num_samples: 20,
+                n_baseline: cfg.n_baseline,
+                n_ablated: cfg.n_ablated,
+                temperature: cfg.temperature,
                 session_id: sessionId,
                 resume: false
             })
@@ -3919,11 +3804,11 @@ async function handleRunBatchAnalysis(e) {
         switch (data.type) {
             case 'progress':
                 if (batchProgressText) {
-                    if (data.stage === 'noise_calculation') {
+                    if (data.stage === 'noise_calculation' || data.stage === 'baseline_sampling') {
                         if (data.sample) {
-                            batchProgressText.textContent = `Calculating noise: ${data.sample}/${data.total} samples...`;
+                            batchProgressText.textContent = `Sampling baseline outputs: ${data.sample}/${data.total}...`;
                         } else {
-                            batchProgressText.textContent = data.message || 'Calculating baseline noise...';
+                            batchProgressText.textContent = data.message || 'Sampling baseline outputs...';
                         }
                     } else if (data.stage === 'processing') {
                         batchProgressText.textContent = `${data.message} (${data.completed}/${data.total} completed)`;
@@ -4406,6 +4291,60 @@ function renderBatchResults(data) {
     if (!batchResults) return;
     
     let html = '<h3 style="margin-bottom: 16px;">Batch Analysis Results</h3>';
+    const pairResults = data.pair_results || data.results || [];
+    if (window.FocalPromptResults) {
+        html += window.FocalPromptResults.renderDefinition();
+        const firstOk = pairResults.find(function (p) {
+            return p && p.success !== false;
+        });
+        const headerSource = firstOk || data;
+        if (window.FocalPromptResults.renderRunHeader) {
+            html += window.FocalPromptResults.renderRunHeader(headerSource);
+        }
+        const warned = pairResults.find(function (p) { return p && p.power_warning; });
+        if (warned) {
+            html += window.FocalPromptResults.renderPowerBannerHtml(warned);
+        }
+        const first = pairResults.find(function (p) {
+            return p && p.success !== false && (p.ablation_results || p.influence_scores);
+        });
+        if (first) {
+            const records = window.FocalPromptResults.collectFocusRecords(first);
+            const excluded = records.filter(function (r) {
+                return window.FocalPromptResults.excludedExplanation(r);
+            });
+            if (excluded.length) {
+                html += '<div class="focus-verdict-list">';
+                excluded.forEach(function (rec) {
+                    html += window.FocalPromptResults.renderFocusCard(rec, first.alpha);
+                });
+                html += '</div>';
+            }
+        }
+        html += window.FocalPromptResults.renderMethodsPanel();
+        if (pairResults.length) {
+            html += '<div class="batch-pair-verdicts" style="margin: 16px 0 24px 0;">';
+            html += '<h4>Per-pair sensitivity</h4>';
+            pairResults.forEach(function (pair, i) {
+                if (!pair || pair.success === false) {
+                    html += '<details class="batch-pair-results"><summary>Pair ' + (i + 1) + ' — not tested</summary>';
+                    html += '<p>' + escapeHtml(pair && pair.error ? pair.error : 'This pair did not complete.') + '</p></details>';
+                    return;
+                }
+                html += '<details class="batch-pair-results"><summary>Pair ' + (i + 1) + '</summary>';
+                if (pair.power_warning) {
+                    html += window.FocalPromptResults.renderPowerBannerHtml(pair);
+                }
+                const recs = window.FocalPromptResults.collectFocusRecords(pair);
+                html += '<div class="focus-verdict-list">';
+                recs.forEach(function (rec) {
+                    html += window.FocalPromptResults.renderFocusCard(rec, pair.alpha);
+                });
+                html += '</div></details>';
+            });
+            html += '</div>';
+        }
+    }
     
     const fdStats = data.focus_distribution_statistics || {};
     const fdKeys = Object.keys(fdStats);
@@ -4448,12 +4387,11 @@ function renderBatchResults(data) {
     
     // Statistics Table — primary metric is normalized share (same idea as single-run ablation)
     html += '<div style="margin-bottom: 24px;">';
-    html += '<h4 style="margin-bottom: 8px;">2. Ablation influence (embedding-based shares)</h4>';
+    html += '<h4 style="margin-bottom: 8px;">2. Descriptive T_obs shares across pairs</h4>';
     html += '<p style="margin: 0 0 12px 0; font-size: 0.9em; color: var(--text-secondary); max-width: 900px;">';
-    html += '<strong>Mean share</strong> is the average percentage of total per-pair ablation effect ';
-    html += 'attributed to each focus (and chat). Within each pair, shares are computed from raw embedding ';
-    html += 'shifts and normalized to sum to 100% across all foci plus chat — so the means in this table ';
-    html += 'also sum to about 100% across rows (foci + chat), not independent 0–100% scores.';
+    html += 'These percentages renormalise the observed centroid distance (T_obs) within each pair so shares sum to 100%. ';
+    html += 'They are a descriptive breakdown of measured shift, not a test and not an importance ranking. ';
+    html += 'Use the per-pair verdicts above for significance.';
     html += '</p>';
     html += '<table class="batch-stats-table" style="width: 100%; border-collapse: collapse;">';
     html += '<thead><tr style="background: #f8fafc; border-bottom: 2px solid var(--border-color);">';
@@ -4468,7 +4406,7 @@ function renderBatchResults(data) {
     // Regular foci
     const stats = data.statistics || {};
     Object.keys(stats).forEach(focusName => {
-        if (focusName === 'chat_content' || focusName === 'noise') return; // Handle separately
+        if (focusName === 'chat_content' || focusName === 'noise') return;
         
         const stat = stats[focusName];
         const variance = stat.variance || 0;
@@ -4495,19 +4433,6 @@ function renderBatchResults(data) {
         html += `<td style="padding: 12px; text-align: right;">${(stat.std_dev * 100).toFixed(2)}%</td>`;
         html += `<td style="padding: 12px; text-align: right;">${(stat.min * 100).toFixed(2)}%</td>`;
         html += `<td style="padding: 12px; text-align: right;">${(stat.max * 100).toFixed(2)}%</td>`;
-        html += `</tr>`;
-    }
-    
-    // Noise statistics
-    if (stats.noise) {
-        const noise = stats.noise;
-        html += `<tr style="border-bottom: 2px solid var(--border-color); background: #fff3cd;">`;
-        html += `<td style="padding: 12px;"><strong>📊 Noise (Baseline Similarity)</strong></td>`;
-        html += `<td style="padding: 12px; text-align: right;" title="Mean similarity between baseline outputs">${(noise.mean * 100).toFixed(2)}%</td>`;
-        html += `<td style="padding: 12px; text-align: right;" title="Variance of similarities between baseline outputs">${(noise.variance * 10000).toFixed(4)}</td>`;
-        html += `<td style="padding: 12px; text-align: right;" title="Standard deviation of similarities">${(noise.std_dev * 100).toFixed(2)}%</td>`;
-        html += `<td style="padding: 12px; text-align: right;" title="Noise threshold (mean - 2*std)">${noise.noise_threshold !== null && noise.noise_threshold !== undefined ? (noise.noise_threshold * 100).toFixed(2) + '%' : '-'}</td>`;
-        html += `<td style="padding: 12px; text-align: right;" title="Number of baseline samples">${noise.num_samples || '-'}</td>`;
         html += `</tr>`;
     }
     
@@ -4556,11 +4481,11 @@ if (exportResultsBtn) {
         const fdStats = data.focus_distribution_statistics || {};
         
         // Create CSV (ablation section first, then optional LLM focus-distribution aggregates)
-        let csv = '=== ABLATION (embedding shares) ===\n';
+        let csv = '=== ABLATION (descriptive T_obs shares; not a test) ===\n';
         csv += 'Focus,Mean_Share_pct,Variance,Std_Dev_pct,Min_pct,Max_pct,Mean_Raw_Shift_pct,Variance_Raw,Std_Dev_Raw_pct,Min_Raw_pct,Max_Raw_pct\n';
         
         Object.keys(stats).forEach(focusName => {
-            if (focusName === 'noise') return; // Skip noise row
+            if (focusName === 'noise') return;
             const stat = stats[focusName];
             const raw = stat.mean_raw !== undefined ? [
                 (stat.mean_raw * 100).toFixed(4),
@@ -4571,11 +4496,6 @@ if (exportResultsBtn) {
             ].join(',') : ',,,,';
             csv += `"${focusName}",${(stat.mean * 100).toFixed(4)},${stat.variance},${(stat.std_dev * 100).toFixed(4)},${(stat.min * 100).toFixed(4)},${(stat.max * 100).toFixed(4)},${raw}\n`;
         });
-        
-        // Add noise separately
-        if (stats.noise) {
-            csv += `"Noise (Baseline Similarity)",${stats.noise.mean},${stats.noise.variance},${stats.noise.std_dev || ''},${stats.noise.noise_threshold !== null && stats.noise.noise_threshold !== undefined ? stats.noise.noise_threshold : ''},${stats.noise.num_samples || ''}\n`;
-        }
         
         if (Object.keys(fdStats).length > 0) {
             csv += '\n=== FOCUS DISTRIBUTION (LLM assessment, mean points per pair) ===\n';

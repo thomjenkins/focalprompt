@@ -19,16 +19,30 @@ def mock_assessor():
 
 
 def test_detect_foci(mock_assessor):
-    """Test focus detection."""
+    """Test focus detection with span verification."""
     service = AssessmentService(mock_assessor)
+    prompt = "Test prompt with a real section."
     
     mock_assessor.provider.chat_completion.return_value = {
-        'content': '{"foci": [{"focus": "Test", "prompt_section": "Section", "description": "Desc"}]}'
+        'content': '{"foci": [{"focus": "Test", "prompt_section": "Test prompt with a real section.", "description": "Desc"}]}'
     }
     
-    result = service.detect_foci("Test prompt")
+    result = service.detect_foci(prompt)
     assert 'foci' in result
     assert len(result['foci']) == 1
+    assert result['foci'][0]['verified'] is True
+    assert result['foci'][0]['char_start'] == 0
+    assert result['foci'][0]['char_end'] == len(prompt)
+
+
+def test_detect_foci_unaligned_quote_flagged(mock_assessor):
+    service = AssessmentService(mock_assessor)
+    mock_assessor.provider.chat_completion.return_value = {
+        'content': '{"foci": [{"focus": "Test", "prompt_section": "not a substring", "description": "Desc"}]}'
+    }
+    result = service.detect_foci("Test prompt")
+    assert result['foci'][0]['verified'] is False
+    assert result['foci'][0]['char_start'] is None
 
 
 def test_assess_focus(mock_assessor):

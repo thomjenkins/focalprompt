@@ -160,14 +160,21 @@
                             
                             <p><strong>6. Ablation Analysis</strong></p>
                             <p>
-                                Next you can run an "Ablation Analysis" where we sequentially remove individual prompt foci to see how this changes the output. We also run the prompt as it is <strong>20 times</strong> to take a "noise" measurement. Given LLMs are non-deterministic, we select a temperature of 0.7 to assess the relative variance of output with no change in input. We then see whether removing an individual point of focus from your prompt changes the output more than just the random noise in your prompt.
+                                Ablation analysis tests whether deleting each focus shifts the model's behaviour in embedding space. The original prompt is sampled several times, then each locatable focus is deleted in turn and the remaining prompt is sampled. A permutation test asks whether the two groups of embeddings are farther apart than chance; q-values are Benjamini–Hochberg-adjusted across the foci that were actually tested.
+                            </p>
+                            <p style="background: #e8f4f8; padding: 12px; border-radius: 6px; border-left: 4px solid #0c5460; margin: 16px 0;">
+                                FocalPrompt detects whether removing each focus shifts the model's behaviour in semantic embedding space. It does not measure correctness, quality, or safety, and it does not tell you what to delete.
                             </p>
                             <p style="background: #fff3cd; padding: 12px; border-radius: 6px; border-left: 4px solid #ffc107; margin: 16px 0;">
-                                <strong>💡 Tip:</strong> You may wish to reconsider prompt foci that do not have an impact above the prompt's background noise level.
+                                A non-significant result is a failure to detect a shift at this sample size, not evidence that the text does nothing. Short structural instructions can matter greatly while barely moving embeddings.
                             </p>
                             <p style="background: #fee; padding: 12px; border-radius: 6px; border-left: 4px solid #ef4444; margin: 16px 0;">
-                                <strong>⚠️ Note:</strong> The cost of the ablation analysis and the length of time it runs will increase with the number of prompt foci you have identified.
+                                <strong>Note:</strong> Cost and runtime increase with the number of foci and with baseline and ablated sample counts.
                             </p>
+                            <details class="methods-panel" style="margin: 16px 0;">
+                                <summary>How this works</summary>
+                                <div class="methods-panel-body" id="docs-methods-panel"></div>
+                            </details>
                             
                             <h3 style="margin-top: 32px; color: var(--primary-color);">Batch Analysis</h3>
                             
@@ -189,10 +196,10 @@
                             <h3 style="margin-top: 32px; color: var(--primary-color);">Best Practices</h3>
                             
                             <ul style="margin-left: 24px;">
-                                <li>Aim for <strong>100% coverage</strong> of your prompt with foci</li>
-                                <li>Tag dynamic inputs appropriately to enable batch analysis</li>
-                                <li>Use ablation analysis to identify which foci actually matter</li>
-                                <li>Remove or reconsider foci that don't impact output above noise level</li>
+                                <li>Aim for <strong>100% coverage</strong> of your prompt with foci whose text matches the prompt verbatim</li>
+                                <li>Tag dynamic inputs appropriately so they are reported as slots, not treated as prompt text</li>
+                                <li>Use ablation analysis to test which deletions produce a detectable behavioural shift</li>
+                                <li>Treat non-significant foci as undetected, not as unused</li>
                                 <li>Test prompt adjustments with the focus sliders before finalizing</li>
                             </ul>
                             
@@ -370,11 +377,38 @@
                 </div>
                 <div class="card-body">
                     <p class="info-text">
-                        Ablation analysis measures how much each focus section contributes to the output by 
-                        removing one focus at a time and comparing the results to the baseline.
+                        FocalPrompt detects whether removing each focus shifts the model's behaviour in semantic embedding space. It does not measure correctness, quality, or safety, and it does not tell you what to delete.
                     </p>
+                    <div class="experiment-config" data-foci-source="ablation">
+                        <h3 class="experiment-config-title">Experiment configuration</h3>
+                        <div class="experiment-field">
+                            <label for="ablation-temperature">Temperature</label>
+                            <input id="ablation-temperature" class="exp-temperature" type="number" min="0.1" max="2.0" step="0.1" value="0.7">
+                            <p class="exp-temperature-help"></p>
+                            <p class="exp-temperature-high hidden"></p>
+                            <p class="exp-temperature-error hidden" role="alert"></p>
+                        </div>
+                        <div class="experiment-field experiment-samples">
+                            <div class="experiment-sample-inputs">
+                                <label>Baseline samples
+                                    <input class="exp-n-baseline" type="number" min="5" max="50" step="1" value="10">
+                                </label>
+                                <label>Ablated samples per focus
+                                    <input class="exp-n-ablated" type="number" min="3" max="25" step="1" value="5">
+                                </label>
+                                <button type="button" class="exp-suggestion-chip" title="">suggested for this temperature</button>
+                            </div>
+                            <p class="exp-suggestion-tooltip"></p>
+                            <p class="exp-cost-line"></p>
+                            <p class="exp-power-line hidden"></p>
+                        </div>
+                        <details class="experiment-advanced">
+                            <summary>Advanced</summary>
+                            <p class="exp-permutation-disclosure"></p>
+                        </details>
+                    </div>
                     <div id="ablation-results" class="ablation-results">
-                        <p class="empty-state">Click "Run Ablation Analysis" to see how each focus influences the output.</p>
+                        <p class="empty-state">Click "Run Ablation Analysis" to test whether deleting each focus shifts the model's behaviour.</p>
                     </div>
                 </div>
             </section>
@@ -507,8 +541,36 @@
                             <p id="batch-progress-text">Processing...</p>
                         </div>
                         <p class="info-text">
-                            This will run ablation analysis on each pair. Noise is calculated once for the entire batch (20 baseline samples) and applied to all pairs, significantly reducing costs. This may take a while.
+                            Each pair is its own permutation experiment: the pair prompt is sampled, then each locatable focus is deleted and sampled. Dynamic slots are excluded. This may take a while.
                         </p>
+                        <div class="experiment-config" data-foci-source="batch">
+                            <h3 class="experiment-config-title">Experiment configuration</h3>
+                            <div class="experiment-field">
+                                <label for="batch-temperature">Temperature</label>
+                                <input id="batch-temperature" class="exp-temperature" type="number" min="0.1" max="2.0" step="0.1" value="0.7">
+                                <p class="exp-temperature-help"></p>
+                                <p class="exp-temperature-high hidden"></p>
+                                <p class="exp-temperature-error hidden" role="alert"></p>
+                            </div>
+                            <div class="experiment-field experiment-samples">
+                                <div class="experiment-sample-inputs">
+                                    <label>Baseline samples
+                                        <input class="exp-n-baseline" type="number" min="5" max="50" step="1" value="10">
+                                    </label>
+                                    <label>Ablated samples per focus
+                                        <input class="exp-n-ablated" type="number" min="3" max="25" step="1" value="5">
+                                    </label>
+                                    <button type="button" class="exp-suggestion-chip" title="">suggested for this temperature</button>
+                                </div>
+                                <p class="exp-suggestion-tooltip"></p>
+                                <p class="exp-cost-line"></p>
+                                <p class="exp-power-line hidden"></p>
+                            </div>
+                            <details class="experiment-advanced">
+                                <summary>Advanced</summary>
+                                <p class="exp-permutation-disclosure"></p>
+                            </details>
+                        </div>
                     </div>
                 </section>
 
@@ -760,6 +822,12 @@
         </div>
     </div>
 
+    <script id="focalprompt-copy" type="application/json">{{ results_copy | tojson }}</script>
+    <script>
+        window.FOCALPROMPT_COPY = JSON.parse(document.getElementById('focalprompt-copy').textContent);
+    </script>
+    <script src="{{ url_for('static', filename='js/experiment_config.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/results_copy.js') }}"></script>
     <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
 </html>

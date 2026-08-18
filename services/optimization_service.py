@@ -8,6 +8,7 @@ Handles prompt optimization analysis based on comprehensive data.
 import json
 from typing import List, Dict, Optional
 from services.cost_calculator import CostCalculator
+from utils.results_copy import NON_SIGNIFICANT_CAUTION
 
 
 class OptimizationService:
@@ -71,26 +72,33 @@ class OptimizationService:
         if single_ablation:
             summary_parts.append("## 2. SINGLE PAIR ABLATION ANALYSIS")
             if single_ablation.get('influence_scores'):
-                summary_parts.append("Influence scores (how much removing each focus affects output):")
+                summary_parts.append(
+                    "Permutation results (T_obs is centroid cosine distance, not an importance score):"
+                )
                 for item in single_ablation['influence_scores']:
                     focus_name = item.get('focus', 'Unknown')
-                    influence = item.get('influence', 0)
-                    normalized = item.get('normalized_influence', 0)
+                    t_obs = item.get('t_obs', item.get('influence', 0))
                     summary_parts.append(
-                        f"- {focus_name}: Influence={influence:.3f}, Normalized={normalized:.1f}%"
+                        f"- {focus_name}: T_obs={t_obs:.3f}"
                     )
-            if single_ablation.get('baseline_variance'):
-                summary_parts.append(
-                    f"Baseline noise: Variance={single_ablation.get('baseline_variance', 0):.4f}, "
-                    f"StdDev={single_ablation.get('baseline_std', 0):.4f}"
-                )
+                    if item.get('p_value') is not None:
+                        summary_parts.append(
+                            f"  permutation p={item.get('p_value'):.4g}, "
+                            f"BH q={item.get('q_value'):.4g}, "
+                            f"significant={item.get('is_significant')} "
+                            "(significant means a detectable behavioural shift, not a recommendation)"
+                        )
+                    if item.get('is_significant') is False:
+                        summary_parts.append(f"  {NON_SIGNIFICANT_CAUTION}")
+            if single_ablation.get('power_warning'):
+                summary_parts.append(f"Power warning: {single_ablation['power_warning']}")
             summary_parts.append("")
         
         # 3. Batch Ablation Analysis
         if batch_analysis and batch_analysis.get('statistics'):
             summary_parts.append("## 3. BATCH ABLATION ANALYSIS (Statistical Summary)")
             stats = batch_analysis['statistics']
-            summary_parts.append("Average influence scores across multiple pairs:")
+            summary_parts.append("Average descriptive T_obs shares across pairs (not a test):")
             for focus_name, focus_stats in sorted(stats.items(), key=lambda x: x[1].get('mean', 0), reverse=True):
                 if focus_name == 'noise':
                     continue
@@ -105,13 +113,6 @@ class OptimizationService:
                 if std_dev > 0.1:
                     summary_parts.append(f"  ⚠️ High variance - inconsistent impact across pairs")
             
-            if batch_analysis.get('statistics', {}).get('noise'):
-                noise = batch_analysis['statistics']['noise']
-                summary_parts.append(
-                    f"\nBaseline noise (prompt-only variability): "
-                    f"Mean={noise.get('mean', 0):.4f}, StdDev={noise.get('std_dev', 0):.4f}, "
-                    f"Threshold={noise.get('noise_threshold', 0):.4f}"
-                )
             summary_parts.append("")
         
         # 4. Batch Agent Building Results
