@@ -6,6 +6,7 @@ Per-pair subtractive ablation with a permutation test.
 """
 
 import json
+import time
 import numpy as np
 from typing import List, Dict, Optional, Generator
 from datetime import datetime
@@ -20,6 +21,7 @@ from utils.data_processing import (
 )
 from services.assessment_service import AssessmentService
 from utils.gateway_chat import chat_completion as gateway_chat_completion
+from services.ablation_service import SAMPLE_GAP_SECONDS
 from utils.permutation_test import (
     DEFAULT_ALPHA,
     DEFAULT_N_PERMUTATIONS,
@@ -69,7 +71,9 @@ class BatchAnalysisService:
         outputs = []
         in_tok = 0
         out_tok = 0
-        for _ in range(n):
+        for i in range(n):
+            if i > 0:
+                time.sleep(SAMPLE_GAP_SECONDS)
             response = self._complete(prompt, temperature)
             outputs.append(response['content'])
             if 'usage' in response:
