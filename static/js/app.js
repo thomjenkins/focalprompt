@@ -2583,7 +2583,7 @@ async function fetchAblationSample(prompt, fociList, kind, focusIndex, temperatu
         });
         const data = await response.json();
         if (response.status === 429) {
-            const waitSec = Math.max(8, Number(data.retry_after) || 8);
+            const waitSec = Math.max(1, Number(data.retry_after) || 2);
             showLoading('Gateway rate limit. Waiting ' + waitSec + 's, then retrying this sample…');
             await sleepMs(waitSec * 1000);
             continue;
@@ -2597,56 +2597,84 @@ async function fetchAblationSample(prompt, fociList, kind, focusIndex, temperatu
         return data;
     }
     throw new Error(
-        'Rate limit persisted after several waits. Wait a minute, lower sample counts, or add AI Gateway credits to raise the free-tier RPM limit.'
+        'Rate limit persisted after several waits. Wait a minute and try again, or lower sample counts.'
     );
+}
+
+async function mapPool(items, limit, fn) {
+    const results = new Array(items.length);
+    let next = 0;
+    async function worker() {
+        while (true) {
+            const i = next++;
+            if (i >= items.length) return;
+            results[i] = await fn(items[i], i);
+        }
+    }
+    const n = Math.max(1, Math.min(limit, items.length));
+    const workers = [];
+    for (let w = 0; w < n; w++) workers.push(worker());
+    await Promise.all(workers);
+    return results;
+}
+
+function isClientAttributableFocus(focus) {
+    if (!focus || focus.is_dynamic) return false;
+    if (focus.verified === false) return false;
+    if (focus.reason === 'overlap' || focus.reason === 'unverified' || focus.reason === 'dynamic_slot') {
+        return false;
+    }
+    return true;
 }
 
 async function runPacedAblation(prompt, fociList, cfg) {
     const controller = new AbortController();
     const timeoutId = setTimeout(function () { controller.abort(); }, 600000);
-    const gapMs = 5000;
+    const concurrency = 6;
     try {
         const nBaseline = cfg.n_baseline;
         const nAblated = cfg.n_ablated;
+        const jobs = [];
+        for (let i = 0; i < nBaseline; i++) {
+            jobs.push({ kind: 'baseline', focusIndex: null, slot: i });
+        }
+        for (let focusIndex = 0; focusIndex < fociList.length; focusIndex++) {
+            if (!isClientAttributableFocus(fociList[focusIndex])) continue;
+            for (let j = 0; j < nAblated; j++) {
+                jobs.push({ kind: 'ablated', focusIndex: focusIndex, slot: j });
+            }
+        }
+
+        let completed = 0;
+        showLoading('Generating samples (0 of ' + jobs.length + ')…');
+        const samples = await mapPool(jobs, concurrency, async function (job) {
+            const sample = await fetchAblationSample(
+                prompt, fociList, job.kind, job.focusIndex, cfg.temperature, controller
+            );
+            completed += 1;
+            showLoading('Generating samples (' + completed + ' of ' + jobs.length + ')…');
+            return sample;
+        });
+
         const baselineOutputs = [];
+        const ablatedOutputs = {};
         let inputTokens = 0;
         let outputTokens = 0;
-        for (let i = 0; i < nBaseline; i++) {
-            showLoading('Baseline sample ' + (i + 1) + ' of ' + nBaseline + '…');
-            if (i > 0) await sleepMs(gapMs);
-            const sample = await fetchAblationSample(prompt, fociList, 'baseline', null, cfg.temperature, controller);
-            baselineOutputs.push(sample.content);
+        for (let i = 0; i < jobs.length; i++) {
+            const job = jobs[i];
+            const sample = samples[i];
             if (sample.usage) {
                 inputTokens += sample.usage.prompt_tokens || 0;
                 outputTokens += sample.usage.completion_tokens || 0;
             }
-        }
-        const ablatedOutputs = {};
-        for (let focusIndex = 0; focusIndex < fociList.length; focusIndex++) {
-            if (fociList[focusIndex].is_dynamic) continue;
-            const name = fociList[focusIndex].focus || ('Focus ' + (focusIndex + 1));
-            const texts = [];
-            let skipFocus = false;
-            for (let j = 0; j < nAblated; j++) {
-                showLoading('Ablated sample ' + (j + 1) + ' of ' + nAblated + ' for “' + name + '”…');
-                await sleepMs(gapMs);
-                try {
-                    const sample = await fetchAblationSample(prompt, fociList, 'ablated', focusIndex, cfg.temperature, controller);
-                    texts.push(sample.content);
-                    if (sample.usage) {
-                        inputTokens += sample.usage.prompt_tokens || 0;
-                        outputTokens += sample.usage.completion_tokens || 0;
-                    }
-                } catch (err) {
-                    if (String(err.message || '').indexOf('cannot be ablated') !== -1) {
-                        skipFocus = true;
-                        break;
-                    }
-                    throw err;
-                }
+            if (job.kind === 'baseline') {
+                baselineOutputs[job.slot] = sample.content;
+            } else {
+                if (!ablatedOutputs[job.focusIndex]) ablatedOutputs[job.focusIndex] = [];
+                ablatedOutputs[job.focusIndex][job.slot] = sample.content;
             }
-            if (!skipFocus && texts.length) ablatedOutputs[focusIndex] = texts;
         }
+
         showLoading('Scoring samples (permutation test)…');
         const response = await fetch('/api/ablation-score', {
             method: 'POST',
