@@ -7,7 +7,7 @@ import requests
 
 from core.ai_gateway_provider import (
     AIGatewayProvider,
-    CHAT_MAX_ATTEMPTS,
+    RateLimitError,
     retry_after_seconds,
 )
 from services.ablation_service import AblationService
@@ -37,14 +37,14 @@ def _requests_mod(post_side_effect):
 def test_persistent_429_raises_rate_limit(check, _sleep):
     check.return_value = _requests_mod(_http_error(429))
     provider = AIGatewayProvider('test-key')
-    with pytest.raises(Exception, match='Rate limit exceeded') as exc:
+    with pytest.raises(RateLimitError, match='Rate limit exceeded') as exc:
         provider.chat_completion(
             [{'role': 'user', 'content': 'hi'}],
             model='gpt-4o-mini',
             provider='openai',
         )
-    assert 'Rate limit exceeded' in exc.value.args[0]
-    assert check.return_value.post.call_count == CHAT_MAX_ATTEMPTS
+    assert exc.value.retry_after >= 1
+    assert check.return_value.post.call_count == 2
 
 
 @patch('core.ai_gateway_provider.time.sleep', return_value=None)
