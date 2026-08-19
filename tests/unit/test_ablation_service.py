@@ -260,3 +260,28 @@ def test_no_generation_or_embedding_inside_permutation(
         assert 'is_significant' in item
         assert 'null_deciles' in item
 
+
+def test_sample_completion_baseline_and_ablated(ablation_service, mock_provider):
+    base = ablation_service.sample_completion(PROMPT, _static_foci(), 'baseline', 0.7)
+    assert base['content'] == 'Test output'
+    ablated = ablation_service.sample_completion(
+        PROMPT, _static_foci(), 'ablated', 0.7, focus_index=0
+    )
+    assert ablated['content'] == 'Test output'
+    assert 'You are a veterinary triage assistant.' not in ablated['ablated_prompt']
+    with pytest.raises(ValueError, match='cannot be ablated'):
+        ablation_service.sample_completion(
+            PROMPT,
+            [
+                {
+                    'focus': 'Chat slot',
+                    'prompt_section': 'Always cite the source of any medical claim.',
+                    'is_dynamic': True,
+                    'dynamic_type': 'chat',
+                }
+            ],
+            'ablated',
+            0.7,
+            focus_index=0,
+        )
+

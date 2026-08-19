@@ -60,6 +60,14 @@ def retry_after_seconds(response, fallback: float) -> float:
     return min(max(fallback, 1.0), MAX_429_WAIT_SECONDS)
 
 
+class RateLimitError(Exception):
+    """Gateway 429 after in-request retries. Callers should wait and retry the unit of work."""
+
+    def __init__(self, message: str, retry_after: float = 8.0):
+        super().__init__(message)
+        self.retry_after = float(retry_after)
+
+
 class AIGatewayProvider(LLMProvider):
     """
     Vercel AI Gateway provider that routes requests through Vercel's gateway.
@@ -259,10 +267,12 @@ class AIGatewayProvider(LLMProvider):
                     user_error_msg = "Service temporarily unavailable. Please try again in a moment. If the problem persists, please contact support."
                     raise Exception(user_error_msg)
                 elif error_code == 429:
-                    if attempt < max_attempts - 1:
-                        wait_time = retry_after_seconds(
-                            e.response, fallback=min(30, 5 * (2 ** attempt))
-                        )
+                    wait_time = retry_after_seconds(
+                        e.response, fallback=min(30, 5 * (2 ** attempt))
+                    )
+                    # One short retry in this request, then hand Retry-After to the client.
+                    # Extra in-process 429s burn the free-tier RPM budget.
+                    if attempt == 0:
                         print(
                             f"Rate limit exceeded (attempt {attempt + 1}/{max_attempts}), "
                             f"waiting {wait_time}s before retry...",
@@ -270,9 +280,10 @@ class AIGatewayProvider(LLMProvider):
                         )
                         time.sleep(wait_time)
                         continue
-                    raise Exception(
-                        "Rate limit exceeded. Please wait a minute and try again, "
-                        "or lower baseline/ablated sample counts."
+                    raise RateLimitError(
+                        "Rate limit exceeded. Please wait and try again, "
+                        "or lower baseline/ablated sample counts.",
+                        retry_after=wait_time,
                     )
                 elif error_code == 500 or error_code == 502 or error_code == 503:
                     if attempt < max_attempts - 1:
@@ -303,7 +314,8 @@ class AIGatewayProvider(LLMProvider):
                     raise Exception("Service temporarily unavailable. Please try again in a moment. If the problem persists, please contact support.")
                     
             except Exception as e:
-                # Other unexpected errors
+                if isinstance(e, RateLimitError):
+                    raise
                 import sys
                 print(f"AI Gateway Unexpected Error: {str(e)}", file=sys.stderr)
                 print(f"Exception type: {type(e).__name__}", file=sys.stderr)

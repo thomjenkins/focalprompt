@@ -2562,6 +2562,116 @@ if (loadAblationCheckpointBtn) {
 }
 
 // Run Ablation Analysis
+function sleepMs(ms) {
+    return new Promise(function (resolve) { setTimeout(resolve, ms); });
+}
+
+async function fetchAblationSample(prompt, fociList, kind, focusIndex, temperature, controller) {
+    const maxAttempts = 8;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        const response = await fetch('/api/ablation-sample', {
+            method: 'POST',
+            headers: getApiHeaders(),
+            body: JSON.stringify(getApiBody({
+                prompt: prompt,
+                foci: fociList,
+                kind: kind,
+                focus_index: focusIndex,
+                temperature: temperature
+            })),
+            signal: controller.signal
+        });
+        const data = await response.json();
+        if (response.status === 429) {
+            const waitSec = Math.max(8, Number(data.retry_after) || 8);
+            showLoading('Gateway rate limit. Waiting ' + waitSec + 's, then retrying this sample…');
+            await sleepMs(waitSec * 1000);
+            continue;
+        }
+        if (!response.ok) {
+            throw new Error(data.error || 'Failed to generate a sample');
+        }
+        if (!data.content) {
+            throw new Error('Model returned an empty sample');
+        }
+        return data;
+    }
+    throw new Error(
+        'Rate limit persisted after several waits. Wait a minute, lower sample counts, or add AI Gateway credits to raise the free-tier RPM limit.'
+    );
+}
+
+async function runPacedAblation(prompt, fociList, cfg) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(function () { controller.abort(); }, 600000);
+    const gapMs = 5000;
+    try {
+        const nBaseline = cfg.n_baseline;
+        const nAblated = cfg.n_ablated;
+        const baselineOutputs = [];
+        let inputTokens = 0;
+        let outputTokens = 0;
+        for (let i = 0; i < nBaseline; i++) {
+            showLoading('Baseline sample ' + (i + 1) + ' of ' + nBaseline + '…');
+            if (i > 0) await sleepMs(gapMs);
+            const sample = await fetchAblationSample(prompt, fociList, 'baseline', null, cfg.temperature, controller);
+            baselineOutputs.push(sample.content);
+            if (sample.usage) {
+                inputTokens += sample.usage.prompt_tokens || 0;
+                outputTokens += sample.usage.completion_tokens || 0;
+            }
+        }
+        const ablatedOutputs = {};
+        for (let focusIndex = 0; focusIndex < fociList.length; focusIndex++) {
+            if (fociList[focusIndex].is_dynamic) continue;
+            const name = fociList[focusIndex].focus || ('Focus ' + (focusIndex + 1));
+            const texts = [];
+            let skipFocus = false;
+            for (let j = 0; j < nAblated; j++) {
+                showLoading('Ablated sample ' + (j + 1) + ' of ' + nAblated + ' for “' + name + '”…');
+                await sleepMs(gapMs);
+                try {
+                    const sample = await fetchAblationSample(prompt, fociList, 'ablated', focusIndex, cfg.temperature, controller);
+                    texts.push(sample.content);
+                    if (sample.usage) {
+                        inputTokens += sample.usage.prompt_tokens || 0;
+                        outputTokens += sample.usage.completion_tokens || 0;
+                    }
+                } catch (err) {
+                    if (String(err.message || '').indexOf('cannot be ablated') !== -1) {
+                        skipFocus = true;
+                        break;
+                    }
+                    throw err;
+                }
+            }
+            if (!skipFocus && texts.length) ablatedOutputs[focusIndex] = texts;
+        }
+        showLoading('Scoring samples (permutation test)…');
+        const response = await fetch('/api/ablation-score', {
+            method: 'POST',
+            headers: getApiHeaders(),
+            body: JSON.stringify(getApiBody({
+                prompt: prompt,
+                foci: fociList,
+                baseline_outputs: baselineOutputs,
+                ablated_outputs: ablatedOutputs,
+                temperature: cfg.temperature,
+                input_tokens: inputTokens,
+                output_tokens: outputTokens
+            })),
+            signal: controller.signal
+        });
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(data.error || 'Failed to score ablation samples');
+        }
+        return data;
+    } finally {
+        clearTimeout(timeoutId);
+    }
+}
+
 if (runAblationBtn) {
     runAblationBtn.addEventListener('click', async () => {
         const prompt = promptInput.value.trim();
@@ -2602,31 +2712,7 @@ if (runAblationBtn) {
         );
         
         try {
-            // Create AbortController for timeout (10 minutes = 600000ms)
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 600000); // 10 minutes
-            
-            const response = await fetch('/api/ablation-analysis', {
-                method: 'POST',
-                headers: getApiHeaders(),
-                body: JSON.stringify(getApiBody({
-                    prompt: prompt,
-                    foci: foci,
-                    n_baseline: cfg.n_baseline,
-                    n_ablated: cfg.n_ablated,
-                    temperature: cfg.temperature
-                })),
-                signal: controller.signal
-            });
-            
-            clearTimeout(timeoutId);
-            
-            const data = await response.json();
-            
-            if (!response.ok) {
-                throw new Error(data.error || 'Failed to run ablation analysis');
-            }
-            
+            const data = await runPacedAblation(prompt, foci, cfg);
             renderAblationResults(data);
             
         } catch (error) {
