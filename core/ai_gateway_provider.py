@@ -30,6 +30,36 @@ def _check_requests():
     return _requests_available
 
 
+CHAT_MAX_ATTEMPTS = 4
+MAX_429_WAIT_SECONDS = 30.0
+
+
+def retry_after_seconds(response, fallback: float) -> float:
+    """Wait from retry-after-ms / Retry-After when in (0, 60]s, else fallback. Cap at 30s."""
+    headers = getattr(response, 'headers', None) or {}
+    seconds = None
+    ms_raw = headers.get('retry-after-ms')
+    if ms_raw not in (None, ''):
+        try:
+            seconds = float(ms_raw) / 1000.0
+        except (TypeError, ValueError):
+            seconds = None
+    if seconds is None:
+        raw = headers.get('retry-after')
+        if raw not in (None, ''):
+            try:
+                seconds = float(raw)
+            except (TypeError, ValueError):
+                seconds = None
+    if seconds is not None and 0 < seconds <= 60:
+        return min(seconds, MAX_429_WAIT_SECONDS)
+    try:
+        fallback = float(fallback)
+    except (TypeError, ValueError):
+        fallback = 2.0
+    return min(max(fallback, 1.0), MAX_429_WAIT_SECONDS)
+
+
 class AIGatewayProvider(LLMProvider):
     """
     Vercel AI Gateway provider that routes requests through Vercel's gateway.
@@ -122,29 +152,22 @@ class AIGatewayProvider(LLMProvider):
         if vercel_project_id:
             headers['X-Vercel-Project-ID'] = vercel_project_id
         
-        # Retry configuration
-        # NOTE: Vercel serverless function limits:
-        # - Free: 10 seconds
-        # - Pro: 60 seconds  
-        # - Enterprise: 300 seconds (5 minutes)
-        # - Fluid Compute: up to 14 minutes on paid plans
-        # 
-        # IMPORTANT: We don't retry on timeouts to avoid wasting tokens.
-        # If a request times out, it may have already consumed tokens.
-        # Only retry on connection errors (which don't consume tokens).
-        max_retries = 2  # Retry only for connection errors (not timeouts)
-        base_timeout = 120  # Increased base timeout to 120 seconds for slow models
-        retry_delays = [2, 5]  # Exponential backoff delays in seconds
+        # Retry 429 / connection / 5xx here only. Callers must not stack another
+        # 429 loop on top — that turns one limit into a burst of extra 429s.
+        # Do not retry timeouts: the request may already have consumed tokens.
+        max_attempts = CHAT_MAX_ATTEMPTS
+        base_timeout = 120
         
-        for attempt in range(max_retries):
+        for attempt in range(max_attempts):
             try:
-                # Increase timeout for retries (some models are slower)
-                timeout = base_timeout + (attempt * 30)  # 120s, 150s, 180s
-                
+                timeout = base_timeout + (attempt * 30)
                 if attempt > 0:
                     import sys
-                    print(f"Retry attempt {attempt + 1}/{max_retries} for {gateway_model} (timeout: {timeout}s)", file=sys.stderr)
-                    time.sleep(retry_delays[attempt - 1])
+                    print(
+                        f"Retry attempt {attempt + 1}/{max_attempts} for {gateway_model} "
+                        f"(timeout: {timeout}s)",
+                        file=sys.stderr,
+                    )
                 
                 response = requests.post(url, json=payload, headers=headers, timeout=timeout, stream=False)
                 
@@ -177,8 +200,9 @@ class AIGatewayProvider(LLMProvider):
                     
             except requests.exceptions.ConnectionError as e:
                 import sys
-                if attempt < max_retries - 1:
-                    print(f"Connection error (attempt {attempt + 1}/{max_retries}), will retry...", file=sys.stderr)
+                if attempt < max_attempts - 1:
+                    print(f"Connection error (attempt {attempt + 1}/{max_attempts}), will retry...", file=sys.stderr)
+                    time.sleep(2 * (2 ** attempt))
                     continue
                 else:
                     print(f"AI Gateway Connection Error: {str(e)}", file=sys.stderr)
@@ -235,21 +259,29 @@ class AIGatewayProvider(LLMProvider):
                     user_error_msg = "Service temporarily unavailable. Please try again in a moment. If the problem persists, please contact support."
                     raise Exception(user_error_msg)
                 elif error_code == 429:
-                    # Retry on rate limits with exponential backoff
-                    if attempt < max_retries - 1:
-                        import sys
-                        wait_time = 2 * (2 ** attempt)
-                        print(f"Rate limit exceeded (attempt {attempt + 1}/{max_retries}), waiting {wait_time}s before retry...", file=sys.stderr)
+                    if attempt < max_attempts - 1:
+                        wait_time = retry_after_seconds(
+                            e.response, fallback=min(30, 5 * (2 ** attempt))
+                        )
+                        print(
+                            f"Rate limit exceeded (attempt {attempt + 1}/{max_attempts}), "
+                            f"waiting {wait_time}s before retry...",
+                            file=sys.stderr,
+                        )
                         time.sleep(wait_time)
                         continue
                     raise Exception(
-                        "Rate limit exceeded. Please wait a few minutes and try again."
+                        "Rate limit exceeded. Please wait a minute and try again, "
+                        "or lower baseline/ablated sample counts."
                     )
                 elif error_code == 500 or error_code == 502 or error_code == 503:
-                    # Retry on server errors
-                    if attempt < max_retries - 1:
-                        import sys
-                        print(f"Server error {error_code} (attempt {attempt + 1}/{max_retries}), will retry...", file=sys.stderr)
+                    if attempt < max_attempts - 1:
+                        print(
+                            f"Server error {error_code} (attempt {attempt + 1}/{max_attempts}), "
+                            "will retry...",
+                            file=sys.stderr,
+                        )
+                        time.sleep(min(8, 2 * (2 ** attempt)))
                         continue
                     user_error_msg = "Service temporarily unavailable. Please try again in a moment. If the problem persists, please contact support."
                     raise Exception(user_error_msg)
@@ -260,8 +292,9 @@ class AIGatewayProvider(LLMProvider):
             except requests.exceptions.RequestException as e:
                 # Other network or connection errors (not timeout/connection/HTTP)
                 import sys
-                if attempt < max_retries - 1:
-                    print(f"Network error (attempt {attempt + 1}/{max_retries}), will retry...", file=sys.stderr)
+                if attempt < max_attempts - 1:
+                    print(f"Network error (attempt {attempt + 1}/{max_attempts}), will retry...", file=sys.stderr)
+                    time.sleep(2 * (2 ** attempt))
                     continue
                 else:
                     print(f"AI Gateway Network Error: {str(e)}", file=sys.stderr)

@@ -60,6 +60,11 @@ def batch_service(mock_provider, mock_embedding_service):
     )
 
 
+@pytest.fixture(autouse=True)
+def no_sleep(monkeypatch):
+    monkeypatch.setattr('services.batch_analysis_service.time.sleep', lambda *_a, **_k: None)
+
+
 def _user_contents(mock_provider):
     return [
         call.kwargs['messages'][0]['content']

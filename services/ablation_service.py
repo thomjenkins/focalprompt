@@ -23,6 +23,9 @@ from utils.permutation_test import (
     design_test_type,
 )
 
+# Space sequential completions so a 429 on sample 1 does not become a burst.
+SAMPLE_GAP_SECONDS = 1.5
+
 
 class AblationService:
     """Service for running ablation analysis."""
@@ -44,41 +47,20 @@ class AblationService:
         self.cost_calculator = cost_calculator or CostCalculator()
     
     def _complete(self, user_content: str, temperature: float) -> Dict:
-        max_retries = 3
-        retry_delay = 2
-        last_error = None
-        for attempt in range(max_retries):
-            try:
-                response = gateway_chat_completion(
-                    self.provider,
-                    self.model,
-                    self.provider_name,
-                    [{"role": "user", "content": user_content}],
-                    temperature=temperature,
-                )
-                if not response or not response.get('content'):
-                    raise Exception(
-                        "Model returned an empty response. "
-                        "Check model/provider selection and try again."
-                    )
-                return response
-            except Exception as e:
-                last_error = e
-                error_msg = str(e).lower()
-                if 'rate limit' in error_msg or '429' in error_msg or 'too many requests' in error_msg:
-                    if attempt < max_retries - 1:
-                        wait_time = retry_delay * (2 ** attempt)
-                        time.sleep(wait_time)
-                        continue
-                    raise Exception(
-                        f"Rate limit exceeded after {max_retries} retries. "
-                        "Please wait a few minutes and try again with fewer samples."
-                    ) from e
-                raise
-        raise Exception(
-            "Failed to generate output after retries. "
-            "Check model/provider selection, rate limits, and Vercel function timeouts."
-        ) from last_error
+        # Gateway already retries 429s. Do not stack another loop here.
+        response = gateway_chat_completion(
+            self.provider,
+            self.model,
+            self.provider_name,
+            [{"role": "user", "content": user_content}],
+            temperature=temperature,
+        )
+        if not response or not response.get('content'):
+            raise Exception(
+                "Model returned an empty response. "
+                "Check model/provider selection and try again."
+            )
+        return response
     
     def _sample_outputs(self, prompt: str, n: int, temperature: float):
         outputs = []
@@ -86,7 +68,7 @@ class AblationService:
         out_tok = 0
         for i in range(n):
             if i > 0:
-                time.sleep(0.5)
+                time.sleep(SAMPLE_GAP_SECONDS)
             response = self._complete(prompt, temperature)
             outputs.append(response['content'])
             if 'usage' in response:
