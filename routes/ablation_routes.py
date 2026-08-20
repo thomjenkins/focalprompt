@@ -6,45 +6,29 @@ Ablation analysis route handlers.
 from flask import Blueprint, request, jsonify
 from datetime import datetime
 import uuid
-import os
 from services.assessor_factory import get_assessor
 from services.ablation_service import AblationService
 from services.embedding_service import EmbeddingService
 from services.cost_calculator import CostCalculator
 from services.checkpoint_service import CheckpointService
-from services.usage_service import UsageService
-from services.billing_service import BillingService
-from services.database import Database
-from middleware.auth import optional_auth
 from core.ai_gateway_provider import RateLimitError
-from utils.model_provider import resolve_model_and_provider
+from utils.request_inference import request_inference_fields
 
 
 ablation_bp = Blueprint('ablation', __name__)
 
-# Initialize services
-db = Database()
-billing_service = BillingService(db)
-usage_service = UsageService(db, billing_service)
 
-
-def get_api_key_and_model(data):
-    """Extract model and provider from request data. API key no longer needed (uses AI Gateway)."""
-    model = data.get('model', 'gpt-4o-mini')
-    provider = data.get('provider', 'openai')
-    model, provider = resolve_model_and_provider(model, provider)
-    return None, model, provider
-
-
-def _ablation_service(model, provider):
-    assessor = get_assessor(api_key=None, model=model, provider=provider)
+def _ablation_service(data):
+    fields = request_inference_fields(data)
+    assessor = get_assessor(data=fields)
+    api_key = fields.get('api_key')
     return AblationService(
         assessor.provider,
-        model,
-        api_key=None,
+        fields['model'],
+        api_key=api_key,
         embedding_service=EmbeddingService(),
         cost_calculator=CostCalculator(),
-        provider_name=getattr(assessor, 'provider_name', provider),
+        provider_name=getattr(assessor, 'provider_name', fields['provider']),
     )
 
 
@@ -59,7 +43,6 @@ def _rate_limit_response(exc):
 
 
 @ablation_bp.route('/api/ablation-analysis', methods=['POST'])
-@optional_auth
 def ablation_analysis():
     """Run ablation analysis to determine focus influence."""
     try:
@@ -81,16 +64,7 @@ def ablation_analysis():
         if not foci_list or len(foci_list) == 0:
             return jsonify({'error': 'Foci are required for ablation analysis'}), 400
         
-        # Check usage limits if authenticated
-        if request.user:
-            endpoint = '/api/ablation-analysis'
-            allowed, error_msg = usage_service.check_limit(request.user['id'], endpoint)
-            if not allowed:
-                return jsonify({'error': error_msg}), 429
-        
-        # Get model and provider from request (API key no longer needed - uses AI Gateway)
-        _, model, provider = get_api_key_and_model(data)
-        ablation_service = _ablation_service(model, provider)
+        ablation_service = _ablation_service(data)
         
         # Run ablation
         result_data = ablation_service.run_ablation(
@@ -118,12 +92,6 @@ def ablation_analysis():
         }
         checkpoint_service.save_checkpoint(session_id, checkpoint_data, 'single_ablation')
         
-        # Record usage if authenticated
-        if request.user:
-            tokens = result_data.get('cost_breakdown', {}).get('total_tokens', 0)
-            cost = result_data.get('cost_breakdown', {}).get('total_cost', 0.0)
-            usage_service.record_usage(request.user['id'], '/api/ablation-analysis', tokens, cost)
-        
         return jsonify(result_data)
         
     except RateLimitError as e:
@@ -136,7 +104,6 @@ def ablation_analysis():
 
 
 @ablation_bp.route('/api/ablation-sample', methods=['POST'])
-@optional_auth
 def ablation_sample():
     """One chat completion for client-paced ablation sampling."""
     try:
@@ -148,8 +115,7 @@ def ablation_sample():
         temperature = data.get('temperature', 0.7)
         if not prompt:
             return jsonify({'error': 'Prompt is required'}), 400
-        _, model, provider = get_api_key_and_model(data)
-        service = _ablation_service(model, provider)
+        service = _ablation_service(data)
         result = service.sample_completion(
             prompt,
             foci_list,
@@ -168,7 +134,6 @@ def ablation_sample():
 
 
 @ablation_bp.route('/api/ablation-score', methods=['POST'])
-@optional_auth
 def ablation_score():
     """Permutation test on samples collected by /api/ablation-sample."""
     try:
@@ -187,14 +152,7 @@ def ablation_score():
             return jsonify({'error': 'Prompt is required'}), 400
         if not foci_list:
             return jsonify({'error': 'Foci are required for ablation analysis'}), 400
-        if request.user:
-            allowed, error_msg = usage_service.check_limit(
-                request.user['id'], '/api/ablation-analysis'
-            )
-            if not allowed:
-                return jsonify({'error': error_msg}), 429
-        _, model, provider = get_api_key_and_model(data)
-        service = _ablation_service(model, provider)
+        service = _ablation_service(data)
         result_data = service.score_from_samples(
             prompt,
             foci_list,
@@ -220,14 +178,6 @@ def ablation_score():
             },
             'single_ablation',
         )
-        if request.user:
-            tokens = result_data.get('cost_breakdown', {}).get('total_tokens', 0)
-            cost = result_data.get('cost_breakdown', {}).get('total_cost', 0.0)
-            usage_service.record_usage(
-                request.user['id'], '/api/ablation-analysis', tokens, cost
-            )
         return jsonify(result_data)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
-

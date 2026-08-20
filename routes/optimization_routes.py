@@ -4,22 +4,12 @@ Optimization route handlers.
 """
 
 from flask import Blueprint, request, jsonify
-import os
 from services.assessor_factory import get_assessor
 from services.optimization_service import OptimizationService
 from services.cost_calculator import CostCalculator
-from utils.model_provider import resolve_model_and_provider
+from utils.request_inference import request_inference_fields
 
 optimization_bp = Blueprint('optimization', __name__)
-
-
-def get_api_key_and_model(data):
-    """Extract API key, model, and provider from request data, with fallbacks."""
-    api_key = data.get('api_key') or os.getenv("OPENAI_API_KEY")
-    model = data.get('model', 'gpt-4o')
-    provider = data.get('provider', 'openai')
-    model, provider = resolve_model_and_provider(model, provider)
-    return api_key, model, provider
 
 
 @optimization_bp.route('/api/analyze-prompt-optimization', methods=['POST'])
@@ -34,15 +24,13 @@ def analyze_prompt_optimization():
         foci_list = data.get('foci', [])
         original_prompt = data.get('original_prompt', '')
         
-        # Get model and provider from request (API key no longer needed - uses AI Gateway)
-        _, model, provider = get_api_key_and_model(data)
-        
-        assessor = get_assessor(api_key=None, model=model, provider=provider)
+        fields = request_inference_fields(data)
+        assessor = get_assessor(data=fields)
         cost_calculator = CostCalculator()
         
         service = OptimizationService(
             assessor.provider,
-            model,
+            fields['model'],
             cost_calculator
         )
         
@@ -59,4 +47,3 @@ def analyze_prompt_optimization():
         
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-

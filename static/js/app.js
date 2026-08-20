@@ -360,24 +360,14 @@ function updateModelSelector(provider) {
 
 // Helper function to get API request headers
 function getApiHeaders() {
-    const headers = {
+    return {
         'Content-Type': 'application/json',
     };
-    
-    // Add session ID if user is logged in
-    const sessionId = localStorage.getItem('session_id');
-    if (sessionId) {
-        headers['X-Session-ID'] = sessionId;
-    }
-    
-    return headers;
 }
 
-// Helper function to get API request body with model and provider
-// API key no longer needed - we use AI Gateway now
+// Helper: request body with selected model/provider (BYO credentials live server-side via env)
 function getApiBody(additionalData = {}) {
     const body = { ...additionalData };
-    // API key removed - using AI Gateway
     body.model = userModel;
     body.provider = userProvider;
     return body;
@@ -1082,34 +1072,9 @@ detectFociBtn.addEventListener('click', async () => {
             const cost = estimate.total_cost || 0;
             
             if (cost > 0) {
-                // Check credit balance if logged in
-                const sessionId = localStorage.getItem('session_id');
-                if (sessionId) {
-                    try {
-                        const creditResponse = await fetch('/api/credit/balance', {
-                            headers: { 'X-Session-ID': sessionId }
-                        });
-                        if (creditResponse.ok) {
-                            const creditData = await creditResponse.json();
-                            const balance = creditData.balance || 0;
-                            
-                            if (balance < cost) {
-                                showErrorModal(
-                                    `Insufficient credit.\n\n` +
-                                    `You have: $${balance.toFixed(2)}\n` +
-                                    `Required: $${cost.toFixed(4)}\n\n` +
-                                    `Please top up your account to continue.`
-                                );
-                                return;
-                            }
-                        }
-                    } catch (error) {
-                        console.warn('Could not check credit balance:', error);
-                    }
-                }
                 
                 // Show action-specific cost estimate
-                const confirmMsg = `Auto-Detect Foci\n\nEstimated Cost: $${cost.toFixed(4)}\n\nThis will use credit from your account.\n\nProceed?`;
+                const confirmMsg = `Auto-Detect Foci\n\nEstimated Cost: $${cost.toFixed(4)}\n\nYour configured provider will be billed for these tokens.\n\nProceed?`;
                 if (!confirm(confirmMsg)) {
                     return;
                 }
@@ -1843,32 +1808,6 @@ assessBtn.addEventListener('click', async () => {
             const cost = estimate.total_cost || 0;
             
             if (cost > 0) {
-                // Check credit balance if logged in
-                const sessionId = localStorage.getItem('session_id');
-                if (sessionId) {
-                    try {
-                        const creditResponse = await fetch('/api/credit/balance', {
-                            headers: { 'X-Session-ID': sessionId }
-                        });
-                        if (creditResponse.ok) {
-                            const creditData = await creditResponse.json();
-                            const balance = creditData.balance || 0;
-                            
-                            if (balance < cost) {
-                                showErrorModal(
-                                    `Insufficient credit.\n\n` +
-                                    `You have: $${balance.toFixed(2)}\n` +
-                                    `Required: $${cost.toFixed(4)}\n\n` +
-                                    `Please top up your account to continue.`
-                                );
-                                return;
-                            }
-                        }
-                    } catch (error) {
-                        console.warn('Could not check credit balance:', error);
-                        // Continue anyway - don't block the request
-                    }
-                }
             }
         }
     } catch (error) {
@@ -2276,32 +2215,6 @@ if (rewritePromptBtn) {
                 const cost = estimate.total_cost || 0;
                 
                 if (cost > 0) {
-                    // Check credit balance if logged in
-                    const sessionId = localStorage.getItem('session_id');
-                    if (sessionId) {
-                        try {
-                            const creditResponse = await fetch('/api/credit/balance', {
-                                headers: { 'X-Session-ID': sessionId }
-                            });
-                            if (creditResponse.ok) {
-                                const creditData = await creditResponse.json();
-                                const balance = creditData.balance || 0;
-                                
-                                if (balance < cost) {
-                                    showErrorModal(
-                                        `Insufficient credit.\n\n` +
-                                        `You have: $${balance.toFixed(2)}\n` +
-                                        `Required: $${cost.toFixed(4)}\n\n` +
-                                        `Please top up your account to continue.`
-                                    );
-                                    return;
-                                }
-                            }
-                        } catch (error) {
-                            console.warn('Could not check credit balance:', error);
-                            // Continue anyway - don't block the request
-                        }
-                    }
                 }
             }
         } catch (error) {
@@ -2381,32 +2294,6 @@ if (generateFocusedOutputBtn) {
                 const cost = estimate.total_cost || 0;
                 
                 if (cost > 0) {
-                    // Check credit balance if logged in
-                    const sessionId = localStorage.getItem('session_id');
-                    if (sessionId) {
-                        try {
-                            const creditResponse = await fetch('/api/credit/balance', {
-                                headers: { 'X-Session-ID': sessionId }
-                            });
-                            if (creditResponse.ok) {
-                                const creditData = await creditResponse.json();
-                                const balance = creditData.balance || 0;
-                                
-                                if (balance < cost) {
-                                    showErrorModal(
-                                        `Insufficient credit.\n\n` +
-                                        `You have: $${balance.toFixed(2)}\n` +
-                                        `Required: $${cost.toFixed(4)}\n\n` +
-                                        `Please top up your account to continue.`
-                                    );
-                                    return;
-                                }
-                            }
-                        } catch (error) {
-                            console.warn('Could not check credit balance:', error);
-                            // Continue anyway - don't block the request
-                        }
-                    }
                 }
             }
         } catch (error) {
@@ -5787,337 +5674,4 @@ if (exportBatchAgentResultsBtn) {
 window.removePair = removePair;
 window.removeBatchFocus = removeBatchFocus;
 
-// Authentication handlers
-async function checkAuthStatus() {
-    const loginBtn = document.getElementById('login-btn');
-    const logoutBtn = document.getElementById('logout-btn');
-    const userInfo = document.getElementById('user-info');
-    
-    const sessionId = localStorage.getItem('session_id');
-    
-    if (!sessionId) {
-        // Not logged in
-        if (loginBtn) loginBtn.style.display = 'inline-block';
-        if (logoutBtn) logoutBtn.style.display = 'none';
-        if (userInfo) userInfo.style.display = 'none';
-        return;
-    }
-    
-    // Verify session
-    try {
-        const response = await fetch('/api/auth/me', {
-            headers: {
-                'X-Session-ID': sessionId
-            }
-        });
-        
-        // Check content-type before parsing JSON
-        const contentType = response.headers.get('content-type');
-        if (!contentType || !contentType.includes('application/json')) {
-            // Server returned HTML or other non-JSON, clear session
-            localStorage.removeItem('session_id');
-            localStorage.removeItem('user');
-            if (loginBtn) loginBtn.style.display = 'inline-block';
-            if (logoutBtn) logoutBtn.style.display = 'none';
-            if (userInfo) userInfo.style.display = 'none';
-            return;
-        }
-        
-        if (response.ok) {
-            const user = await response.json();
-            // Update localStorage with fresh user data
-            localStorage.setItem('user', JSON.stringify(user));
-            
-            // Show logged in state
-            if (loginBtn) loginBtn.style.display = 'none';
-            if (logoutBtn) logoutBtn.style.display = 'inline-block';
-            const accountBtn = document.getElementById('account-btn');
-            if (accountBtn) accountBtn.style.display = 'inline-block';
-            const topUpBtn = document.getElementById('top-up-btn');
-            if (topUpBtn) topUpBtn.style.display = 'inline-block';
-            if (userInfo) {
-                userInfo.textContent = `${user.email} (${user.tier})`;
-                userInfo.style.display = 'inline-block';
-                userInfo.title = `Tier: ${user.tier}, Status: ${user.subscription_status}`;
-            }
-            
-            // Load credit balance
-            loadCreditBalance();
-        } else {
-            // Session invalid
-            localStorage.removeItem('session_id');
-            localStorage.removeItem('user');
-            if (loginBtn) loginBtn.style.display = 'inline-block';
-            if (logoutBtn) logoutBtn.style.display = 'none';
-            const accountBtn = document.getElementById('account-btn');
-            if (accountBtn) accountBtn.style.display = 'none';
-            const topUpBtn = document.getElementById('top-up-btn');
-            if (topUpBtn) topUpBtn.style.display = 'none';
-            const creditBalance = document.getElementById('credit-balance');
-            if (creditBalance) creditBalance.style.display = 'none';
-            if (userInfo) userInfo.style.display = 'none';
-        }
-    } catch (error) {
-        console.error('Session check error:', error);
-        // On error, assume not logged in
-        if (loginBtn) loginBtn.style.display = 'inline-block';
-        if (logoutBtn) logoutBtn.style.display = 'none';
-        if (userInfo) userInfo.style.display = 'none';
-    }
-}
-
-// Credit balance functions
-async function loadCreditBalance() {
-    const creditBalanceEl = document.getElementById('credit-balance');
-    const creditAmountEl = document.getElementById('credit-balance-amount');
-    
-    if (!creditBalanceEl || !creditAmountEl) return;
-    
-    const sessionId = localStorage.getItem('session_id');
-    if (!sessionId) {
-        creditBalanceEl.style.display = 'none';
-        return;
-    }
-    
-    try {
-        const response = await fetch('/api/credit/balance', {
-            headers: {
-                'X-Session-ID': sessionId
-            }
-        });
-        
-        if (response.ok) {
-            const data = await response.json();
-            creditAmountEl.textContent = `$${data.balance.toFixed(2)}`;
-            creditBalanceEl.style.display = 'inline-block';
-            
-            // Update color based on balance
-            if (data.balance < 1.0) {
-                creditBalanceEl.style.background = '#fff3cd';
-                creditBalanceEl.style.color = '#856404';
-            } else {
-                creditBalanceEl.style.background = '#e8f4f8';
-                creditBalanceEl.style.color = 'var(--primary-color)';
-            }
-        } else {
-            creditBalanceEl.style.display = 'none';
-        }
-    } catch (error) {
-        console.error('Error loading credit balance:', error);
-        creditBalanceEl.style.display = 'none';
-    }
-}
-
-// Account modal functions
-function showAccountModal() {
-    const modal = document.getElementById('account-modal');
-    if (!modal) return;
-    
-    modal.style.display = 'flex';
-    document.body.style.overflow = 'hidden';
-    
-    // Load account data
-    loadAccountData();
-}
-
-function hideAccountModal() {
-    const modal = document.getElementById('account-modal');
-    if (modal) {
-        modal.style.display = 'none';
-        document.body.style.overflow = '';
-    }
-}
-
-async function loadAccountData() {
-    const sessionId = localStorage.getItem('session_id');
-    if (!sessionId) {
-        hideAccountModal();
-        return;
-    }
-    
-    try {
-        // Get user info
-        const userResponse = await fetch('/api/auth/me', {
-            headers: { 'X-Session-ID': sessionId }
-        });
-        
-        if (userResponse.ok) {
-            const user = await userResponse.json();
-            document.getElementById('account-email').textContent = user.email;
-            document.getElementById('account-tier').textContent = user.tier.charAt(0).toUpperCase() + user.tier.slice(1);
-            document.getElementById('account-status').textContent = user.subscription_status;
-        }
-        
-        // Get usage summary
-        const usageResponse = await fetch('/api/usage/summary', {
-            headers: { 'X-Session-ID': sessionId }
-        });
-        
-        // Get billing info
-        const billingResponse = await fetch('/api/usage/billing', {
-            headers: { 'X-Session-ID': sessionId }
-        });
-        
-        const usageDiv = document.getElementById('account-usage');
-        
-        if (usageResponse.ok) {
-            const usage = await usageResponse.json();
-            
-            if (usage && usage.by_endpoint) {
-                let html = '<div style="display: grid; gap: 8px; margin-bottom: 16px;">';
-                html += '<h5 style="margin: 0 0 8px 0;">API Usage</h5>';
-                for (const [endpoint, data] of Object.entries(usage.by_endpoint)) {
-                    const count = data.count || 0;
-                    const tokens = data.tokens || 0;
-                    html += `<div style="display: flex; justify-content: space-between; padding: 8px; background: var(--bg-color); border-radius: 4px;">
-                        <span>${endpoint.replace('/api/', '')}</span>
-                        <span><strong>${count} requests</strong> (${tokens.toLocaleString()} tokens)</span>
-                    </div>`;
-                }
-                html += '</div>';
-                
-                // Add billing info if available
-                if (billingResponse.ok) {
-                    const billing = await billingResponse.json();
-                    html += '<div style="border-top: 1px solid var(--border-color); padding-top: 16px;">';
-                    html += '<h5 style="margin: 0 0 8px 0;">Billing</h5>';
-                    html += `<div style="display: grid; gap: 8px;">`;
-                    html += `<div style="display: flex; justify-content: space-between; padding: 8px; background: var(--bg-color); border-radius: 4px;">
-                        <span>Total Spent</span>
-                        <span><strong>$${billing.total_spent_dollars.toFixed(2)}</strong></span>
-                    </div>`;
-                    if (billing.pending_charges_cents > 0) {
-                        html += `<div style="display: flex; justify-content: space-between; padding: 8px; background: #fff3cd; border-radius: 4px;">
-                            <span>Pending Charges</span>
-                            <span><strong>$${billing.pending_charges_dollars.toFixed(2)}</strong></span>
-                        </div>`;
-                    }
-                    html += `<div style="display: flex; justify-content: space-between; padding: 8px; background: var(--bg-color); border-radius: 4px;">
-                        <span>Total Charges</span>
-                        <span><strong>${billing.total_charges}</strong> (${billing.successful_charges} successful)</span>
-                    </div>`;
-                    html += '</div></div>';
-                }
-                
-                usageDiv.innerHTML = html;
-            } else {
-                usageDiv.innerHTML = '<p style="color: #666;">No usage data available.</p>';
-            }
-        } else {
-            usageDiv.innerHTML = '<p style="color: #666;">Unable to load usage data.</p>';
-        }
-    } catch (error) {
-        console.error('Error loading account data:', error);
-        document.getElementById('account-usage').innerHTML = '<p style="color: #dc3545;">Error loading usage data.</p>';
-    }
-}
-
-document.addEventListener('DOMContentLoaded', () => {
-    const loginBtn = document.getElementById('login-btn');
-    const logoutBtn = document.getElementById('logout-btn');
-    const accountBtn = document.getElementById('account-btn');
-    const userInfo = document.getElementById('user-info');
-    
-    // Check auth status on page load
-    checkAuthStatus();
-    
-    // Check for payment success/cancel in URL
-    const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.get('payment_success') === 'true') {
-        showSuccess('Payment successful! Credit has been added to your account.');
-        // Refresh credit balance
-        setTimeout(() => {
-            loadCreditBalance();
-            // Clean URL
-            window.history.replaceState({}, document.title, window.location.pathname);
-        }, 1000);
-    } else if (urlParams.get('payment_canceled') === 'true') {
-        showErrorModal('Payment was canceled.');
-        // Clean URL
-        window.history.replaceState({}, document.title, window.location.pathname);
-    }
-    
-    // Login button handler
-    if (loginBtn) {
-        loginBtn.addEventListener('click', () => {
-            window.location.href = '/login';
-        });
-    }
-    
-    // Account button handler
-    if (accountBtn) {
-        accountBtn.addEventListener('click', showAccountModal);
-    }
-    
-    // User info click handler
-    if (userInfo) {
-        userInfo.addEventListener('click', showAccountModal);
-        userInfo.style.cursor = 'pointer';
-    }
-    
-    // Logout button handler
-    if (logoutBtn) {
-        logoutBtn.addEventListener('click', async () => {
-            const sessionId = localStorage.getItem('session_id');
-            
-            if (sessionId) {
-                try {
-                    await fetch('/api/auth/logout', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'X-Session-ID': sessionId
-                        },
-                        body: JSON.stringify({ session_id: sessionId })
-                    });
-                } catch (error) {
-                    console.error('Logout error:', error);
-                }
-            }
-            
-            // Clear local storage
-            localStorage.removeItem('session_id');
-            localStorage.removeItem('user');
-            
-            // Reload page
-            window.location.reload();
-        });
-    }
-    
-    // Account modal event listeners
-    const accountModal = document.getElementById('account-modal');
-    const accountModalClose = document.getElementById('account-modal-close');
-    const accountModalOk = document.getElementById('account-modal-ok');
-    const upgradeBtn = document.getElementById('upgrade-btn');
-    
-    if (accountModalClose) {
-        accountModalClose.addEventListener('click', hideAccountModal);
-    }
-    
-    if (accountModalOk) {
-        accountModalOk.addEventListener('click', hideAccountModal);
-    }
-    
-    if (upgradeBtn) {
-        upgradeBtn.addEventListener('click', () => {
-            // TODO: Implement Stripe checkout
-            showErrorModal('Upgrade functionality coming soon!');
-        });
-    }
-    
-    // Close account modal when clicking overlay
-    if (accountModal) {
-        const overlay = accountModal.querySelector('.modal-overlay');
-        if (overlay) {
-            overlay.addEventListener('click', hideAccountModal);
-        }
-        
-        // Close on Escape key
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape' && accountModal.style.display !== 'none') {
-                hideAccountModal();
-            }
-        });
-    }
-});
-
+// Account / credit / Stripe UI removed — local toolkit uses BYO inference credentials.

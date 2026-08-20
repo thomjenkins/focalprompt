@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% if experiment %}{{ experiment.title }} — {% endif %}Focal Prompt experiments</title>
+    <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='favicon-32x32.png') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        .exp { max-width: 960px; margin: 0 auto; padding: 32px 20px 64px; }
+        .exp table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 0.95rem; }
+        .exp th, .exp td { border: 1px solid var(--border-color); padding: 10px 12px; text-align: left; vertical-align: top; }
+        .exp th { background: #f6f8fa; }
+        .exp .sig { color: #0a7a3e; font-weight: 600; }
+        .exp .nav { margin-bottom: 24px; display: flex; gap: 12px; flex-wrap: wrap; }
+        .exp pre.prompt { white-space: pre-wrap; background: #f6f8fa; padding: 16px; border-radius: 6px; border: 1px solid var(--border-color); }
+        .exp .frame { background: #e8f4f8; border-left: 4px solid #0c5460; padding: 12px 16px; margin: 12px 0; }
+    </style>
+</head>
+<body>
+    <div class="exp">
+        <div class="nav">
+            <a href="{{ url_for('landing') }}">Home</a>
+            <a href="{{ url_for('list_experiments') }}">Experiments</a>
+            <a href="{{ url_for('lab') }}">Analysis lab</a>
+        </div>
+
+        {% if not experiment %}
+        <h1>Precomputed experiments</h1>
+        <p>Browse published runs without spending inference credits. Reproduce locally with your own credentials.</p>
+        <ul>
+            {% for item in experiments %}
+            <li style="margin: 12px 0;">
+                <a href="{{ url_for('show_experiment', experiment_id=item.id) }}"><strong>{{ item.title }}</strong></a>
+                <div style="color:#555; margin-top:4px;">{{ item.description }}</div>
+            </li>
+            {% else %}
+            <li>No experiments found under <code>examples/canonical/</code>.</li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <h1>{{ experiment.title }}</h1>
+        <p>{{ experiment.description }}</p>
+
+        <div class="frame">
+            <strong>A / B / C framing</strong>
+            <ul style="margin: 8px 0 0 18px;">
+                <li>{{ experiment.framing.experiment_a }}</li>
+                <li>{{ experiment.framing.experiment_b }}</li>
+                <li>{{ experiment.framing.experiment_c }}</li>
+            </ul>
+        </div>
+
+        <h2>Prompt</h2>
+        <pre class="prompt">{{ experiment.prompt }}</pre>
+
+        <h2>Experiment C — Reported vs revealed</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Focus</th>
+                    <th>Reported score</th>
+                    <th>T<sub>obs</sub></th>
+                    <th>q</th>
+                    <th>Significant?</th>
+                    <th>Reading</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in experiment.comparison.rows %}
+                <tr>
+                    <td>{{ row.focus }}</td>
+                    <td>{{ row.reported_score if row.reported_score is not none else '—' }}</td>
+                    <td>{% if row.t_obs is not none %}{{ '%.4f'|format(row.t_obs) }}{% else %}—{% endif %}</td>
+                    <td>{% if row.q_value is not none %}{{ '%.3f'|format(row.q_value) }}{% else %}—{% endif %}</td>
+                    <td class="{% if row.is_significant %}sig{% endif %}">{{ 'yes' if row.is_significant else 'no' }}</td>
+                    <td>{{ row.reading }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <h2>Meta</h2>
+        <p style="color:#555; font-size:0.95rem;">
+            Model {{ experiment.meta.model }} ({{ experiment.meta.provider }}) ·
+            T={{ experiment.meta.temperature }} ·
+            n<sub>baseline</sub>={{ experiment.meta.n_baseline }} ·
+            n<sub>ablated</sub>={{ experiment.meta.n_ablated }} ·
+            α={{ experiment.meta.alpha }}
+        </p>
+        <p style="color:#666; font-size:0.9rem;">{{ experiment.meta.note }}</p>
+        {% endif %}
+    </div>
+</body>
+</html>

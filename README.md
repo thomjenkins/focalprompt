@@ -1,45 +1,130 @@
-# FocalPrompt
+# Focal Prompt
 
-FocalPrompt is a research prototype that measures **behavioural sensitivity**: whether deleting a tagged span of a prompt (a *focus*) shifts a language model's outputs in semantic embedding space. It samples the original prompt and each ablated prompt, compares the two clouds of embeddings with a permutation test, and reports which deletions produced a detectable shift after false-discovery-rate correction.
+Open-source research toolkit for studying how AI systems **allocate attention** and **respond to their informational environment** — the behavioural ecology of language models.
 
-## What it does not do
+Focal Prompt decomposes a prompt into *foci*, then compares:
 
-FocalPrompt detects whether removing each focus shifts the model's behaviour in semantic embedding space. It does not measure correctness, quality, or safety, and it does not tell you what to delete. A non-significant result means no shift was detected at this sample size — not that the text is inert, and not a recommendation. Short structural instructions (output formats, escalation rules, guardrails) can matter a great deal while barely moving embeddings.
+| Lens | Name | What it measures |
+|------|------|------------------|
+| **A** | Reported focus | Model self-assessment of how a *single completion* attended to each focus (**not** transformer attention weights) |
+| **B** | Perturbation sensitivity | Whether *deleting* each verified span shifts outputs in embedding space (permutation test + Benjamini–Hochberg FDR) |
+| **C** | Reported vs revealed | Side-by-side comparison of A and B on the same foci |
+
+It does **not** score correctness, quality, or safety, and a non-significant ablation is not a licence to delete text.
 
 ## Status
 
-Research prototype. Results hold for the model, temperature, and surrounding prompt you actually ran. Schema fields such as `influence` remain for compatibility; they are the observed centroid distance \(T_{\mathrm{obs}}\), not a standalone importance score.
+Research toolkit + public methodology demo. Schema fields such as `influence` remain for compatibility; they are the observed centroid distance \(T_{\mathrm{obs}}\), not a standalone importance score.
 
-## Quickstart
+## Install
 
 ```bash
 python3 -m venv venv
-source venv/bin/activate   # Windows: venv\Scripts\activate
+source venv/bin/activate
 pip install -r requirements.txt
-export OPENAI_API_KEY="your-key"   # or AI_GATEWAY_API_KEY
-python app_new.py
+# optional editable install for the CLI:
+pip install -e .
 ```
 
-Open `http://127.0.0.1:5000`.
+## Credentials (BYO)
 
-1. Paste a prompt and tag it into foci (auto-detect or manual). Aim for span-accurate coverage of the original text.
-2. Optionally generate or paste an output and run **Assess Focus** (attention scoring; separate from sensitivity).
-3. Run **Ablation Analysis**. Defaults: 10 baseline samples, 5 ablated samples per tested focus, temperature 0.7, Benjamini–Hochberg \(\alpha = 0.05\).
+Inference is **never** assumed to be paid by the maintainers.
 
-Batch analysis repeats the same per-pair experiment. Dynamic slots (chat, retrieved context) are reported as excluded, not tested.
+Preferred (multi-model via [Vercel AI Gateway](https://vercel.com/docs/ai-gateway)):
+
+```bash
+export AI_GATEWAY_API_KEY="…"
+```
+
+Direct providers:
+
+```bash
+export OPENAI_API_KEY="…"       # or ANTHROPIC_API_KEY / GOOGLE_API_KEY / XAI_API_KEY
+export FOCALPROMPT_BACKEND=direct   # optional; Gateway is used automatically when AI_GATEWAY_API_KEY is set
+```
+
+OpenAI-compatible local servers (Ollama, LM Studio, vLLM, …):
+
+```bash
+export FOCALPROMPT_BACKEND=openai_compatible
+export FOCALPROMPT_BASE_URL="http://127.0.0.1:11434/v1"
+export OPENAI_API_KEY="ollama"   # if required by the server
+```
+
+## Quickstart
+
+**Web UI**
+
+```bash
+python app_new.py
+# or: focalprompt ui --port 5001
+```
+
+Open `http://127.0.0.1:5001` (local toolkit). On a hosted deploy with `FOCALPROMPT_HOSTED_MODE=1`, `/` is the research landing page and `/lab` is the analysis UI.
+
+**CLI / Python**
+
+```bash
+focalprompt foci prompt.txt --model gpt-4o-mini
+focalprompt analyze prompt.txt --completion out.txt -o result.json
+```
+
+```python
+from focalprompt import analyze
+result = analyze("You are…", output="…", model="gpt-4o-mini")
+```
+
+## Precomputed experiment
+
+Browse [examples/canonical](examples/canonical) or, with the server running, `/experiments`.
 
 ## Methods (summary)
 
-Full practitioner write-up is in the in-app **How this works** panel on every results view (same text as `utils/results_copy.py`).
+Full practitioner text lives in `utils/results_copy.py` (in-app **How this works** panel).
 
-- **Both arms are sampled.** Baseline = original prompt; ablated = that prompt with one verified span deleted.
-- **Statistic.** Cosine distance between the two embedding centroids.
-- **Null.** Permute group labels (exact enumeration when the split count is small); the p-value is how often a distance at least this large appears by chance.
-- **Correction.** Benjamini–Hochberg q-values across tested foci. **Significant** means \(q < 0.05\): a detectable behavioural shift after correction, not a recommendation.
-- **Limits.** Embeddings can miss structural change; leave-one-out can mask redundant text or misattribute interactions; results are local to this model and prompt.
+- **Both arms sampled.** Baseline = original prompt; ablated = prompt with one verified span deleted.
+- **Statistic.** Cosine distance between embedding centroids (\(T_{\mathrm{obs}}\)).
+- **Null.** Exact or Monte Carlo permutation of group labels.
+- **Correction.** Benjamini–Hochberg q-values; significant means \(q < \alpha\) (default 0.05).
+- **Limits.** Embeddings can miss structural change; leave-one-out is conditional on the surrounding prompt; results are local to model and decoding settings.
 
-See `IMPLEMENTATION_NOTES.md` for statistical definitions and schema.
+See [docs/methodology/IMPLEMENTATION_NOTES.md](docs/methodology/IMPLEMENTATION_NOTES.md).
 
-## Environment
+## Hosted demo (`focalprompt.com`)
 
-Set `OPENAI_API_KEY` or `AI_GATEWAY_API_KEY`. Optional: `SECRET_KEY` for sessions.
+| Env | Effect |
+|-----|--------|
+| `FOCALPROMPT_HOSTED_MODE=1` | Landing at `/`; lab at `/lab` |
+| `FOCALPROMPT_ALLOW_LIVE_INFERENCE=0` (default when hosted) | Analytical `/api/*` returns 503 — use `/experiments` |
+| `FOCALPROMPT_ALLOW_LIVE_INFERENCE=1` | Optional capped live demo |
+| `FOCALPROMPT_DEMO_RPM` / `FOCALPROMPT_DEMO_DAILY_BUDGET_USD` | Soft caps when live is on |
+
+## Regression checklist (analytical workflows)
+
+Preserve all of these when changing code:
+
+1. Auto-detect foci + span verify  
+2. Manual add/edit/merge foci  
+3. Dynamic focus detect / exclude from ablation  
+4. Generate output  
+5. Assess Focus (reported distribution)  
+6. Rewrite / slider emphasis  
+7. Ablation paced sample→score  
+8. Ablation server monolith (`POST /api/ablation-analysis`)  
+9. Results: significant / not / excluded / power  
+10. Experiment config power/cost preview  
+11. Batch CSV/manual + SSE + resume  
+12. Batch focus-distribution aggregates  
+13. Checkpoint list/load  
+14. Model/provider switch (cross-model)  
+15. Agent builder + batch agents  
+16. Temperature ≤ 0 rejected  
+17. Strict span deletion (no reconstruct)
+
+```bash
+pytest
+```
+
+## License
+
+Apache-2.0 — see [LICENSE](LICENSE). Citation: [CITATION.cff](CITATION.cff).

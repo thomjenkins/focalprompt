@@ -313,27 +313,111 @@ class GrokProvider(LLMProvider):
         ]
 
 
-def get_provider(provider_name: str, api_key: str) -> LLMProvider:
+class OpenAICompatibleProvider(LLMProvider):
+    """Any OpenAI-compatible HTTP endpoint (Ollama, LM Studio, vLLM, etc.)."""
+
+    def __init__(self, api_key: str, base_url: str):
+        try:
+            from openai import OpenAI
+        except ImportError:
+            # Fall back to raw HTTP via requests (openai package optional for gateway path)
+            self.client = None
+            self.api_key = api_key
+            self.base_url = base_url.rstrip('/')
+            return
+        self.client = OpenAI(api_key=api_key or 'ollama', base_url=base_url.rstrip('/'))
+        self.api_key = api_key
+        self.base_url = base_url.rstrip('/')
+
+    def chat_completion(
+        self,
+        messages: List[Dict[str, str]],
+        model: str,
+        temperature: float = 0.7,
+        response_format: Optional[Dict] = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        if self.client is not None:
+            call_kw: Dict[str, Any] = {
+                'model': model,
+                'messages': messages,
+                'temperature': temperature,
+            }
+            if response_format:
+                call_kw['response_format'] = response_format
+            response = self.client.chat.completions.create(**call_kw)
+            return {
+                'content': response.choices[0].message.content,
+                'usage': {
+                    'prompt_tokens': getattr(response.usage, 'prompt_tokens', 0) or 0,
+                    'completion_tokens': getattr(response.usage, 'completion_tokens', 0) or 0,
+                    'total_tokens': getattr(response.usage, 'total_tokens', 0) or 0,
+                },
+            }
+        import requests
+        payload: Dict[str, Any] = {
+            'model': model,
+            'messages': messages,
+            'temperature': temperature,
+        }
+        if response_format:
+            payload['response_format'] = response_format
+        headers = {
+            'Authorization': f'Bearer {self.api_key or "ollama"}',
+            'Content-Type': 'application/json',
+        }
+        r = requests.post(
+            f'{self.base_url}/chat/completions',
+            json=payload,
+            headers=headers,
+            timeout=120,
+        )
+        r.raise_for_status()
+        data = r.json()
+        usage = data.get('usage') or {}
+        return {
+            'content': data['choices'][0]['message']['content'],
+            'usage': {
+                'prompt_tokens': usage.get('prompt_tokens', 0),
+                'completion_tokens': usage.get('completion_tokens', 0),
+                'total_tokens': usage.get('total_tokens', 0),
+            },
+        }
+
+    def list_models(self) -> List[str]:
+        return []
+
+
+def get_provider(provider_name: str, api_key: str, base_url: Optional[str] = None) -> LLMProvider:
     """
     Factory function to get a provider instance.
     
     Args:
-        provider_name: Name of the provider ('openai', 'anthropic', 'google', 'grok')
+        provider_name: Name of the provider ('openai', 'anthropic', 'google', 'grok',
+            'openai_compatible')
         api_key: API key for the provider
+        base_url: Required for openai_compatible
         
     Returns:
         LLMProvider instance
     """
+    name = provider_name.lower()
+    if name in ('openai_compatible', 'compatible', 'ollama', 'lmstudio', 'vllm', 'local'):
+        if not base_url:
+            raise ValueError('openai_compatible provider requires base_url')
+        return OpenAICompatibleProvider(api_key, base_url)
+
     providers = {
         'openai': OpenAIProvider,
         'anthropic': AnthropicProvider,
         'google': GoogleProvider,
-        'grok': GrokProvider
+        'grok': GrokProvider,
+        'xai': GrokProvider,
     }
     
-    provider_class = providers.get(provider_name.lower())
+    provider_class = providers.get(name)
     if not provider_class:
-        raise ValueError(f"Unknown provider: {provider_name}. Supported: {', '.join(providers.keys())}")
+        raise ValueError(f"Unknown provider: {provider_name}. Supported: {', '.join(list(providers) + ['openai_compatible'])}")
     
     return provider_class(api_key)
 

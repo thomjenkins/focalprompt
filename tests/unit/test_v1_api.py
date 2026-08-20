@@ -1,4 +1,4 @@
-"""Smoke tests for /api/v1 surface and OpenAPI route."""
+"""Remove key-creation SaaS test; keep analytical v1 smoke tests."""
 
 import pytest
 
@@ -16,6 +16,7 @@ def test_v1_root(client):
     data = r.get_json()
     assert data.get('version') == 1
     assert data.get('documentation') == '/api/v1/openapi.json'
+    assert 'keys' not in (data.get('endpoints') or {})
 
 
 def test_v1_openapi_json(client):
@@ -31,6 +32,6 @@ def test_v1_assess_not_found_if_wrong_path(client):
     assert r.status_code == 400
 
 
-def test_create_key_requires_session(client):
+def test_v1_keys_gone(client):
     r = client.post('/api/v1/keys', json={})
-    assert r.status_code == 401
+    assert r.status_code == 404

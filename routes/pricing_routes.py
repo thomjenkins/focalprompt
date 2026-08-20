@@ -2,23 +2,17 @@
 """
 Pricing route handlers.
 
-Provides endpoints for users to view model pricing and get cost estimates.
+Unauthenticated helpers for model pricing and cost estimates (no billing).
 """
 
 from flask import Blueprint, request, jsonify
-from services.pricing_service import PricingService
-from services.assessor_factory import get_assessor
-from middleware.auth import optional_auth
+from services.cost_calculator import CostCalculator
 import os
 
 pricing_bp = Blueprint('pricing', __name__)
 
-# Initialize service
-pricing_service = PricingService()
-
 
 @pricing_bp.route('/api/pricing/estimate', methods=['POST'])
-@optional_auth
 def get_cost_estimate():
     """Estimate cost for a given number of input/output tokens."""
     try:
@@ -31,30 +25,56 @@ def get_cost_estimate():
         if not model or not provider:
             return jsonify({'error': 'Model and provider are required'}), 400
         
-        estimate = pricing_service.estimate_request_cost(
+        cost_breakdown = CostCalculator.calculate_cost(
             estimated_input_tokens,
             estimated_output_tokens,
+            0,
             model,
-            provider
+            provider,
         )
-        return jsonify(estimate)
+        total_cost = cost_breakdown['total_cost']
+        return jsonify({
+            'estimated_input_tokens': estimated_input_tokens,
+            'estimated_output_tokens': estimated_output_tokens,
+            'total_cost': total_cost,
+            'total_cents': int(round(total_cost * 100)),
+            'model': model,
+            'provider': provider,
+        })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 
 @pricing_bp.route('/api/pricing/models', methods=['GET'])
-@optional_auth
 def get_models_pricing():
-    """Get list of all models with their pricing (including markup)."""
+    """Get list of all models with their base pricing (no markup)."""
     try:
-        models_pricing = pricing_service.get_all_models_pricing()
-        return jsonify(models_pricing)
+        providers = {
+            'openai': CostCalculator.OPENAI_PRICING,
+            'anthropic': CostCalculator.ANTHROPIC_PRICING,
+            'google': CostCalculator.GOOGLE_PRICING,
+            'grok': CostCalculator.GROK_PRICING,
+        }
+        result = {}
+        for provider_name, pricing in providers.items():
+            models = {}
+            for model_name, rates in pricing.items():
+                if model_name == 'embedding' or not isinstance(rates, dict):
+                    continue
+                models[model_name] = {
+                    'input_per_1k': (rates['input'] * 1_000_000) / 1000,
+                    'output_per_1k': (rates['output'] * 1_000_000) / 1000,
+                }
+            result[provider_name] = {
+                'name': provider_name.title(),
+                'models': models,
+            }
+        return jsonify(result)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 
 @pricing_bp.route('/api/models', methods=['GET'])
-@optional_auth
 def get_models():
     """
     Fetch all available models from AI Gateway dynamically.
@@ -117,4 +137,3 @@ def get_models():
         print(f"Error fetching models from gateway: {e}", file=sys.stderr)
         traceback.print_exc(file=sys.stderr)
         return jsonify({'error': str(e), 'models': {}, 'source': 'error'}), 500
-

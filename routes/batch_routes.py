@@ -8,33 +8,15 @@ For now, they import from the old app.py to maintain functionality.
 
 from flask import Blueprint, request, jsonify, Response, stream_with_context
 import json
-import os
 from services.checkpoint_service import CheckpointService
-from services.usage_service import UsageService
-from services.billing_service import BillingService
-from services.database import Database
-from middleware.auth import optional_auth
 from utils.data_processing import (
     calculate_statistics_from_results,
     calculate_focus_distribution_statistics,
 )
-from utils.model_provider import resolve_model_and_provider
+from utils.request_inference import request_inference_fields
 
 
 batch_bp = Blueprint('batch', __name__)
-
-# Initialize services
-db = Database()
-billing_service = BillingService(db)
-usage_service = UsageService(db, billing_service)
-
-
-def get_api_key_and_model(data):
-    """Extract model and provider from request data. API key no longer needed (uses AI Gateway)."""
-    model = data.get('model', 'gpt-4o-mini')
-    provider = data.get('provider', 'openai')
-    model, provider = resolve_model_and_provider(model, provider)
-    return None, model, provider
 
 
 @batch_bp.route('/api/list-checkpoints', methods=['GET'])
@@ -81,7 +63,6 @@ def get_checkpoint():
 @batch_bp.route('/api/batch-analysis-stream', methods=['POST'])
 @batch_bp.route('/api/batch-ablation-analysis-stream', methods=['POST'])  # legacy URL
 @stream_with_context
-@optional_auth
 def batch_analysis_stream():
     """Run batch ablation analysis with streaming progress updates via SSE."""
     from services.assessor_factory import get_assessor
@@ -96,7 +77,6 @@ def batch_analysis_stream():
             data = request.json
             pairs = data.get('pairs', [])
             foci_list = data.get('foci', [])
-            model = data.get('model', 'gpt-4o-mini')
             num_samples = data.get('num_samples')
             n_baseline = data.get('n_baseline', 10)
             n_ablated = data.get('n_ablated', 5)
@@ -115,18 +95,11 @@ def batch_analysis_stream():
                 yield f"data: {json.dumps({'type': 'error', 'message': 'Foci are required'})}\n\n"
                 return
             
-            # Check usage limits if authenticated
-            if request.user:
-                endpoint = '/api/batch-analysis-stream'
-                allowed, error_msg = usage_service.check_limit(request.user['id'], endpoint)
-                if not allowed:
-                    yield f"data: {json.dumps({'type': 'error', 'message': error_msg})}\n\n"
-                    return
+            fields = request_inference_fields(data)
+            model = fields['model']
+            provider = fields['provider']
             
-            # Get model and provider from request (API key no longer needed - uses AI Gateway)
-            _, model, provider = get_api_key_and_model(data)
-            
-            assessor = get_assessor(api_key=None, model=model, provider=provider)
+            assessor = get_assessor(data=fields)
             provider_instance = assessor.provider
             assessment_service = AssessmentService(assessor)
             
@@ -138,17 +111,13 @@ def batch_analysis_stream():
             batch_service = BatchAnalysisService(
                 provider_instance,
                 model,
-                None,
+                fields.get('api_key'),
                 embedding_service,
                 cost_calculator,
                 checkpoint_service,
                 assessment_service=assessment_service,
                 provider_name=getattr(assessor, 'provider_name', provider),
             )
-            
-            # Track usage for authenticated users
-            total_tokens = 0
-            total_cost = 0.0
             
             # Stream results
             for chunk in batch_service.stream_batch_analysis(
@@ -164,37 +133,7 @@ def batch_analysis_stream():
                 permutation_seed=permutation_seed,
                 temperature=temperature,
             ):
-                # Parse chunk to track usage
-                if chunk.startswith('data: '):
-                    try:
-                        chunk_data = json.loads(chunk[6:].strip())
-                        if chunk_data.get('type') == 'complete' and 'cost_breakdown' in chunk_data:
-                            cost_breakdown = chunk_data['cost_breakdown']
-                            total_tokens = cost_breakdown.get('total_tokens', 0)
-                            total_cost = cost_breakdown.get('total_cost', 0.0)
-                    except:
-                        pass
-                
                 yield chunk
-            
-            # Record usage and charge after streaming completes
-            if request.user:
-                # Estimate token split from total
-                input_tokens_est = int(total_tokens * 0.7)
-                output_tokens_est = total_tokens - input_tokens_est
-                
-                usage_service.record_usage(
-                    user_id=request.user['id'],
-                    endpoint='/api/batch-analysis-stream',
-                    tokens_used=total_tokens,
-                    cost=total_cost,
-                    model=model,
-                    provider=provider,
-                    input_tokens=input_tokens_est,
-                    output_tokens=output_tokens_est,
-                    embedding_tokens=0,
-                    charge_user=True
-                )
                 
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
@@ -228,4 +167,3 @@ def test_api_key():
             
     except Exception as e:
         return jsonify({'valid': False, 'error': str(e)}), 500
-

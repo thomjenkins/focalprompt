@@ -29,6 +29,13 @@ __pycache__/
 !package-lock.json
 !vercel.json
 !openapi/v1.json
+!examples/**/*.json
+!CITATION.cff
+
+# Coverage
+htmlcov/
+.coverage
+.coverage.*
 
 # Checkpoints and processed data
 checkpoints/
@@ -47,6 +54,9 @@ data/
 
 # Vercel
 .vercel
+
+# Demo node deps (optional gateway smoke)
+demo/node_modules/
 
 # Local git worktree for running an old commit side-by-side
 original-snapshot/
