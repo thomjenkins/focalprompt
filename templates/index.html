@@ -5,101 +5,107 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Focal Prompt — analysis lab</title>
     <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='favicon-32x32.png') }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700&family=Source+Code+Pro:wght@400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
     <div class="container">
-        <header>
-            <div style="text-align: center; margin-bottom: 20px;">
-                <img src="{{ url_for('static', filename='focalpromptlogo.png') }}" alt="Focal Prompt" style="max-width: 800px; max-height: 160px; width: auto; height: auto; display: block; margin: 0 auto;">
-                <p class="subtitle">Reported focus vs perturbation-derived behavioural sensitivity</p>
-                <p style="margin: 8px 0 0; font-size: 0.9rem; color: #666;">
-                    <a href="/about">About</a> ·
-                    <a href="/experiments">Precomputed experiments</a> ·
-                    BYO inference (set <code>AI_GATEWAY_API_KEY</code> or a provider key)
-                </p>
+        <header class="app-header">
+            <div class="app-header-top">
+                <img class="brand-logo" src="{{ url_for('static', filename='focalpromptlogo.png') }}" alt="Focal Prompt">
+                <div class="app-header-copy">
+                    <p class="subtitle">Reported focus vs perturbation-derived behavioural sensitivity</p>
+                </div>
+                <nav class="app-header-nav" aria-label="Site">
+                    <a href="/about">About</a>
+                    <a href="/experiments">Precomputed experiments</a>
+                </nav>
+                <button type="button" id="toggle-settings-btn" class="model-chip" title="Change model">
+                    <span class="status-dot" aria-hidden="true"></span>
+                    <span id="model-chip-label">Model</span>
+                    <span class="chip-action">Change</span>
+                </button>
+            </div>
+
+            <!-- Model Selector Section (IDs preserved for app.js) -->
+            <div id="settings-section" style="border-radius: 8px; padding: 16px; margin-bottom: 16px; border: 1px solid var(--border-color);">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                    <h3 style="margin: 0;">Model selection</h3>
+                </div>
+                <div id="settings-content" style="display: none;">
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+                        <div>
+                            <label for="provider-select" style="display: block; margin-bottom: 6px; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary);">
+                                LLM Provider
+                            </label>
+                            <select id="provider-select" style="width: 100%; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 14px; background: white; cursor: pointer; font-family: inherit;">
+                                <option value="openai">OpenAI</option>
+                                <option value="anthropic">Anthropic (Claude)</option>
+                                <option value="google">Google (Gemini)</option>
+                                <option value="xai">X.AI (Grok)</option>
+                                <option value="mistral">Mistral</option>
+                                <option value="meta">Meta (Llama)</option>
+                                <option value="deepseek">DeepSeek</option>
+                                <option value="alibaba">Alibaba (Qwen)</option>
+                                <option value="minimax">MiniMax</option>
+                                <option value="moonshotai">Moonshot AI</option>
+                                <option value="perplexity">Perplexity</option>
+                                <option value="amazon">Amazon (Nova)</option>
+                                <option value="zai">ZAI (GLM)</option>
+                                <option value="voyage">Voyage</option>
+                                <option value="cohere">Cohere</option>
+                                <option value="morph">Morph</option>
+                                <option value="nvidia">NVIDIA</option>
+                                <option value="bfl">BFL</option>
+                                <option value="vercel">Vercel</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label for="model-select" style="display: block; margin-bottom: 6px; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary);">Model</label>
+                            <div style="position: relative;">
+                                <input
+                                    type="text"
+                                    id="model-search"
+                                    placeholder="Search models (e.g., gpt-4, claude, gemini)..."
+                                    autocomplete="off"
+                                    style="width: 100%; padding: 10px 30px 10px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 14px; background: white; box-sizing: border-box; font-family: inherit;"
+                                />
+                                <span style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); pointer-events: none; color: #999;">🔍</span>
+                                <div id="model-dropdown" style="display: none; position: absolute; top: 100%; left: 0; right: 0; max-height: 300px; overflow-y: auto; background: white; border: 1px solid var(--border-color); border-top: none; border-radius: 0 0 8px 8px; z-index: 1000; box-shadow: var(--shadow-lg); margin-top: -1px;"></div>
+                            </div>
+                            <select id="model-select" style="display: none;">
+                                <!-- Hidden select for form submission -->
+                            </select>
+                        </div>
+                    </div>
+
+                    <div id="cost-preview" style="background: #fff; border: 1px solid var(--border-color); border-radius: 8px; padding: 12px; margin-bottom: 12px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <strong style="color: var(--text-primary);">Estimated cost</strong>
+                            <span id="cost-estimate" style="font-size: 1.1em; font-weight: 700; color: var(--success-color); font-family: var(--font-mono);">-</span>
+                        </div>
+                        <div style="margin-top: 8px; font-size: 0.85em; color: var(--text-secondary);">
+                            <small>Typical request estimate (1000 input + 500 output tokens). Actual charges based on usage.</small>
+                        </div>
+                    </div>
+
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                        <button id="save-settings-btn" class="btn btn-primary" style="padding: 8px 16px;">Save model selection</button>
+                        <span id="api-key-status" style="margin-left: 12px; padding: 8px 0; color: var(--text-secondary);"></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab Navigation -->
+            <div class="tab-navigation">
+                <button class="tab-btn" data-tab="prompt-analysis">Prompt Analysis</button>
+                <button class="tab-btn" data-tab="batch-analysis">Batch Analysis</button>
+                <button class="tab-btn" data-tab="agent-builder">Agent Builder</button>
+                <button class="tab-btn tab-docs active" data-tab="documentation">Documentation</button>
             </div>
         </header>
-
-        <!-- Model Selector Section -->
-        <div id="settings-section" style="background: var(--card-bg); border-radius: 8px; padding: 16px; margin-bottom: 20px; border: 1px solid var(--border-color);">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                <h3 style="margin: 0; color: var(--primary-color);">🤖 Model Selection</h3>
-                <button id="toggle-settings-btn" style="background: var(--primary-color); color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer;">Show</button>
-            </div>
-            <div id="settings-content" style="display: none;">
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
-                    <div>
-                        <label for="provider-select" style="display: block; margin-bottom: 6px; font-weight: 500;">
-                            LLM Provider
-                            <span style="color: #666; font-size: 0.85em; font-weight: normal;">(?)</span>
-                        </label>
-                        <select id="provider-select" style="width: 100%; padding: 10px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 14px; background: white; cursor: pointer;">
-                            <option value="openai">OpenAI</option>
-                            <option value="anthropic">Anthropic (Claude)</option>
-                            <option value="google">Google (Gemini)</option>
-                            <option value="xai">X.AI (Grok)</option>
-                            <option value="mistral">Mistral</option>
-                            <option value="meta">Meta (Llama)</option>
-                            <option value="deepseek">DeepSeek</option>
-                            <option value="alibaba">Alibaba (Qwen)</option>
-                            <option value="minimax">MiniMax</option>
-                            <option value="moonshotai">Moonshot AI</option>
-                            <option value="perplexity">Perplexity</option>
-                            <option value="amazon">Amazon (Nova)</option>
-                            <option value="zai">ZAI (GLM)</option>
-                            <option value="voyage">Voyage</option>
-                            <option value="cohere">Cohere</option>
-                            <option value="morph">Morph</option>
-                            <option value="nvidia">NVIDIA</option>
-                            <option value="bfl">BFL</option>
-                            <option value="vercel">Vercel</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label for="model-select" style="display: block; margin-bottom: 6px; font-weight: 500;">Model</label>
-                        <div style="position: relative;">
-                            <input 
-                                type="text" 
-                                id="model-search" 
-                                placeholder="Search models (e.g., gpt-4, claude, gemini)..." 
-                                autocomplete="off"
-                                style="width: 100%; padding: 10px 30px 10px 10px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 14px; background: white; box-sizing: border-box;"
-                            />
-                            <span style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); pointer-events: none; color: #999;">🔍</span>
-                            <div id="model-dropdown" style="display: none; position: absolute; top: 100%; left: 0; right: 0; max-height: 300px; overflow-y: auto; background: white; border: 1px solid var(--border-color); border-top: none; border-radius: 0 0 6px 6px; z-index: 1000; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-top: -1px;"></div>
-                        </div>
-                        <select id="model-select" style="display: none;">
-                            <!-- Hidden select for form submission -->
-                        </select>
-                    </div>
-                </div>
-                
-                <!-- Cost Display -->
-                <div id="cost-preview" style="background: #f8f9fa; border: 1px solid var(--border-color); border-radius: 6px; padding: 12px; margin-bottom: 12px;">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <strong style="color: var(--primary-color);">💰 Estimated Cost</strong>
-                        <span id="cost-estimate" style="font-size: 1.2em; font-weight: bold; color: #28a745;">-</span>
-                    </div>
-                    <div style="margin-top: 8px; font-size: 0.85em; color: #666;">
-                        <small>Estimated cost for a typical request (1000 input + 500 output tokens). Actual charges based on usage.</small>
-                    </div>
-                </div>
-                
-                <div style="display: flex; gap: 8px; align-items: center;">
-                    <button id="save-settings-btn" style="background: var(--primary-color); color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: 500;">Save Model Selection</button>
-                    <span id="api-key-status" style="margin-left: 12px; padding: 8px 0; color: #666;"></span>
-                </div>
-            </div>
-        </div>
-
-        <!-- Tab Navigation -->
-        <div class="tab-navigation">
-            <button class="tab-btn active" data-tab="documentation">📚 Documentation</button>
-            <button class="tab-btn" data-tab="prompt-analysis">Prompt Analysis</button>
-            <button class="tab-btn" data-tab="batch-analysis">Batch Analysis</button>
-            <button class="tab-btn" data-tab="agent-builder">Agent Builder</button>
-        </div>
 
         <div class="main-content">
             <!-- Documentation Tab Content -->
@@ -482,9 +488,11 @@
                             ></textarea>
                         </div>
 
-                        <!-- Pairs List -->
-                        <div id="pairs-container" class="pairs-container">
-                            <p class="empty-state">No pairs added yet. Upload a CSV file or add pairs manually.</p>
+                        <!-- Pairs List (collapsible so step 2 stays reachable) -->
+                        <div id="pairs-section" class="pairs-section">
+                            <div id="pairs-container" class="pairs-container">
+                                <p class="empty-state">No pairs added yet. Upload a CSV file or add pairs manually.</p>
+                            </div>
                         </div>
                     </div>
                 </section>

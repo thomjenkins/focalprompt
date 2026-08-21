@@ -841,21 +841,37 @@ window.addEventListener('DOMContentLoaded', async () => {
         modelSelect.value = userModel;
     }
     
-    // Toggle settings visibility
+    // Toggle settings visibility (preserve model-chip markup)
     if (toggleSettingsBtn && settingsContent) {
+        const chipAction = toggleSettingsBtn.querySelector('.chip-action');
+        const setExpanded = (expanded) => {
+            settingsContent.style.display = expanded ? 'block' : 'none';
+            if (chipAction) {
+                chipAction.textContent = expanded ? 'Close' : 'Change';
+            } else if (!toggleSettingsBtn.querySelector('#model-chip-label')) {
+                // Legacy plain button fallback
+                toggleSettingsBtn.textContent = expanded ? 'Hide' : 'Show';
+            }
+            localStorage.setItem('focalprompt_settings_expanded', expanded.toString());
+        };
+
         let isExpanded = localStorage.getItem('focalprompt_settings_expanded') === 'true';
-        if (isExpanded) {
-            settingsContent.style.display = 'block';
-            toggleSettingsBtn.textContent = 'Hide';
-        }
-        
+        setExpanded(isExpanded);
+
         toggleSettingsBtn.addEventListener('click', () => {
             isExpanded = !isExpanded;
-            settingsContent.style.display = isExpanded ? 'block' : 'none';
-            toggleSettingsBtn.textContent = isExpanded ? 'Hide' : 'Show';
-            localStorage.setItem('focalprompt_settings_expanded', isExpanded.toString());
+            setExpanded(isExpanded);
         });
     }
+
+    const updateModelChipLabel = () => {
+        const label = document.getElementById('model-chip-label');
+        if (!label) return;
+        const provider = (userProvider || 'openai');
+        const model = (userModel || '').trim();
+        label.textContent = model ? `${provider} · ${model}` : 'Model';
+    };
+    updateModelChipLabel();
     
     // Save settings
     if (saveSettingsBtn) {
@@ -867,6 +883,7 @@ window.addEventListener('DOMContentLoaded', async () => {
             userProvider = provider;
             localStorage.setItem('focalprompt_model', model);
             userModel = model;
+            updateModelChipLabel();
             
             apiKeyStatus.textContent = '✓ Model selection saved';
             apiKeyStatus.style.color = '#28a745';
@@ -883,12 +900,14 @@ window.addEventListener('DOMContentLoaded', async () => {
     if (providerSelect) {
         providerSelect.addEventListener('change', async () => {
             await updateModelSelector(providerSelect.value);
+            updateModelChipLabel();
         });
     }
     
     if (modelSelect) {
         modelSelect.addEventListener('change', () => {
             updateCostDisplay();
+            updateModelChipLabel();
         });
     }
     
@@ -3382,60 +3401,99 @@ if (addPairBtn) {
     });
 }
 
-// Batch Analysis: Render Pairs
+// Batch Analysis: Render Pairs (collapsible — keep step 2 reachable)
+let pairsListExpanded = false;
+
 function renderPairs() {
     if (!pairsContainer) return;
     
     if (batchPairs.length === 0) {
+        pairsListExpanded = false;
         pairsContainer.innerHTML = '<p class="empty-state">No pairs added yet. Upload a CSV file or add pairs manually.</p>';
         return;
     }
     
-    let html = `<h3 style="margin-bottom: 12px;">${batchPairs.length} Pair(s) Added</h3>`;
-    html += '<div style="display: flex; flex-direction: column; gap: 12px;">';
+    const n = batchPairs.length;
+    const collapsible = n > 2;
+    const previewCount = collapsible ? 2 : n;
+    const hiddenCount = Math.max(0, n - previewCount);
+    const showAll = !collapsible || pairsListExpanded;
     
-    batchPairs.forEach((pair, index) => {
-        // Handle both old and new structure
-        const inputs = pair.inputs || {};
-        const chatContent = inputs.chat_content || pair.chat_content || '';
-        const ragContext = inputs.rag_context || '';
-        const toolResults = inputs.tool_results || '';
-        const otherInput = inputs.other_input || '';
-        const output = pair.output || '';
-        const rowPrompt = (typeof pair.prompt === 'string') ? pair.prompt : '';
-        
-        html += `
-            <div class="pair-item" style="padding: 12px; background: #f8fafc; border-radius: 6px; border: 1px solid var(--border-color);">
-                <div style="display: flex; justify-content: space-between; align-items: start;">
-                    <div style="flex: 1;">
-                        <strong>Pair ${index + 1}</strong>
-                        ${rowPrompt ? `<p style="margin: 4px 0; font-size: 0.9em; color: var(--text-secondary);">
-                            Prompt: ${escapeHtml(rowPrompt.substring(0, 100))}${rowPrompt.length > 100 ? '...' : ''}
-                        </p>` : ''}
-                        ${chatContent ? `<p style="margin: 4px 0; font-size: 0.9em; color: var(--text-secondary);">
-                            Chat: ${escapeHtml(chatContent.substring(0, 100))}${chatContent.length > 100 ? '...' : ''}
-                        </p>` : ''}
-                        ${ragContext ? `<p style="margin: 4px 0; font-size: 0.9em; color: var(--text-secondary);">
-                            RAG: ${escapeHtml(ragContext.substring(0, 100))}${ragContext.length > 100 ? '...' : ''}
-                        </p>` : ''}
-                        ${toolResults ? `<p style="margin: 4px 0; font-size: 0.9em; color: var(--text-secondary);">
-                            Tools: ${escapeHtml(toolResults.substring(0, 100))}${toolResults.length > 100 ? '...' : ''}
-                        </p>` : ''}
-                        ${otherInput ? `<p style="margin: 4px 0; font-size: 0.9em; color: var(--text-secondary);">
-                            Other: ${escapeHtml(otherInput.substring(0, 100))}${otherInput.length > 100 ? '...' : ''}
-                        </p>` : ''}
-                        <p style="margin: 4px 0; font-size: 0.9em; color: var(--text-secondary);">
-                            Output: ${escapeHtml(output.substring(0, 100))}${output.length > 100 ? '...' : ''}
-                        </p>
-                    </div>
-                    <button onclick="removePair(${index})" class="btn btn-outline btn-small" style="margin-left: 12px;">Remove</button>
-                </div>
-            </div>
-        `;
-    });
+    let html = `
+        <div class="pairs-list-header" style="display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap;">
+            <h3 style="margin: 0;">${n} Pair${n === 1 ? '' : 's'} Added</h3>
+            ${collapsible ? `
+            <button type="button" id="toggle-pairs-list-btn" class="btn btn-outline btn-small">
+                ${pairsListExpanded ? 'Hide pairs' : `Show all ${n} pairs`}
+            </button>` : ''}
+        </div>
+    `;
     
+    if (collapsible && !pairsListExpanded) {
+        html += `<p class="info-text" style="margin: 0 0 12px; font-size: 0.9em;">
+            Showing first ${previewCount} of ${n}. Pairs are collapsed so you can continue to
+            <strong>2. Define Foci</strong> without scrolling.
+        </p>`;
+    }
+    
+    const listStyle = showAll && collapsible
+        ? 'display: flex; flex-direction: column; gap: 12px; max-height: 420px; overflow-y: auto; padding-right: 4px;'
+        : 'display: flex; flex-direction: column; gap: 12px;';
+    html += `<div style="${listStyle}">`;
+    const limit = showAll ? n : previewCount;
+    for (let index = 0; index < limit; index++) {
+        html += renderPairItem(batchPairs[index], index);
+    }
     html += '</div>';
+    
     pairsContainer.innerHTML = html;
+    
+    const toggleBtn = document.getElementById('toggle-pairs-list-btn');
+    if (toggleBtn) {
+        toggleBtn.addEventListener('click', () => {
+            pairsListExpanded = !pairsListExpanded;
+            renderPairs();
+        });
+    }
+}
+
+function renderPairItem(pair, index) {
+    const inputs = pair.inputs || {};
+    const chatContent = inputs.chat_content || pair.chat_content || '';
+    const ragContext = inputs.rag_context || '';
+    const toolResults = inputs.tool_results || '';
+    const otherInput = inputs.other_input || '';
+    const output = pair.output || '';
+    const rowPrompt = (typeof pair.prompt === 'string') ? pair.prompt : '';
+    
+    return `
+        <div class="pair-item" style="padding: 12px; background: #f8fafc; border-radius: 6px; border: 1px solid var(--border-color);">
+            <div style="display: flex; justify-content: space-between; align-items: start;">
+                <div style="flex: 1;">
+                    <strong>Pair ${index + 1}</strong>
+                    ${rowPrompt ? `<p style="margin: 4px 0; font-size: 0.9em; color: var(--text-secondary);">
+                        Prompt: ${escapeHtml(rowPrompt.substring(0, 100))}${rowPrompt.length > 100 ? '...' : ''}
+                    </p>` : ''}
+                    ${chatContent ? `<p style="margin: 4px 0; font-size: 0.9em; color: var(--text-secondary);">
+                        Chat: ${escapeHtml(chatContent.substring(0, 100))}${chatContent.length > 100 ? '...' : ''}
+                    </p>` : ''}
+                    ${ragContext ? `<p style="margin: 4px 0; font-size: 0.9em; color: var(--text-secondary);">
+                        RAG: ${escapeHtml(ragContext.substring(0, 100))}${ragContext.length > 100 ? '...' : ''}
+                    </p>` : ''}
+                    ${toolResults ? `<p style="margin: 4px 0; font-size: 0.9em; color: var(--text-secondary);">
+                        Tools: ${escapeHtml(toolResults.substring(0, 100))}${toolResults.length > 100 ? '...' : ''}
+                    </p>` : ''}
+                    ${otherInput ? `<p style="margin: 4px 0; font-size: 0.9em; color: var(--text-secondary);">
+                        Other: ${escapeHtml(otherInput.substring(0, 100))}${otherInput.length > 100 ? '...' : ''}
+                    </p>` : ''}
+                    <p style="margin: 4px 0; font-size: 0.9em; color: var(--text-secondary);">
+                        Output: ${escapeHtml(output.substring(0, 100))}${output.length > 100 ? '...' : ''}
+                    </p>
+                </div>
+                <button onclick="removePair(${index})" class="btn btn-outline btn-small" style="margin-left: 12px;">Remove</button>
+            </div>
+        </div>
+    `;
 }
 
 // Batch Analysis: Remove Pair

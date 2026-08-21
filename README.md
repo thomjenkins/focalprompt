@@ -1,5 +1,9 @@
 # Focal Prompt
 
+<p align="center">
+  <img src="static/focalpromptlogo.png" alt="Focal Prompt" width="420" />
+</p>
+
 Open-source research toolkit for studying how AI systems **allocate attention** and **respond to their informational environment** — the behavioural ecology of language models.
 
 Focal Prompt decomposes a prompt into *foci*, then compares:

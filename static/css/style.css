@@ -5,40 +5,151 @@
 }
 
 :root {
-    --primary-color: #4f46e5;
-    --primary-hover: #4338ca;
-    --secondary-color: #64748b;
-    --success-color: #10b981;
-    --danger-color: #ef4444;
-    --bg-color: #f8fafc;
+    /* FocalPrompt redesign (Claude Design) */
+    --primary-color: #1e3a5f;
+    --primary-hover: #16293f;
+    --secondary-color: #5f6b76;
+    --success-color: #2f6f4e;
+    --danger-color: #b91c1c;
+    --warning-color: #b45309;
+    --bg-color: #f4f4f1;
     --card-bg: #ffffff;
-    --text-primary: #1e293b;
-    --text-secondary: #64748b;
-    --border-color: #e2e8f0;
-    --shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
-    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+    --surface-muted: #fbfbf9;
+    --text-primary: #1f2933;
+    --text-secondary: #5f6b76;
+    --border-color: #e4e4df;
+    --border-strong: #dcdcd5;
+    --focus-role: #d8e4f0;
+    --focus-cite: #efe3cf;
+    --focus-schema: #d9ead9;
+    --shadow: 0 1px 2px rgba(31, 41, 51, 0.04);
+    --shadow-lg: 0 8px 24px rgba(31, 41, 51, 0.08);
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --font-sans: 'Source Sans 3', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-mono: 'Source Code Pro', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    --content-max: 1160px;
 }
 
 body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    font-family: var(--font-sans);
     background-color: var(--bg-color);
     color: var(--text-primary);
     line-height: 1.6;
-    padding: 20px;
+    padding: 0;
+    -webkit-font-smoothing: antialiased;
 }
 
 .container {
-    max-width: 1200px;
+    max-width: var(--content-max);
     margin: 0 auto;
+    padding: 0 32px 48px;
+}
+
+.app-header {
+    background: #ffffff;
+    border-bottom: 1px solid var(--border-color);
+    margin: 0 -32px 24px;
+    padding: 0 32px;
+}
+
+.app-header-top {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    padding: 14px 0;
+}
+
+.app-header-top img.brand-logo {
+    height: 44px;
+    width: auto;
+    max-width: none;
+    max-height: none;
+    display: block;
+    margin: 0;
+    object-fit: contain;
+}
+
+.app-header-copy {
+    flex: 1;
+    min-width: 0;
+}
+
+.app-header-copy .subtitle {
+    margin: 0;
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.app-header-nav {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    font-size: 14px;
+    font-weight: 500;
+}
+
+.app-header-nav a {
+    color: var(--primary-color);
+    text-decoration: none;
+}
+
+.app-header-nav a:hover {
+    color: var(--primary-hover);
+    text-decoration: underline;
+}
+
+.model-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--bg-color);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    padding: 8px 14px;
+    font-family: var(--font-sans);
+    font-size: 13px;
+    color: var(--text-primary);
+    cursor: pointer;
+}
+
+.model-chip:hover {
+    border-color: var(--primary-color);
+}
+
+.model-chip .status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #3d9a6a;
+    flex-shrink: 0;
+}
+
+.model-chip .chip-action {
+    color: var(--primary-color);
+    font-weight: 600;
+}
+
+#settings-section {
+    background: var(--surface-muted) !important;
+    border: 1px solid var(--border-color) !important;
+    border-radius: var(--radius-md) !important;
+    margin: 0 0 16px !important;
+}
+
+#settings-section h3 {
+    color: var(--text-primary) !important;
+    font-size: 15px !important;
+    font-weight: 700 !important;
 }
 
 header {
-    text-align: center;
-    margin-bottom: 5px;
-    background: white;
-    padding: 1px 15px;
-    border-radius: 8px;
-    box-shadow: var(--shadow);
+    text-align: left;
+    margin-bottom: 0;
+    background: transparent;
+    padding: 0;
+    border-radius: 0;
+    box-shadow: none;
 }
 
 header h1 {
@@ -49,7 +160,7 @@ header h1 {
 
 header img {
     display: block;
-    margin: 0 auto 1px auto;
+    margin: 0;
     max-width: 800px;
     max-height: 160px;
     width: auto;
@@ -64,28 +175,30 @@ header img {
     margin-bottom: 0;
 }
 
-/* Tab Navigation */
 .tab-navigation {
     display: flex;
-    gap: 8px;
-    margin-bottom: 24px;
-    border-bottom: 2px solid var(--border-color);
+    gap: 4px;
+    margin: 0 -32px 28px;
+    padding: 0 32px;
+    border-bottom: 1px solid var(--border-color);
+    background: #fff;
     position: relative;
     z-index: 10;
     pointer-events: auto;
 }
 
 .tab-btn {
-    padding: 12px 24px;
+    padding: 12px 18px;
     background: transparent;
     border: none;
     border-bottom: 3px solid transparent;
     color: var(--text-secondary);
-    font-size: 1rem;
-    font-weight: 500;
+    font-family: var(--font-sans);
+    font-size: 15px;
+    font-weight: 600;
     cursor: pointer;
-    transition: all 0.2s;
-    margin-bottom: -2px;
+    transition: color 0.15s, border-color 0.15s;
+    margin-bottom: -1px;
     position: relative;
     z-index: 10;
     pointer-events: auto;
@@ -93,13 +206,17 @@ header img {
 
 .tab-btn:hover {
     color: var(--primary-color);
-    background: rgba(79, 70, 229, 0.05);
+    background: transparent;
 }
 
 .tab-btn.active {
     color: var(--primary-color);
     border-bottom-color: var(--primary-color);
-    font-weight: 600;
+    font-weight: 700;
+}
+
+.tab-btn.tab-docs {
+    margin-left: auto;
 }
 
 .tab-content {
@@ -118,10 +235,12 @@ header img {
     gap: 24px;
 }
 
+
 .card {
     background: var(--card-bg);
-    border-radius: 12px;
+    border-radius: var(--radius-md);
     box-shadow: var(--shadow);
+    border: 1px solid var(--border-color);
     overflow: hidden;
     transition: box-shadow 0.2s;
 }
@@ -159,7 +278,7 @@ header img {
     border: 2px solid var(--border-color);
     border-radius: 8px;
     font-size: 14px;
-    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-family: var(--font-mono);
     resize: vertical;
     transition: border-color 0.2s;
 }
@@ -396,7 +515,7 @@ header img {
     background: white;
     padding: 16px;
     border-radius: 8px;
-    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-family: var(--font-mono);
     font-size: 13px;
     line-height: 1.8;
     white-space: pre-wrap;
@@ -629,7 +748,7 @@ header img {
     padding: 12px;
     background: white;
     border-radius: 6px;
-    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-family: var(--font-mono);
     font-size: 13px;
     line-height: 1.6;
     white-space: pre-wrap;
@@ -780,7 +899,7 @@ header img {
     padding: 12px;
     background: var(--bg-color);
     border-radius: 6px;
-    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-family: var(--font-mono);
     font-size: 12px;
     max-height: 150px;
     overflow-y: auto;
@@ -981,7 +1100,7 @@ header img {
     border-radius: 6px;
     border: 1px solid var(--border-color);
     margin-top: 16px;
-    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-family: var(--font-mono);
     font-size: 0.9em;
     white-space: pre-wrap;
     max-height: 400px;
@@ -1006,6 +1125,18 @@ header img {
 /* Batch Analysis Styles */
 .pairs-container {
     min-height: 100px;
+}
+
+.pairs-section {
+    margin-top: 8px;
+}
+
+.pairs-list-header {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--card-bg, #fff);
+    padding: 4px 0;
 }
 
 .pair-item {
@@ -1437,3 +1568,36 @@ header img {
 }
 
 
+
+
+/* Redesign polish */
+.brand-logo { height: 44px; width: auto; display: block; }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; background: #3d9a6a; display: inline-block; }
+.chip-action { color: var(--primary-color); font-weight: 600; }
+.tab-docs { margin-left: auto; }
+#settings-section label { color: var(--text-secondary); }
+.btn.btn-primary, #save-settings-btn.btn-primary {
+    background: var(--primary-color);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius-sm);
+    font-weight: 600;
+    cursor: pointer;
+}
+.btn.btn-primary:hover, #save-settings-btn.btn-primary:hover {
+    background: var(--primary-hover);
+}
+code, .textarea-large, #prompt-input, #batch-prompt-input, #manual-pair-input, #manual-output {
+    font-family: var(--font-mono);
+}
+.info-text { color: var(--text-secondary); }
+.empty-state { color: var(--text-secondary); }
+
+@media (max-width: 860px) {
+    .app-header-top { flex-wrap: wrap; gap: 12px; }
+    .app-header-nav { order: 3; width: 100%; }
+    .tab-navigation { flex-wrap: wrap; }
+    .tab-docs { margin-left: 0; }
+    .container { padding: 0 16px 32px; }
+    .app-header, .tab-navigation { margin-left: -16px; margin-right: -16px; padding-left: 16px; padding-right: 16px; }
+}
