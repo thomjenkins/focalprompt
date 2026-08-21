@@ -142,6 +142,9 @@ BATCH_UI_REQUIRED_ROUTES = {
     ('POST', '/api/detect-foci'),
     ('POST', '/api/detect-dynamic-foci'),
     ('POST', '/api/batch-analysis-stream'),
+    ('POST', '/api/batch-aggregate'),
+    ('POST', '/api/ablation-sample'),
+    ('POST', '/api/ablation-score'),
     ('GET', '/api/list-checkpoints'),
     ('GET', '/api/get-checkpoint'),
     ('POST', '/api/build-batch-agents-stream'),
@@ -173,6 +176,9 @@ def test_batch_frontend_api_paths_have_routes(app):
             for k in (
                 'parse-batch',
                 'batch-analysis',
+                'batch-aggregate',
+                'ablation-sample',
+                'ablation-score',
                 'detect-foci',
                 'detect-dynamic',
                 'list-checkpoint',
@@ -203,6 +209,27 @@ def test_batch_frontend_api_paths_have_routes(app):
 
 def test_parse_batch_csv_in_frontend_inventory():
     assert '/api/parse-batch-csv' in _frontend_api_paths()
+
+
+def test_batch_aggregate_endpoint(client):
+    resp = client.post(
+        '/api/batch-aggregate',
+        json={
+            'pair_results': [
+                {
+                    'success': True,
+                    'influence_scores': {
+                        'Role': {'influence': 0.4, 'normalized_influence': 80.0},
+                        'Tone': {'influence': 0.1, 'normalized_influence': 20.0},
+                    },
+                }
+            ]
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert 'Role' in body['statistics']
+    assert body['statistics']['Role']['mean'] == pytest.approx(80.0)
 
 
 PROMPT = (

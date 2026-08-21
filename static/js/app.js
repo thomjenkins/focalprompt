@@ -2669,7 +2669,10 @@ function isClientAttributableFocus(focus) {
     return true;
 }
 
-async function runPacedAblation(prompt, fociList, cfg) {
+async function runPacedAblation(prompt, fociList, cfg, onProgress) {
+    const report = typeof onProgress === 'function'
+        ? onProgress
+        : function (msg) { showLoading(msg); };
     const controller = new AbortController();
     const timeoutId = setTimeout(function () { controller.abort(); }, 600000);
     const concurrency = 6;
@@ -2688,13 +2691,13 @@ async function runPacedAblation(prompt, fociList, cfg) {
         }
 
         let completed = 0;
-        showLoading('Generating samples (0 of ' + jobs.length + ')…');
+        report('Generating samples (0 of ' + jobs.length + ')…');
         const samples = await mapPool(jobs, concurrency, async function (job) {
             const sample = await fetchAblationSample(
                 prompt, fociList, job.kind, job.focusIndex, cfg.temperature, controller
             );
             completed += 1;
-            showLoading('Generating samples (' + completed + ' of ' + jobs.length + ')…');
+            report('Generating samples (' + completed + ' of ' + jobs.length + ')…');
             return sample;
         });
 
@@ -2717,7 +2720,7 @@ async function runPacedAblation(prompt, fociList, cfg) {
             }
         }
 
-        showLoading('Scoring samples (permutation test)…');
+        report('Scoring samples (permutation test)…');
         const response = await fetch('/api/ablation-score', {
             method: 'POST',
             headers: getApiHeaders(),
@@ -3933,318 +3936,173 @@ async function handleRunBatchAnalysis(e) {
         );
         return;
     }    
-    // Generate session ID for checkpointing
+    // Client-paced batch: one short serverless call per sample (same path as
+    // single ablation). Avoids the hosted SSE timeout that left users with
+    // zero pair results.
     const sessionId = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
-    
-    showLoading(
-        window.FocalPromptExperiment
-            ? window.FocalPromptExperiment.formatBatchLoading(
-                batchPairs.length, cfg.temperature, cfg.n_baseline, cfg.n_ablated
-            )
-            : ('Running batch analysis on ' + batchPairs.length +
-               (batchPairs.length === 1 ? ' pair' : ' pairs') +
-               ' at temperature ' + Number(cfg.temperature).toFixed(1) + ': ' +
-               cfg.n_baseline + ' baseline samples and ' + cfg.n_ablated +
-               ' ablated samples per focus per pair.')
-    );
+    const totalPairs = pairsWithPrompt.length;
+    const pairResults = [];
+    let failedPairs = 0;
+
+    function setBatchProgress(message) {
+        if (batchProgressText) batchProgressText.textContent = message;
+        showLoading(message);
+    }
+
+    function scoreToBatchPairResult(scored, pair, pairIndex) {
+        const influenceScores = {};
+        (scored.influence_scores || []).forEach(function (item) {
+            const name = item && (item.focus || item.focus_name);
+            if (!name) return;
+            influenceScores[name] = Object.assign({}, item);
+        });
+        const tokens = scored.tokens || {};
+        const cost = scored.cost_breakdown || {};
+        if (cost.chat_completions) {
+            tokens.input = tokens.input || cost.chat_completions.input_tokens || 0;
+            tokens.output = tokens.output || cost.chat_completions.output_tokens || 0;
+        }
+        if (cost.embeddings) {
+            tokens.embedding = tokens.embedding || cost.embeddings.tokens || 0;
+        }
+        return {
+            success: true,
+            pair_index: pairIndex,
+            pair_data: pair,
+            influence_scores: influenceScores,
+            ablation_results: scored.ablation_results || [],
+            foci_list: scored.foci_list || batchFoci,
+            baseline_outputs: scored.baseline_outputs || [],
+            n_baseline: scored.n_baseline,
+            n_ablated: scored.n_ablated,
+            n_permutations: scored.n_permutations,
+            alpha: scored.alpha,
+            temperature: scored.temperature || cfg.temperature,
+            test_type: scored.test_type,
+            power_warning: scored.power_warning,
+            significance_method: scored.significance_method || 'permutation_bh',
+            summary: scored.summary || {},
+            model: scored.model,
+            provider: scored.provider,
+            tokens: tokens,
+            cost_breakdown: scored.cost_breakdown || null
+        };
+    }
+
     if (batchProgress) {
         batchProgress.classList.remove('hidden');
-        batchProgressText.textContent = `Starting analysis...`;
     }
-    
-    // Accumulate pair results so we can render even if the stream is cut
-    // before the final "complete" event (common on hosted serverless timeouts).
-    let interimResults = [];
-    let interimStatistics = {};
-    let interimFocusDistributionStatistics = {};
-    let interimCostBreakdown = {};
-    let completedCount = 0;
-    let sawCompleteEvent = false;
-    let streamHadError = false;
+    setBatchProgress('Starting client-paced batch analysis for ' + totalPairs + ' pair(s)…');
 
-    function finalizeBatchResults(options) {
-        options = options || {};
-        const pairResults = (options.pairResults || interimResults || []).slice();
-        if (!pairResults.length) {
-            if (!streamHadError && !options.silentIfEmpty) {
-                showError(
-                    'Batch analysis finished without any pair results. ' +
-                    'The connection may have closed early (hosted runs can time out). ' +
-                    'Try fewer pairs, lower sample counts, or run locally.'
+    try {
+        for (let pairIndex = 0; pairIndex < totalPairs; pairIndex++) {
+            const pair = pairsWithPrompt[pairIndex];
+            const pairLabel = 'Pair ' + (pairIndex + 1) + '/' + totalPairs;
+            try {
+                setBatchProgress(pairLabel + ': sampling…');
+                const scored = await runPacedAblation(
+                    pair.prompt,
+                    batchFoci,
+                    cfg,
+                    function (msg) {
+                        setBatchProgress(pairLabel + ': ' + msg);
+                    }
+                );
+                pairResults.push(scoreToBatchPairResult(scored, pair, pairIndex));
+                setBatchProgress(
+                    pairLabel + ' complete (' + pairResults.length + ' succeeded' +
+                    (failedPairs ? ', ' + failedPairs + ' failed' : '') + ').'
+                );
+            } catch (pairErr) {
+                failedPairs += 1;
+                console.error('Batch pair failed', pairIndex, pairErr);
+                pairResults.push({
+                    success: false,
+                    pair_index: pairIndex,
+                    pair_data: pair,
+                    error: (pairErr && pairErr.message) ? pairErr.message : String(pairErr)
+                });
+                setBatchProgress(
+                    pairLabel + ' failed: ' +
+                    ((pairErr && pairErr.message) ? pairErr.message : 'unknown error')
                 );
             }
-            return false;
         }
+
+        let statistics = {};
+        let focusDistributionStatistics = {};
+        const successful = pairResults.filter(function (r) { return r && r.success !== false; });
+        if (successful.length) {
+            setBatchProgress('Aggregating statistics across ' + successful.length + ' pair(s)…');
+            try {
+                const aggResp = await fetch('/api/batch-aggregate', {
+                    method: 'POST',
+                    headers: getApiHeaders(),
+                    body: JSON.stringify(getApiBody({ pair_results: pairResults }))
+                });
+                const aggData = await aggResp.json();
+                if (!aggResp.ok) {
+                    throw new Error(aggData.error || 'Failed to aggregate batch statistics');
+                }
+                statistics = aggData.statistics || {};
+                focusDistributionStatistics = aggData.focus_distribution_statistics || {};
+            } catch (aggErr) {
+                console.warn('Batch aggregate failed; showing pair results only.', aggErr);
+            }
+        }
+
         const completeData = {
             results: pairResults,
             pair_results: pairResults,
-            statistics: options.statistics || interimStatistics || {},
-            focus_distribution_statistics:
-                options.focusDistributionStatistics ||
-                options.focus_distribution_statistics ||
-                interimFocusDistributionStatistics ||
-                {},
-            cost_breakdown:
-                options.costBreakdown ||
-                options.cost_breakdown ||
-                interimCostBreakdown ||
-                {}
+            statistics: statistics,
+            focus_distribution_statistics: focusDistributionStatistics,
+            cost_breakdown: {},
+            session_id: sessionId
         };
         window.batchResultsData = completeData;
         renderBatchResults(completeData);
         if (exportResultsBtn) exportResultsBtn.disabled = false;
-        if (batchProgressText) {
-            const suffix = options.partial
-                ? ' (stream ended early — showing completed pairs)'
-                : '';
-            batchProgressText.textContent =
-                `Analysis complete! ${pairResults.length} pair(s) processed.${suffix}`;
-        }
         if (batchResults && batchResults.scrollIntoView) {
             batchResults.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
-        return true;
-    }
 
-    function upsertInterimPair(pairIndex, result) {
-        if (!result || typeof result !== 'object') return;
-        const idx = (pairIndex !== undefined && pairIndex !== null)
-            ? pairIndex
-            : result.pair_index;
-        const enriched = Object.assign({}, result);
-        if (idx !== undefined && idx !== null && enriched.pair_index === undefined) {
-            enriched.pair_index = idx;
+        if (!successful.length) {
+            showError(
+                'Batch analysis finished but every pair failed. ' +
+                (pairResults[0] && pairResults[0].error
+                    ? ('First error: ' + pairResults[0].error)
+                    : 'Check the console for details.')
+            );
+        } else if (failedPairs) {
+            showError(
+                'Batch analysis finished with ' + successful.length +
+                ' successful pair(s) and ' + failedPairs + ' failure(s).'
+            );
+        } else if (batchProgressText) {
+            batchProgressText.textContent =
+                'Analysis complete! ' + successful.length + ' pair(s) processed.';
         }
-        const existing = interimResults.findIndex(function (r) {
-            return r && r.pair_index === enriched.pair_index;
-        });
-        if (existing >= 0) interimResults[existing] = enriched;
-        else interimResults.push(enriched);
-        completedCount = interimResults.length;
-    }
-
-    try {
-        console.log('Sending streaming request to /api/batch-analysis-stream');
-        const response = await fetch('/api/batch-analysis-stream', {
-            method: 'POST',
-            headers: getApiHeaders(),
-            body: JSON.stringify(getApiBody({
-                pairs: pairsWithPrompt,
-                foci: batchFoci,
-                n_baseline: cfg.n_baseline,
-                n_ablated: cfg.n_ablated,
-                temperature: cfg.temperature,
-                session_id: sessionId,
-                resume: false
-            }))
-        });
-
-        if (!response.ok) {
-            let errorMsg = 'Failed to start batch analysis';
-            try {
-                const errorData = await response.json();
-                errorMsg = errorData.error || errorMsg;
-            } catch (e) {
-                errorMsg = `HTTP ${response.status}: ${response.statusText}`;
-            }
-            throw new Error(errorMsg);
-        }
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop() || '';
-
-            for (const line of lines) {
-                if (!line.startsWith('data: ')) continue;
-                const payload = line.slice(6);
-                // Huge complete payloads can truncate mid-line; skip partial JSON quietly.
-                try {
-                    const data = JSON.parse(payload);
-                    handleStreamEvent(data);
-                } catch (e) {
-                    console.error('Error parsing SSE data:', e, payload.slice(0, 200));
-                }
-            }
-        }
-
-        if (buffer.startsWith('data: ')) {
-            try {
-                const data = JSON.parse(buffer.slice(6));
-                handleStreamEvent(data);
-            } catch (e) {
-                console.error('Error parsing final SSE data:', e);
-            }
-        }
-
-        // If the host closed the stream before "complete", still show what we got.
-        if (!sawCompleteEvent) {
-            finalizeBatchResults({
-                partial: true,
-                silentIfEmpty: streamHadError
-            });
-        }
-
     } catch (error) {
-        streamHadError = true;
-        // Prefer showing partial results over only an error toast.
-        if (interimResults.length) {
-            finalizeBatchResults({ partial: true });
+        console.error('Batch analysis error:', error);
+        if (pairResults.length) {
+            window.batchResultsData = {
+                results: pairResults,
+                pair_results: pairResults,
+                statistics: {},
+                focus_distribution_statistics: {},
+                cost_breakdown: {}
+            };
+            renderBatchResults(window.batchResultsData);
+            if (exportResultsBtn) exportResultsBtn.disabled = false;
             showError(
                 'Batch analysis interrupted: ' + error.message +
-                '\n\nShowing ' + interimResults.length + ' completed pair(s).'
+                '\n\nShowing ' + pairResults.length + ' completed pair(s).'
             );
         } else {
             showError('Error running batch analysis: ' + error.message);
         }
-        console.error('Batch analysis error:', error);
     } finally {
         hideLoading();
-        if (batchProgress) {
-            // Keep progress visible briefly when we rendered results so users see status.
-            if (!window.batchResultsData) {
-                batchProgress.classList.add('hidden');
-            }
-        }
-    }
-
-    function handleStreamEvent(data) {
-        console.log('SSE Event:', data.type);
-
-        switch (data.type) {
-            case 'progress':
-                if (batchProgressText) {
-                    if (data.stage === 'noise_calculation' || data.stage === 'baseline_sampling') {
-                        if (data.sample) {
-                            batchProgressText.textContent =
-                                `Sampling baseline outputs: ${data.sample}/${data.total}...`;
-                        } else {
-                            batchProgressText.textContent =
-                                data.message || 'Sampling baseline outputs...';
-                        }
-                    } else if (data.stage === 'processing') {
-                        const completed = data.completed != null ? data.completed : completedCount;
-                        const total = data.total != null ? data.total : '?';
-                        batchProgressText.textContent =
-                            (data.message || 'Processing pairs') +
-                            ` (${completed}/${total} completed)`;
-                    } else if (
-                        data.stage === 'calculating_stats' ||
-                        data.stage === 'calculating_statistics'
-                    ) {
-                        batchProgressText.textContent =
-                            data.message || 'Calculating final statistics...';
-                    } else {
-                        batchProgressText.textContent = data.message || 'Processing...';
-                    }
-                }
-                if (data.completed != null) completedCount = data.completed;
-                break;
-
-            case 'pair_result':
-            case 'pair_complete':
-                if (data.result) {
-                    upsertInterimPair(data.pair_index, data.result);
-                } else if (data.completed != null) {
-                    completedCount = data.completed;
-                }
-                if (batchProgressText) {
-                    const total = data.total != null ? data.total : '';
-                    batchProgressText.textContent = total !== ''
-                        ? `Completed ${completedCount}/${total} pairs...`
-                        : `Completed ${completedCount} pair(s)...`;
-                }
-                break;
-
-            case 'checkpoint':
-                console.log(`Checkpoint saved: ${data.completed} pairs completed`);
-                break;
-
-            case 'resume':
-                console.log(`Resuming: ${data.completed} pairs already completed`);
-                completedCount = data.completed || 0;
-                break;
-
-            case 'complete':
-                sawCompleteEvent = true;
-                {
-                const pairResults = data.pair_results || data.results || interimResults || [];
-                interimResults = pairResults.slice();
-                interimStatistics = data.statistics || interimStatistics || {};
-                interimFocusDistributionStatistics =
-                    data.focus_distribution_statistics ||
-                    interimFocusDistributionStatistics ||
-                    {};
-                interimCostBreakdown =
-                    data.cost_breakdown || interimCostBreakdown || {};
-                finalizeBatchResults({
-                    pairResults: pairResults,
-                    statistics: interimStatistics,
-                    focus_distribution_statistics: interimFocusDistributionStatistics,
-                    cost_breakdown: interimCostBreakdown,
-                    partial: false
-                });
-                }
-                break;
-
-            case 'error':
-                console.error('Error event received:', data);
-                {
-                const errText = data.message || data.error || 'Unknown error';
-                streamHadError = true;
-                // Pair-level failures still leave other pairs usable.
-                if (data.pair_index !== undefined && data.result) {
-                    upsertInterimPair(data.pair_index, Object.assign({
-                        success: false,
-                        error: errText
-                    }, data.result));
-                } else if (data.pair_index !== undefined) {
-                    upsertInterimPair(data.pair_index, {
-                        success: false,
-                        pair_index: data.pair_index,
-                        error: errText
-                    });
-                }
-                if (sessionId && completedCount > 0 && data.pair_index === undefined) {
-                    console.log(
-                        `Error occurred but ${completedCount} pairs completed. Attempting checkpoint...`
-                    );
-                    loadCheckpointData(sessionId).then(success => {
-                        if (success) {
-                            showError(
-                                `Analysis encountered an error: ${errText}\n\n` +
-                                `However, ${completedCount} pairs were completed and loaded from checkpoint.`
-                            );
-                        } else if (interimResults.length) {
-                            finalizeBatchResults({ partial: true });
-                            showError(
-                                `Error: ${errText}. Showing ${interimResults.length} completed pair(s).`
-                            );
-                        } else {
-                            showError(
-                                `Error: ${errText}. ${completedCount} pairs completed but checkpoint not found.`
-                            );
-                        }
-                    }).catch(e => {
-                        console.error('Failed to load checkpoint:', e);
-                        if (interimResults.length) finalizeBatchResults({ partial: true });
-                        showError(`Error: ${errText}. ${completedCount} pairs completed.`);
-                    });
-                } else if (data.pair_index === undefined) {
-                    showError('Error: ' + errText);
-                } else {
-                    console.error(`Error processing pair ${data.pair_index}:`, errText);
-                }
-                }
-                break;
-        }
     }
 }
 

@@ -85,6 +85,33 @@ def get_checkpoint():
         return jsonify({'error': str(e)}), 500
 
 
+@batch_bp.route('/api/batch-aggregate', methods=['POST'])
+def batch_aggregate():
+    """
+    Aggregate already-scored pair results into batch statistics.
+
+    Deterministic (no LLM). Used by the client-paced batch runner after each
+    pair is sampled/scored via /api/ablation-sample and /api/ablation-score.
+    """
+    try:
+        data = request.json or {}
+        pair_results = data.get('pair_results') or data.get('results') or []
+        if not isinstance(pair_results, list):
+            return jsonify({'error': 'pair_results must be a list'}), 400
+        statistics = calculate_statistics_from_results(pair_results)
+        focus_distribution_statistics = calculate_focus_distribution_statistics(
+            pair_results
+        )
+        return jsonify({
+            'statistics': statistics,
+            'focus_distribution_statistics': focus_distribution_statistics,
+            'pair_results': pair_results,
+            'results': pair_results,
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @batch_bp.route('/api/batch-analysis-stream', methods=['POST'])
 @batch_bp.route('/api/batch-ablation-analysis-stream', methods=['POST'])  # legacy URL
 @stream_with_context
