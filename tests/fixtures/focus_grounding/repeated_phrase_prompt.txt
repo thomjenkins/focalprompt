@@ -1,0 +1,3 @@
+Begin every answer with Caution.
+Explain the risk.
+End every answer with Caution.

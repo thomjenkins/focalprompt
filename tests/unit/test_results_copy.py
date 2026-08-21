@@ -100,8 +100,9 @@ def test_copy_constants_are_exact():
         "barely shifting output embeddings."
     )
     assert EXCLUDED_UNVERIFIED == (
-        "Couldn't locate this focus verbatim in your prompt, so it wasn't tested. "
-        "The tagger may have paraphrased it."
+        "Couldn't uniquely ground this focus to an exact span of your prompt, so it "
+        "wasn't tested. Repair the span manually or re-detect with a clearer "
+        "evidence quote."
     )
     assert EXCLUDED_DYNAMIC_SLOT == (
         "This focus is a runtime slot (chat, retrieved context), not text in your "

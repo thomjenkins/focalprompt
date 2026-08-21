@@ -125,7 +125,12 @@ class AblationService:
         input_tokens: int = 0,
         output_tokens: int = 0,
     ) -> Dict:
-        """Permutation + BH on already-collected sample texts. Does not call the chat model."""
+        """Permutation + BH on already-collected sample texts. Does not call the chat model.
+
+        ``normalized_influence`` is in percentage points on [0, 100]: attributable
+        foci share the observed influence mass so their values sum to 100 (equal
+        shares of 100/n when all raw influences are zero).
+        """
         require_stochastic_temperature(temperature)
         baseline_outputs = [str(t) for t in baseline_outputs if t is not None and str(t).strip()]
         if len(baseline_outputs) < 1:
@@ -249,12 +254,13 @@ class AblationService:
         power_warning = power_guardrail_message(
             n_baseline, n_ablated, n_attr, alpha=alpha, n_permutations=n_permutations
         )
+        # normalized_influence is percentage points: attributable foci sum to 100.
         cost_breakdown = self.cost_calculator.calculate_cost(
             int(input_tokens),
             int(output_tokens),
             total_embedding_tokens,
             self.model,
-            'openai'
+            self.provider_name,
         )
         summary = {item['focus']: item['normalized_influence'] for item in influence_scores}
         return {
@@ -272,9 +278,11 @@ class AblationService:
             'test_type': design_test_type(n_baseline, n_ablated, n_permutations),
             'summary': summary,
             'cost_breakdown': cost_breakdown,
+            'embedding_tokens': int(total_embedding_tokens),
             'prompt': prompt,
             'foci_list': classified,
             'model': self.model,
+            'provider': self.provider_name,
             'power_warning': power_warning,
             'significance_method': 'permutation_bh',
         }

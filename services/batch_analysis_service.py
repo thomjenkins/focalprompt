@@ -7,7 +7,6 @@ Per-pair subtractive ablation with a permutation test.
 
 import json
 import time
-import numpy as np
 from typing import List, Dict, Optional, Generator
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -21,15 +20,11 @@ from utils.data_processing import (
 )
 from services.assessment_service import AssessmentService
 from utils.gateway_chat import chat_completion as gateway_chat_completion
-from services.ablation_service import SAMPLE_GAP_SECONDS
+from services.ablation_service import AblationService, SAMPLE_GAP_SECONDS
 from utils.permutation_test import (
     DEFAULT_ALPHA,
     DEFAULT_N_PERMUTATIONS,
-    benjamini_hochberg,
-    permutation_test,
-    power_guardrail_message,
     require_stochastic_temperature,
-    design_test_type,
 )
 
 
@@ -93,17 +88,23 @@ class BatchAnalysisService:
         permutation_seed: Optional[int] = None,
         temperature: float = 0.7,
     ) -> Dict:
-        """Process one pair: shared baseline samples, per-focus ablated samples, permutation + BH."""
+        """
+        Process one pair.
+
+        Orchestration only: sample baseline/ablated outputs, optional reported-focus
+        assessment, then delegate statistical scoring to
+        ``AblationService.score_from_samples`` (canonical single-run scorer).
+        """
         try:
             require_stochastic_temperature(temperature)
             prompt = pair_data.get('prompt', '')
             classified = classify_foci_for_ablation(prompt, foci_list)
-            
+
             baseline_outputs, input_tokens, output_tokens = self._sample_outputs(
                 prompt, n_baseline, temperature
             )
             baseline_output = baseline_outputs[0]
-            
+
             focus_distribution_assessment = None
             assessment_error = None
             if self.assessment_service:
@@ -129,127 +130,77 @@ class BatchAnalysisService:
                         output_tokens += usage_fd.get('completion_tokens', 0) or usage_fd.get('output_tokens', 0)
                 except Exception as ex:
                     assessment_error = str(ex)
-            
-            baseline_embeddings, embedding_tokens = self.embedding_service.batch_embeddings_with_usage(
-                baseline_outputs
-            )
-            baseline_embeddings = np.asarray(baseline_embeddings, dtype=float)
-            
-            ablation_results = []
-            scored_payloads = []
-            rng = np.random.default_rng(
-                None if permutation_seed is None else permutation_seed + pair_idx
-            )
-            
+
+            ablated_by_index: Dict[int, List[str]] = {}
             for i, focus in enumerate(classified):
-                focus_name = focus.get('focus', f'Focus {i + 1}')
-                row = {
-                    'focus_index': i,
-                    'focus': focus_name,
-                    'prompt_section': focus.get('prompt_section', ''),
-                    'verified': bool(focus.get('verified')),
-                    'char_start': focus.get('char_start'),
-                    'char_end': focus.get('char_end'),
-                    'attributable': bool(focus.get('attributable')),
-                    'reason': focus.get('reason'),
-                    'overlap_with': list(focus.get('overlap_with') or []),
-                    'is_dynamic': bool(focus.get('is_dynamic')),
-                }
                 if not focus.get('attributable'):
-                    ablation_results.append(row)
                     continue
-                
-                ablated_prompt, prompt_empty, _collapsed = delete_span(
+                ablated_prompt, _prompt_empty, _collapsed = delete_span(
                     prompt, focus['char_start'], focus['char_end']
                 )
-                row['ablated_prompt'] = ablated_prompt
-                row['prompt_empty'] = prompt_empty
-                
-                ablated_outputs, tin, tout = self._sample_outputs(
+                texts, tin, tout = self._sample_outputs(
                     ablated_prompt, n_ablated, temperature
                 )
                 input_tokens += tin
                 output_tokens += tout
-                row['ablated_output'] = ablated_outputs[0]
-                row['ablated_outputs'] = ablated_outputs
-                
-                ablated_embeddings, tokens = self.embedding_service.batch_embeddings_with_usage(
-                    ablated_outputs
-                )
-                embedding_tokens += tokens
-                ablated_embeddings = np.asarray(ablated_embeddings, dtype=float)
-                
-                perm = permutation_test(
-                    baseline_embeddings,
-                    ablated_embeddings,
-                    n_permutations=n_permutations,
-                    rng=rng,
-                )
-                row['t_obs'] = perm['t_obs']
-                ablation_results.append(row)
-                scored_payloads.append((focus_name, row, perm))
-            
-            raw_p = [p['p_value'] for _, _, p in scored_payloads]
-            bh = benjamini_hochberg(raw_p, alpha=alpha)
-            focus_influences = {}
-            for (focus_name, row, perm), adj in zip(scored_payloads, bh):
-                t_obs = perm['t_obs']
-                focus_influences[focus_name] = {
-                    'influence': float(t_obs),
-                    'similarity': float(1.0 - t_obs),
-                    't_obs': float(t_obs),
-                    'p_value': adj['p_value'],
-                    'q_value': adj['q_value'],
-                    'is_significant': adj['significant'],
-                    'exact': perm['exact'],
-                    'n_permutations': perm['n_permutations'],
-                    'null_mean': perm['null_mean'],
-                    'null_p95': perm['null_p95'],
-                    'standardized_effect': perm['standardized_effect'],
-                    'null_deciles': perm['null_deciles'],
-                    'ablated_prompt': row['ablated_prompt'],
-                    'prompt_empty': row.get('prompt_empty', False),
-                    'verified': True,
-                    'attributable': True,
-                    'char_start': row['char_start'],
-                    'char_end': row['char_end'],
-                }
-            
-            total_raw = sum(d['influence'] for d in focus_influences.values())
-            if total_raw > 0:
-                for d in focus_influences.values():
-                    d['normalized_influence'] = d['influence'] / total_raw
-            elif focus_influences:
-                share = 1.0 / len(focus_influences)
-                for d in focus_influences.values():
-                    d['normalized_influence'] = share
-            
-            n_attr = len(focus_influences)
-            power_warning = power_guardrail_message(
-                n_baseline, n_ablated, n_attr, alpha=alpha, n_permutations=n_permutations
+                ablated_by_index[i] = texts
+
+            pair_seed = (
+                None if permutation_seed is None else int(permutation_seed) + int(pair_idx)
             )
-            
+            scorer = AblationService(
+                self.provider,
+                self.model,
+                api_key=self.api_key,
+                embedding_service=self.embedding_service,
+                cost_calculator=self.cost_calculator,
+                provider_name=self.provider_name,
+            )
+            scored = scorer.score_from_samples(
+                prompt,
+                foci_list,
+                baseline_outputs,
+                ablated_by_index,
+                n_permutations=n_permutations,
+                alpha=alpha,
+                permutation_seed=pair_seed,
+                temperature=temperature,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+            )
+
+            # Batch aggregate helpers expect a focus-name -> metrics dict.
+            influence_scores = {}
+            for item in scored.get('influence_scores') or []:
+                name = item.get('focus')
+                if not name:
+                    continue
+                influence_scores[name] = dict(item)
+
             out = {
                 'success': True,
                 'pair_index': pair_idx,
                 'pair_data': pair_data,
-                'influence_scores': focus_influences,
-                'ablation_results': ablation_results,
-                'foci_list': classified,
+                'influence_scores': influence_scores,
+                'ablation_results': scored.get('ablation_results', []),
+                'foci_list': scored.get('foci_list', classified),
                 'baseline_outputs': baseline_outputs,
-                'n_baseline': n_baseline,
-                'n_ablated': n_ablated,
-                'n_permutations': n_permutations,
-                'alpha': alpha,
-                'temperature': temperature,
-                'test_type': design_test_type(n_baseline, n_ablated, n_permutations),
-                'power_warning': power_warning,
-                'significance_method': 'permutation_bh',
+                'n_baseline': scored.get('n_baseline', n_baseline),
+                'n_ablated': scored.get('n_ablated', n_ablated),
+                'n_permutations': scored.get('n_permutations', n_permutations),
+                'alpha': scored.get('alpha', alpha),
+                'temperature': scored.get('temperature', temperature),
+                'test_type': scored.get('test_type'),
+                'power_warning': scored.get('power_warning'),
+                'significance_method': scored.get('significance_method', 'permutation_bh'),
+                'summary': scored.get('summary', {}),
+                'model': self.model,
+                'provider': self.provider_name,
                 'tokens': {
                     'input': input_tokens,
                     'output': output_tokens,
-                    'embedding': embedding_tokens
-                }
+                    'embedding': int(scored.get('embedding_tokens') or 0),
+                },
             }
             if focus_distribution_assessment is not None:
                 out['focus_distribution_assessment'] = focus_distribution_assessment
@@ -260,9 +211,9 @@ class BatchAnalysisService:
             return {
                 'success': False,
                 'pair_index': pair_idx,
-                'error': str(e)
+                'error': str(e),
             }
-    
+
     def stream_batch_analysis(
         self,
         pairs: List[Dict],
@@ -359,7 +310,7 @@ class BatchAnalysisService:
             total_output_tokens,
             total_embedding_tokens,
             self.model,
-            'openai'
+            self.provider_name,
         )
         
         checkpoint_data = {

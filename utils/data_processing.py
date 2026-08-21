@@ -1,20 +1,68 @@
 #!/usr/bin/env python3
 """
-Data processing utilities.
+Data processing utilities for batch aggregation.
 
-Functions for processing CSV data, calculating statistics, etc.
+Normalized influence convention (canonical, matches AblationService.score_from_samples):
+  * ``normalized_influence`` is in **percentage points** on [0, 100].
+  * Across attributable foci in a single pair, values sum to 100.
+  * Reported-focus assessment scores also sum to ~100 points per pair.
+
+Missing-focus policy for aggregation:
+  * If a focus is absent or non-attributable in a pair, that pair is **excluded**
+    from that focus's denominator (not imputed as zero).
 """
 
+from __future__ import annotations
+
 import numpy as np
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 
-def _per_pair_normalized_from_result(result: Dict) -> tuple:
+# Canonical scale for ablation normalized_influence and batch share aggregates.
+NORMALIZED_INFLUENCE_PERCENTAGE_SCALE = 100.0
+
+
+def _as_percentage_shares(
+    focus_values: Dict[str, float],
+    chat_value: float = 0.0,
+    *,
+    has_chat: bool = False,
+) -> Tuple[Dict[str, float], float]:
     """
-    Return (focus_name -> normalized share, chat normalized share) for one pair.
+    Coerce per-pair shares onto the 0–100 percentage-point scale.
 
-    Chat attribution is out of scope; if chat_content_influence is absent, chat share is 0
-    and shares are normalised over attributable foci only.
+    Accepts legacy fractional payloads (sum ≈ 1) and modern percentage payloads
+    (sum ≈ 100). Always returns percentages that sum to 100 when any mass exists.
+    """
+    total = sum(focus_values.values()) + (chat_value if has_chat else 0.0)
+    if total <= 0:
+        n = len(focus_values) + (1 if has_chat else 0)
+        if n == 0:
+            return {}, 0.0
+        share = NORMALIZED_INFLUENCE_PERCENTAGE_SCALE / n
+        return {name: share for name in focus_values}, (share if has_chat else 0.0)
+
+    # Legacy 0–1 fractions (with tolerance for float noise).
+    if 0.5 <= total <= 1.5:
+        scale = NORMALIZED_INFLUENCE_PERCENTAGE_SCALE / total
+    # Already percentage points (or close); renormalize gently to exact 100.
+    elif 50.0 <= total <= 150.0:
+        scale = NORMALIZED_INFLUENCE_PERCENTAGE_SCALE / total
+    else:
+        # Unknown scale: treat values as raw masses and renormalize to 100.
+        scale = NORMALIZED_INFLUENCE_PERCENTAGE_SCALE / total
+
+    focus_pct = {name: float(v) * scale for name, v in focus_values.items()}
+    chat_pct = float(chat_value) * scale if has_chat else 0.0
+    return focus_pct, chat_pct
+
+
+def _per_pair_normalized_from_result(result: Dict) -> Tuple[Dict[str, float], float]:
+    """
+    Return (focus_name -> percentage share, chat percentage share) for one pair.
+
+    Only foci present in ``influence_scores`` with an ``influence`` field are
+    included. Absent foci are omitted (excluded from later denominators).
     """
     influence_scores = result.get('influence_scores', {}) or {}
     scored = {
@@ -24,80 +72,65 @@ def _per_pair_normalized_from_result(result: Dict) -> tuple:
     chat_influence = result.get('chat_content_influence') or {}
     has_chat = isinstance(chat_influence, dict) and 'influence' in chat_influence
     chat_raw = float(chat_influence.get('influence', 0.0)) if has_chat else 0.0
-    
+
     all_have_norm = (
         scored
         and all('normalized_influence' in d for d in scored.values())
         and (not has_chat or 'normalized_influence' in chat_influence)
     )
     if all_have_norm:
-        focus_norm = {
+        focus_vals = {
             name: float(d['normalized_influence']) for name, d in scored.items()
         }
-        chat_norm = float(chat_influence['normalized_influence']) if has_chat else 0.0
-        return focus_norm, chat_norm
-    
-    raw_sum = sum(float(d.get('influence', 0.0)) for d in scored.values()) + chat_raw
-    if raw_sum > 0:
-        focus_norm = {
-            name: float(d.get('influence', 0.0)) / raw_sum
-            for name, d in scored.items()
-        }
-        chat_norm = chat_raw / raw_sum if has_chat else 0.0
-        return focus_norm, chat_norm
-    
-    n = len(scored) + (1 if has_chat else 0)
-    share = (1.0 / n) if n else 0.0
-    focus_norm = {name: share for name in scored}
-    chat_norm = share if has_chat else 0.0
-    return focus_norm, chat_norm
+        chat_val = float(chat_influence['normalized_influence']) if has_chat else 0.0
+        return _as_percentage_shares(focus_vals, chat_val, has_chat=has_chat)
+
+    focus_vals = {
+        name: float(d.get('influence', 0.0)) for name, d in scored.items()
+    }
+    return _as_percentage_shares(focus_vals, chat_raw, has_chat=has_chat)
 
 
 def calculate_statistics_from_results(pair_results: List[Dict]) -> Dict:
     """
-    Calculate statistics from pair results if they're missing from checkpoint.
+    Aggregate pair-level ablation results.
 
-    Primary metrics are **normalized shares** (per pair, foci + chat sum to 100%), averaged
-    across pairs — comparable to single-run ablation's normalized influence.
+    Primary metrics are **normalized percentage shares** (0–100; attributable
+    foci sum to 100 within each pair), averaged across pairs where the focus
+    appears. A focus missing from a pair does **not** contribute a zero — that
+    pair is omitted from the focus's sample.
 
-    Raw embedding-shift stats (1 - similarity) are kept as mean_raw / variance_raw / etc.
-    
-    Args:
-        pair_results: List of pair result dictionaries
-        
-    Returns:
-        Dict with statistics for each focus
+    Raw embedding-shift stats (``influence`` / T_obs) are retained as
+    ``mean_raw`` / ``variance_raw`` / etc.
     """
-    all_focus_influences = {}
-    all_focus_shares = {}
-    all_chat_influences = []
-    all_chat_shares = []
-    
+    all_focus_influences: Dict[str, List[float]] = {}
+    all_focus_shares: Dict[str, List[float]] = {}
+    all_chat_influences: List[float] = []
+    all_chat_shares: List[float] = []
+
     for result in pair_results:
         if not result.get('success', False):
             continue
-        
-        # Raw shift (1 - similarity) — not additive across foci
-        influence_scores = result.get('influence_scores', {})
+
+        influence_scores = result.get('influence_scores', {}) or {}
         for focus_name, influence_data in influence_scores.items():
-            if focus_name not in all_focus_influences:
-                all_focus_influences[focus_name] = []
-            all_focus_influences[focus_name].append(influence_data.get('influence', 0.0))
-        
+            if not isinstance(influence_data, dict) or 'influence' not in influence_data:
+                continue
+            all_focus_influences.setdefault(focus_name, []).append(
+                float(influence_data.get('influence', 0.0))
+            )
+
         chat_influence = result.get('chat_content_influence') or {}
-        if 'influence' in chat_influence:
-            all_chat_influences.append(chat_influence['influence'])
-        
-        # Normalized shares (sum to 100% within each pair)
+        if isinstance(chat_influence, dict) and 'influence' in chat_influence:
+            all_chat_influences.append(float(chat_influence['influence']))
+
         focus_norm, chat_norm = _per_pair_normalized_from_result(result)
         for focus_name, share in focus_norm.items():
-            if focus_name not in all_focus_shares:
-                all_focus_shares[focus_name] = []
-            all_focus_shares[focus_name].append(share)
-        if result.get('chat_content_influence') and 'influence' in (result.get('chat_content_influence') or {}):
+            all_focus_shares.setdefault(focus_name, []).append(share)
+        if isinstance(chat_influence, dict) and 'influence' in chat_influence:
             all_chat_shares.append(chat_norm)
-    
-    def _stats(values):
+
+    def _stats(values: List[float]):
         if len(values) == 0:
             return None
         arr = np.array(values, dtype=float)
@@ -106,11 +139,11 @@ def calculate_statistics_from_results(pair_results: List[Dict]) -> Dict:
             'variance': float(np.var(arr)),
             'std_dev': float(np.std(arr)),
             'min': float(np.min(arr)),
-            'max': float(np.max(arr))
+            'max': float(np.max(arr)),
+            'n_pairs': int(len(values)),
         }
-    
-    # Calculate statistics — primary: share (normalized); raw shift kept as *_raw
-    statistics = {}
+
+    statistics: Dict[str, Dict] = {}
     for focus_name in sorted(set(all_focus_shares.keys()) | set(all_focus_influences.keys())):
         share_vals = all_focus_shares.get(focus_name, [])
         raw_vals = all_focus_influences.get(focus_name, [])
@@ -128,9 +161,9 @@ def calculate_statistics_from_results(pair_results: List[Dict]) -> Dict:
                     'variance_raw': raw_st['variance'],
                     'std_dev_raw': raw_st['std_dev'],
                     'min_raw': raw_st['min'],
-                    'max_raw': raw_st['max']
+                    'max_raw': raw_st['max'],
                 })
-    
+
     if len(all_chat_shares) > 0:
         st = _stats(all_chat_shares)
         if st:
@@ -143,9 +176,9 @@ def calculate_statistics_from_results(pair_results: List[Dict]) -> Dict:
                         'variance_raw': raw_st['variance'],
                         'std_dev_raw': raw_st['std_dev'],
                         'min_raw': raw_st['min'],
-                        'max_raw': raw_st['max']
+                        'max_raw': raw_st['max'],
                     })
-    
+
     return statistics
 
 
@@ -153,7 +186,8 @@ def calculate_focus_distribution_statistics(pair_results: List[Dict]) -> Dict:
     """
     Aggregate LLM-assessed focus scores (each pair sums to ~100 points) across batch pairs.
 
-    Returns per-focus mean / variance / min / max of those scores.
+    A focus absent from a pair's assessment is excluded from that focus's
+    denominator (not treated as zero).
     """
     by_focus: Dict[str, List[float]] = {}
     for result in pair_results:
@@ -167,9 +201,7 @@ def calculate_focus_distribution_statistics(pair_results: List[Dict]) -> Dict:
             if not name:
                 continue
             score = float(item.get('score', 0))
-            if name not in by_focus:
-                by_focus[name] = []
-            by_focus[name].append(score)
+            by_focus.setdefault(name, []).append(score)
 
     statistics: Dict[str, Dict] = {}
     for name, scores in sorted(by_focus.items()):
@@ -185,5 +217,3 @@ def calculate_focus_distribution_statistics(pair_results: List[Dict]) -> Dict:
             'n_pairs': len(scores),
         }
     return statistics
-
-

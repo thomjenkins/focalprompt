@@ -2,13 +2,14 @@
 """
 Batch analysis route handlers.
 
-These routes will be fully implemented after batch_analysis_service is complete.
-For now, they import from the old app.py to maintain functionality.
+CSV upload parsing, SSE batch ablation, and checkpoint list/load.
 """
 
 from flask import Blueprint, request, jsonify, Response, stream_with_context
 import json
+
 from services.checkpoint_service import CheckpointService
+from utils.batch_csv import parse_batch_csv_bytes, parse_result_to_response
 from utils.data_processing import (
     calculate_statistics_from_results,
     calculate_focus_distribution_statistics,
@@ -17,6 +18,30 @@ from utils.request_inference import request_inference_fields
 
 
 batch_bp = Blueprint('batch', __name__)
+
+
+@batch_bp.route('/api/parse-batch-csv', methods=['POST'])
+def parse_batch_csv():
+    """
+    Parse a CSV upload into batch analysis pairs.
+
+    Deterministic application logic (not an LLM call). Expects multipart
+    form field ``file``. See ``utils.batch_csv`` for column aliases and limits.
+    """
+    try:
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file provided', 'errors': ['No file provided'], 'pairs': []}), 400
+
+        file = request.files['file']
+        if not file or file.filename == '':
+            return jsonify({'error': 'No file selected', 'errors': ['No file selected'], 'pairs': []}), 400
+
+        raw = file.read()
+        result = parse_batch_csv_bytes(raw)
+        body, status = parse_result_to_response(result)
+        return jsonify(body), status
+    except Exception as e:
+        return jsonify({'error': str(e), 'errors': [str(e)], 'pairs': []}), 500
 
 
 @batch_bp.route('/api/list-checkpoints', methods=['GET'])
@@ -39,10 +64,10 @@ def get_checkpoint():
         checkpoint_type = request.args.get('type', 'batch_analysis')
         if not session_id:
             return jsonify({'error': 'session_id required'}), 400
-        
+
         checkpoint_service = CheckpointService()
         checkpoint = checkpoint_service.load_checkpoint(session_id, checkpoint_type)
-        
+
         if checkpoint:
             # Always derive batch statistics from pair results so logic stays in sync
             if checkpoint_type == 'batch_analysis':
@@ -52,7 +77,7 @@ def get_checkpoint():
                     checkpoint['focus_distribution_statistics'] = (
                         calculate_focus_distribution_statistics(pair_results)
                     )
-            
+
             return jsonify(checkpoint)
         else:
             return jsonify({'error': 'Checkpoint not found'}), 404
@@ -71,10 +96,10 @@ def batch_analysis_stream():
     from services.cost_calculator import CostCalculator
     from services.checkpoint_service import CheckpointService
     from services.assessment_service import AssessmentService
-    
+
     def generate():
         try:
-            data = request.json
+            data = request.json or {}
             pairs = data.get('pairs', [])
             foci_list = data.get('foci', [])
             num_samples = data.get('num_samples')
@@ -86,28 +111,27 @@ def batch_analysis_stream():
             temperature = data.get('temperature', 0.7)
             session_id = data.get('session_id')
             resume = data.get('resume', False)
-            
+
             if not pairs or len(pairs) == 0:
                 yield f"data: {json.dumps({'type': 'error', 'message': 'At least one pair is required'})}\n\n"
                 return
-            
+
             if not foci_list or len(foci_list) == 0:
                 yield f"data: {json.dumps({'type': 'error', 'message': 'Foci are required'})}\n\n"
                 return
-            
+
             fields = request_inference_fields(data)
             model = fields['model']
             provider = fields['provider']
-            
+
             assessor = get_assessor(data=fields)
             provider_instance = assessor.provider
             assessment_service = AssessmentService(assessor)
-            
-            # Create services - embedding service uses AI Gateway
+
             embedding_service = EmbeddingService()
             cost_calculator = CostCalculator()
             checkpoint_service = CheckpointService()
-            
+
             batch_service = BatchAnalysisService(
                 provider_instance,
                 model,
@@ -118,8 +142,7 @@ def batch_analysis_stream():
                 assessment_service=assessment_service,
                 provider_name=getattr(assessor, 'provider_name', provider),
             )
-            
-            # Stream results
+
             for chunk in batch_service.stream_batch_analysis(
                 pairs,
                 foci_list,
@@ -134,13 +157,13 @@ def batch_analysis_stream():
                 temperature=temperature,
             ):
                 yield chunk
-                
+
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
-    
+
     return Response(generate(), mimetype='text/event-stream', headers={
         'Cache-Control': 'no-cache',
-        'X-Accel-Buffering': 'no'
+        'X-Accel-Buffering': 'no',
     })
 
 
@@ -148,22 +171,20 @@ def batch_analysis_stream():
 def test_api_key():
     """Test if an API key is valid for the specified provider."""
     try:
-        data = request.json
+        data = request.json or {}
         api_key = data.get('api_key', '')
         provider = data.get('provider', 'openai')
-        
+
         if not api_key:
             return jsonify({'valid': False, 'error': 'No API key provided'}), 400
-        
-        # Try to create a provider and make a simple request
+
         try:
             from core.llm_providers import get_provider
             test_provider = get_provider(provider, api_key)
-            # Make a minimal test call (list models or simple completion)
             test_provider.list_models()
             return jsonify({'valid': True})
         except Exception as e:
             return jsonify({'valid': False, 'error': str(e)}), 400
-            
+
     except Exception as e:
         return jsonify({'valid': False, 'error': str(e)}), 500

@@ -81,8 +81,14 @@ except Exception as e:
 try:
     from routes.batch_routes import batch_bp
     app.register_blueprint(batch_bp)
+    batch_routes = [r for r in app.url_map.iter_rules() if 'batch' in r.endpoint]
+    print(f"✅ Registered batch_bp with {len(batch_routes)} routes", file=sys.stderr)
+    for route in batch_routes:
+        print(f"   - {list(route.methods)} {route}", file=sys.stderr)
 except Exception as e:
-    print(f"Error registering batch_bp: {e}", file=sys.stderr)
+    print(f"❌ Error registering batch_bp: {type(e).__name__}: {e}", file=sys.stderr)
+    import traceback
+    traceback.print_exc(file=sys.stderr)
 
 try:
     from routes.agent_routes import agent_bp

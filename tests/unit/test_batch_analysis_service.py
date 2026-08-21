@@ -165,3 +165,92 @@ def test_stream_uses_same_pair_prompt(batch_service, mock_provider):
         # Must not be the chat-stripped system-only string if that differs
         if stripped != pair_prompt:
             assert c != stripped
+
+
+def test_batch_temperature_zero_rejected(batch_service):
+    out = batch_service.process_single_pair(
+        {'prompt': PROMPT}, 0, _foci(), n_baseline=1, n_ablated=1, temperature=0
+    )
+    assert out['success'] is False
+    assert 'temperature' in out['error'].lower()
+
+
+def test_batch_bh_denominator_excludes_non_attributable(batch_service, monkeypatch):
+    captured = {}
+
+    def capture(p_values, alpha=0.05):
+        from utils.permutation_test import benjamini_hochberg as real_bh
+        captured['n'] = len(p_values)
+        return real_bh(p_values, alpha=alpha)
+
+    monkeypatch.setattr('services.ablation_service.benjamini_hochberg', capture)
+    foci = [
+        {'focus': 'Role', 'prompt_section': 'You are a veterinary triage assistant.'},
+        {
+            'focus': 'Chat',
+            'prompt_section': 'Always cite the source of any medical claim.',
+            'is_dynamic': True,
+            'dynamic_type': 'chat',
+        },
+    ]
+    result = batch_service.process_single_pair(
+        {'prompt': PROMPT}, 0, foci, n_baseline=2, n_ablated=2
+    )
+    assert result['success'] is True
+    assert captured['n'] == 1
+
+
+def test_batch_no_embedding_inside_permutation(batch_service, mock_embedding_service, monkeypatch):
+    embed_calls = {'n': 0}
+
+    def counting_batch(texts):
+        embed_calls['n'] += 1
+        import numpy as np
+        return [np.ones(8) for _ in texts], len(texts)
+
+    mock_embedding_service.batch_embeddings_with_usage.side_effect = counting_batch
+
+    from utils.permutation_test import permutation_test as real_perm
+
+    def wrapped_perm(*args, **kwargs):
+        before = embed_calls['n']
+        out = real_perm(*args, **kwargs)
+        assert embed_calls['n'] == before
+        return out
+
+    monkeypatch.setattr('services.ablation_service.permutation_test', wrapped_perm)
+    result = batch_service.process_single_pair(
+        {'prompt': PROMPT}, 0, _foci(), n_baseline=2, n_ablated=2, n_permutations=32
+    )
+    assert result['success'] is True, result.get('error')
+    # baseline once + one embedding batch per attributable focus
+    assert embed_calls['n'] == 1 + 2
+
+
+def test_batch_normalized_influence_sums_to_100(batch_service):
+    result = batch_service.process_single_pair(
+        {'prompt': PROMPT}, 0, _foci(), n_baseline=2, n_ablated=2
+    )
+    assert result['success'] is True
+    total = sum(d['normalized_influence'] for d in result['influence_scores'].values())
+    assert abs(total - 100.0) < 1e-6
+
+
+def test_batch_provider_passed_to_cost(batch_service, monkeypatch):
+    seen = {}
+
+    class FakeCost:
+        def calculate_cost(self, *args, **kwargs):
+            # signature: input, output, embedding, model, provider
+            seen['provider'] = args[4] if len(args) >= 5 else kwargs.get('provider')
+            return {'total_cost': 0.0}
+
+    batch_service.cost_calculator = FakeCost()
+    batch_service.provider_name = 'anthropic'
+    events = list(
+        batch_service.stream_batch_analysis(
+            [{'prompt': PROMPT, 'output': 'o'}], _foci(), n_baseline=1, n_ablated=1
+        )
+    )
+    assert any('"type": "complete"' in e for e in events)
+    assert seen.get('provider') == 'anthropic'

@@ -1120,6 +1120,18 @@ detectFociBtn.addEventListener('click', async () => {
             is_dynamic: f.is_dynamic || false,
             dynamic_type: f.dynamic_type || null
         }));
+        window.fociCoverage = data.coverage || null;
+        // Automatic proposals without source provenance are omitted from foci;
+        // keep them for debug/advanced inspection only.
+        window.rejectedFocusProposals = data.rejected_proposals || [];
+        if (window.rejectedFocusProposals.length) {
+            console.info(
+                'Omitted',
+                window.rejectedFocusProposals.length,
+                'auto-detected proposal(s) lacking source provenance',
+                window.rejectedFocusProposals
+            );
+        }
         renderFoci();
         
     } catch (error) {
@@ -1196,7 +1208,12 @@ if (tagSelectionBtn) {
             prompt_section: selectedText,
             description: '',
             is_dynamic: false,
-            dynamic_type: null
+            dynamic_type: null,
+            verified: true,
+            char_start: selectedStart,
+            char_end: selectedEnd,
+            grounding_method: 'manual_selection',
+            grounding_confidence: 1.0,
         });
         
         renderFoci();
@@ -1234,6 +1251,42 @@ const focusColors = [
     '#f3e8ff', '#ede9fe', '#e0f2fe', '#f0f9ff', '#f5f3ff'
 ];
 
+
+// Repair an unverified focus by binding the current prompt selection as its exact span.
+function repairFocusSpan(index) {
+    const prompt = promptInput.value;
+    const start = promptInput.selectionStart;
+    const end = promptInput.selectionEnd;
+    if (start === end || start == null || end == null) {
+        showErrorModal('Select the exact source span in the prompt first, then click Use selection as span.');
+        return;
+    }
+    if (start < 0 || end > prompt.length || start >= end) {
+        showErrorModal('Invalid selection for focus span.');
+        return;
+    }
+    const exact = prompt.substring(start, end);
+    const focus = foci[index];
+    if (!focus) return;
+    if (!focus.original_proposal && focus.prompt_section) {
+        focus.original_proposal = focus.prompt_section;
+    }
+    focus.char_start = start;
+    focus.char_end = end;
+    focus.prompt_section = exact;
+    focus.verified = true;
+    focus.grounding_method = 'manual_selection';
+    focus.grounding_confidence = 1.0;
+    focus.grounding_failure = null;
+    focus.attributable = focus.is_dynamic ? false : true;
+    if (focus.is_dynamic) {
+        focus.reason = 'dynamic_slot';
+    } else {
+        focus.reason = null;
+    }
+    renderFoci();
+}
+
 // Render Foci
 function renderFoci() {
     if (foci.length === 0) {
@@ -1269,7 +1322,22 @@ function renderFoci() {
                 <button class="focus-item-remove" onclick="removeFocus(${index})">×</button>
             </div>
             <div class="focus-item-section">
-                <strong>Prompt Section:</strong> ${escapeHtml(focus.prompt_section)}
+                ${focus.verified === false ? `
+                <div style="margin-bottom:8px;padding:8px;background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;font-size:0.9em;">
+                    <strong>Not grounded for ablation</strong>
+                    <div style="margin-top:4px;">Could not uniquely map this focus to an exact span of the original prompt${focus.grounding_failure ? ` (${escapeHtml(focus.grounding_failure)})` : ''}.</div>
+                    ${focus.original_proposal || focus.prompt_section ? `<div style="margin-top:6px;"><em>Proposed:</em> ${escapeHtml(focus.original_proposal || focus.prompt_section)}</div>` : ''}
+                    ${focus.evidence_quote ? `<div style="margin-top:4px;"><em>Evidence quote:</em> ${escapeHtml(focus.evidence_quote)}</div>` : ''}
+                    <div style="margin-top:8px;">Select the exact source span in the prompt, then
+                      <button type="button" onclick="repairFocusSpan(${index})" style="margin-left:4px;padding:2px 8px;font-size:0.85em;">Use selection as span</button>
+                    </div>
+                </div>` : `
+                <div style="margin-bottom:6px;">
+                  <span style="display:inline-block;padding:2px 6px;border-radius:4px;font-size:0.75em;background:#dcfce7;color:#166534;">Verified span</span>
+                  ${focus.grounding_method ? `<span style="margin-left:6px;font-size:0.75em;color:#64748b;">${escapeHtml(focus.grounding_method)}</span>` : ''}
+                </div>
+                <strong>Exact source span under test:</strong> ${escapeHtml(focus.prompt_section)}
+                `}
             </div>
             <div class="focus-item-controls" style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #e5e7eb; display: flex; align-items: center; gap: 12px;">
                 <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
@@ -1537,17 +1605,30 @@ function updateCoverageVisualization() {
     // Find all covered sections
     const coveredRanges = [];
     foci.forEach((focus, index) => {
-        const section = focus.prompt_section;
-        if (section) {
-            const startIndex = prompt.toLowerCase().indexOf(section.toLowerCase());
-            if (startIndex !== -1) {
-                coveredRanges.push({
-                    start: startIndex,
-                    end: startIndex + section.length,
-                    focusIndex: index,
-                    focus: focus
-                });
+        if (focus.verified === false || focus.is_dynamic) {
+            return;
+        }
+        let startIndex = null;
+        let endIndex = null;
+        if (Number.isInteger(focus.char_start) && Number.isInteger(focus.char_end)
+            && focus.char_start >= 0 && focus.char_end <= prompt.length
+            && focus.char_start < focus.char_end) {
+            startIndex = focus.char_start;
+            endIndex = focus.char_end;
+        } else if (focus.prompt_section) {
+            const idx = prompt.indexOf(focus.prompt_section);
+            if (idx !== -1) {
+                startIndex = idx;
+                endIndex = idx + focus.prompt_section.length;
             }
+        }
+        if (startIndex !== null) {
+            coveredRanges.push({
+                start: startIndex,
+                end: endIndex,
+                focusIndex: index,
+                focus: focus
+            });
         }
     });
     
@@ -2005,6 +2086,15 @@ if (promptInput) {
     });
 }
 
+
+function rewriteWeightBand(weight) {
+    const w = Number(weight) || 0;
+    if (w <= 0) return 'omit';
+    if (w <= 29) return 'minimize';
+    if (w <= 69) return 'retain';
+    return 'emphasize';
+}
+
 // Initialize sliders from assessment results
 function initializeSlidersFromAssessment(assessmentFoci) {
     if (!assessmentFoci || assessmentFoci.length === 0) {
@@ -2012,10 +2102,15 @@ function initializeSlidersFromAssessment(assessmentFoci) {
         return;
     }
     
-    // Initialize weights from assessment scores (including 0 scores)
+    // Initialize rewrite weights from reported-focus scores (including 0).
+    // reported_focus_score stays on the focus; focusWeights holds editable rewrite_weight.
     focusWeights = {};
     assessmentFoci.forEach((focus, index) => {
-        focusWeights[index] = focus.score || 0;
+        const reported = (typeof focus.score === 'number') ? focus.score : (parseFloat(focus.score) || 0);
+        focus.reported_focus_score = reported;
+        // Do not treat a reported 0 as "missing" — keep exact 0 as rewrite intent seed.
+        focusWeights[index] = reported;
+        focus.rewrite_weight = reported;
     });
     
     // Normalize to 100 if total is not 100
@@ -2051,6 +2146,11 @@ function renderSliders() {
                 <div class="slider-item-header">
                     <div class="slider-item-title">${index + 1}. ${escapeHtml(focus.focus)}</div>
                     <div class="slider-value" id="slider-value-${index}">${weight.toFixed(1)}%</div>
+                </div>
+                <div style="font-size: 0.8em; color: #64748b; margin-bottom: 6px;">
+                    Rewrite weight (editable)
+                    · reported focus: ${(typeof focus.reported_focus_score === 'number' ? focus.reported_focus_score : (focus.score || 0)).toFixed(1)}%
+                    · band: <span id="slider-band-${index}">${rewriteWeightBand(weight)}</span>
                 </div>
                 <div class="slider-wrapper">
                     <input 
@@ -2114,16 +2214,26 @@ function renderSliders() {
                         // Update slider and display
                         const otherSlider = document.getElementById(`slider-${i}`);
                         const otherDisplay = document.getElementById(`slider-value-${i}`);
+                        if (assessmentFoci[i]) {
+                            assessmentFoci[i].rewrite_weight = focusWeights[i];
+                        }
                         if (otherSlider && otherDisplay) {
                             otherSlider.value = focusWeights[i];
                             otherDisplay.textContent = `${focusWeights[i].toFixed(1)}%`;
                         }
+                        const otherBand = document.getElementById(`slider-band-${i}`);
+                        if (otherBand) otherBand.textContent = rewriteWeightBand(focusWeights[i]);
                     }
                 });
             }
             
             focusWeights[index] = newValue;
+            if (assessmentFoci[index]) {
+                assessmentFoci[index].rewrite_weight = newValue;
+            }
             valueDisplay.textContent = `${newValue.toFixed(1)}%`;
+            const bandEl = document.getElementById(`slider-band-${index}`);
+            if (bandEl) bandEl.textContent = rewriteWeightBand(newValue);
             
             updateTotalBudget();
         });
@@ -2153,7 +2263,12 @@ if (resetSlidersBtn) {
         if (assessmentFoci.length === 0) return;
         
         assessmentFoci.forEach((focus, index) => {
-            focusWeights[index] = focus.score || 0;
+            const reported = (typeof focus.reported_focus_score === 'number')
+                ? focus.reported_focus_score
+                : ((typeof focus.score === 'number') ? focus.score : (parseFloat(focus.score) || 0));
+            focus.reported_focus_score = reported;
+            focusWeights[index] = reported;
+            focus.rewrite_weight = reported;
         });
         
         // Normalize to 100
@@ -2179,12 +2294,32 @@ if (rewritePromptBtn) {
             return;
         }
         
-        // Use assessment foci with their weights
-        const weights = assessmentFoci.map((focus, index) => ({
-            focus: focus.focus,
-            prompt_section: focus.prompt_section,
-            weight: focusWeights[index] || 0
-        }));
+        // Send current slider values as rewrite_weight (not stale assessment-only scores).
+        const weights = assessmentFoci.map((focus, index) => {
+            // Use Number() so an explicit 0 is preserved (|| would also keep 0, but be explicit).
+            const rewriteWeight = Number(focusWeights[index]);
+            const weight = Number.isFinite(rewriteWeight) ? rewriteWeight : 0;
+            return {
+                focus: focus.focus,
+                prompt_section: focus.prompt_section,
+                reported_focus_score: (typeof focus.reported_focus_score === 'number')
+                    ? focus.reported_focus_score
+                    : (focus.score || 0),
+                rewrite_weight: weight,
+                // Legacy alias still accepted by the service:
+                weight: weight,
+            };
+        });
+
+        if (weights.some(w => w.rewrite_weight <= 0)) {
+            const proceed = confirm(
+                'One or more foci are set to 0% (omit). Removing a focus may change correctness or behavior. ' +
+                'Reported focus is not the same as causal importance. Continue rewrite?'
+            );
+            if (!proceed) {
+                return;
+            }
+        }
         
         // Estimate cost before making the request
         try {
@@ -2245,9 +2380,10 @@ if (rewritePromptBtn) {
             rewrittenPromptContainer.classList.remove('hidden');
             
             // Store intended distribution for comparison (normalize to 100)
-            const totalWeight = weights.reduce((sum, w) => sum + w.weight, 0);
+            const totalWeight = weights.reduce((sum, w) => sum + (w.rewrite_weight || 0), 0);
             weights.forEach(w => {
-                intendedDistribution[w.focus] = totalWeight > 0 ? (w.weight / totalWeight) * 100 : 0;
+                // Omit (0) stays 0 in the intended mix; do not redistribute zeros upward.
+                intendedDistribution[w.focus] = totalWeight > 0 ? (w.rewrite_weight / totalWeight) * 100 : 0;
             });
             
             // Don't show compare button yet - wait until after new output is generated and assessed
@@ -3264,13 +3400,18 @@ function renderPairs() {
         const chatContent = inputs.chat_content || pair.chat_content || '';
         const ragContext = inputs.rag_context || '';
         const toolResults = inputs.tool_results || '';
+        const otherInput = inputs.other_input || '';
         const output = pair.output || '';
+        const rowPrompt = (typeof pair.prompt === 'string') ? pair.prompt : '';
         
         html += `
             <div class="pair-item" style="padding: 12px; background: #f8fafc; border-radius: 6px; border: 1px solid var(--border-color);">
                 <div style="display: flex; justify-content: space-between; align-items: start;">
                     <div style="flex: 1;">
                         <strong>Pair ${index + 1}</strong>
+                        ${rowPrompt ? `<p style="margin: 4px 0; font-size: 0.9em; color: var(--text-secondary);">
+                            Prompt: ${escapeHtml(rowPrompt.substring(0, 100))}${rowPrompt.length > 100 ? '...' : ''}
+                        </p>` : ''}
                         ${chatContent ? `<p style="margin: 4px 0; font-size: 0.9em; color: var(--text-secondary);">
                             Chat: ${escapeHtml(chatContent.substring(0, 100))}${chatContent.length > 100 ? '...' : ''}
                         </p>` : ''}
@@ -3279,6 +3420,9 @@ function renderPairs() {
                         </p>` : ''}
                         ${toolResults ? `<p style="margin: 4px 0; font-size: 0.9em; color: var(--text-secondary);">
                             Tools: ${escapeHtml(toolResults.substring(0, 100))}${toolResults.length > 100 ? '...' : ''}
+                        </p>` : ''}
+                        ${otherInput ? `<p style="margin: 4px 0; font-size: 0.9em; color: var(--text-secondary);">
+                            Other: ${escapeHtml(otherInput.substring(0, 100))}${otherInput.length > 100 ? '...' : ''}
                         </p>` : ''}
                         <p style="margin: 4px 0; font-size: 0.9em; color: var(--text-secondary);">
                             Output: ${escapeHtml(output.substring(0, 100))}${output.length > 100 ? '...' : ''}
@@ -3318,10 +3462,13 @@ if (clearPairsBtn) {
 function updateBatchAnalysisButton() {
     const btn = document.getElementById('run-batch-analysis-btn');
     if (btn) {
-        // Check if we have prompt from input OR can reconstruct from foci
+        // Check if we have prompt from input OR per-row CSV prompts OR can reconstruct from foci
         const hasPromptInput = batchPromptInput ? batchPromptInput.value.trim().length > 0 : false;
+        const hasRowPrompts = batchPairs.length > 0 && batchPairs.every(
+            p => typeof p.prompt === 'string' && p.prompt.length > 0
+        );
         const canReconstructFromFoci = batchFoci.length > 0 && batchFoci.every(f => f.prompt_section && f.prompt_section.trim().length > 0);
-        const hasPrompt = hasPromptInput || canReconstructFromFoci;
+        const hasPrompt = hasPromptInput || hasRowPrompts || canReconstructFromFoci;
         
         const shouldBeDisabled = batchPairs.length === 0 || batchFoci.length === 0 || !hasPrompt;
         
@@ -3544,6 +3691,15 @@ if (batchDetectFociBtn) {
                 is_dynamic: f.is_dynamic || false,
                 dynamic_type: f.dynamic_type || null
             }));
+            window.rejectedFocusProposals = data.rejected_proposals || [];
+            if (window.rejectedFocusProposals.length) {
+                console.info(
+                    'Omitted',
+                    window.rejectedFocusProposals.length,
+                    'auto-detected proposal(s) lacking source provenance',
+                    window.rejectedFocusProposals
+                );
+            }
             updateManualInputFields();
             renderBatchFoci();
             updateBatchAnalysisButton();
@@ -3702,10 +3858,14 @@ async function handleRunBatchAnalysis(e) {
             rag_context: pair.rag_context || '',
             tool_results: pair.tool_results || ''
         };
+        // Prefer per-row CSV prompt when present (exact text; do not trim —
+        // ablation spans depend on byte-for-text fidelity). Else shared UI prompt.
+        const sharedPrompt = batchPromptInput ? batchPromptInput.value : '';
+        const rowPrompt = (typeof pair.prompt === 'string') ? pair.prompt : null;
         return {
             inputs: inputs,
             output: pair.output,
-            prompt: batchPromptInput.value.trim()
+            prompt: (rowPrompt !== null && rowPrompt.length > 0) ? rowPrompt : sharedPrompt
         };
     });
     
@@ -4423,11 +4583,11 @@ function renderBatchResults(data) {
         
         html += `<tr style="border-bottom: 1px solid var(--border-color);">`;
         html += `<td style="padding: 12px;"><strong>${escapeHtml(focusName)}</strong></td>`;
-        html += `<td style="padding: 12px; text-align: right;">${(stat.mean * 100).toFixed(2)}%</td>`;
-        html += `<td style="padding: 12px; text-align: right; color: ${varianceColor};">${(stat.variance * 10000).toFixed(4)}</td>`;
-        html += `<td style="padding: 12px; text-align: right;">${(stat.std_dev * 100).toFixed(2)}%</td>`;
-        html += `<td style="padding: 12px; text-align: right;">${(stat.min * 100).toFixed(2)}%</td>`;
-        html += `<td style="padding: 12px; text-align: right;">${(stat.max * 100).toFixed(2)}%</td>`;
+        html += `<td style="padding: 12px; text-align: right;">${Number(stat.mean).toFixed(2)}%</td>`;
+        html += `<td style="padding: 12px; text-align: right; color: ${varianceColor};">${Number(stat.variance).toFixed(4)}</td>`;
+        html += `<td style="padding: 12px; text-align: right;">${Number(stat.std_dev).toFixed(2)}%</td>`;
+        html += `<td style="padding: 12px; text-align: right;">${Number(stat.min).toFixed(2)}%</td>`;
+        html += `<td style="padding: 12px; text-align: right;">${Number(stat.max).toFixed(2)}%</td>`;
         html += `</tr>`;
     });
     
@@ -4436,11 +4596,11 @@ function renderBatchResults(data) {
         const stat = stats.chat_content;
         html += `<tr style="border-bottom: 2px solid var(--border-color); background: #e8f4f8;">`;
         html += `<td style="padding: 12px;"><strong>📱 Chat Content (Special Focus)</strong></td>`;
-        html += `<td style="padding: 12px; text-align: right;">${(stat.mean * 100).toFixed(2)}%</td>`;
-        html += `<td style="padding: 12px; text-align: right;">${(stat.variance * 10000).toFixed(4)}</td>`;
-        html += `<td style="padding: 12px; text-align: right;">${(stat.std_dev * 100).toFixed(2)}%</td>`;
-        html += `<td style="padding: 12px; text-align: right;">${(stat.min * 100).toFixed(2)}%</td>`;
-        html += `<td style="padding: 12px; text-align: right;">${(stat.max * 100).toFixed(2)}%</td>`;
+        html += `<td style="padding: 12px; text-align: right;">${Number(stat.mean).toFixed(2)}%</td>`;
+        html += `<td style="padding: 12px; text-align: right;">${Number(stat.variance).toFixed(4)}</td>`;
+        html += `<td style="padding: 12px; text-align: right;">${Number(stat.std_dev).toFixed(2)}%</td>`;
+        html += `<td style="padding: 12px; text-align: right;">${Number(stat.min).toFixed(2)}%</td>`;
+        html += `<td style="padding: 12px; text-align: right;">${Number(stat.max).toFixed(2)}%</td>`;
         html += `</tr>`;
     }
     
@@ -4502,7 +4662,7 @@ if (exportResultsBtn) {
                 stat.min_raw !== undefined ? (stat.min_raw * 100).toFixed(4) : '',
                 stat.max_raw !== undefined ? (stat.max_raw * 100).toFixed(4) : ''
             ].join(',') : ',,,,';
-            csv += `"${focusName}",${(stat.mean * 100).toFixed(4)},${stat.variance},${(stat.std_dev * 100).toFixed(4)},${(stat.min * 100).toFixed(4)},${(stat.max * 100).toFixed(4)},${raw}\n`;
+            csv += `"${focusName}",${Number(stat.mean).toFixed(4)},${stat.variance},${Number(stat.std_dev).toFixed(4)},${Number(stat.min).toFixed(4)},${Number(stat.max).toFixed(4)},${raw}\n`;
         });
         
         if (Object.keys(fdStats).length > 0) {

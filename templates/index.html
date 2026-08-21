@@ -338,7 +338,13 @@
                     </div>
                 </div>
                 <div class="card-body">
-                    <p class="info-text">Adjust the sliders below to change the desired focus distribution. The total must equal 100%.</p>
+                    <p class="info-text">Sliders are <strong>rewrite weights</strong> (your intent for rewriting), initialized from reported-focus scores. Reported focus is introspective self-report — not causal importance. Edit freely before rewriting. Total must equal 100%.</p>
+                    <p class="info-text" style="margin-top: 8px; color: #92400e; background: #fef3c7; padding: 8px 12px; border-radius: 6px;">
+                        Removing a focus (0%) may change correctness or behavior (schemas, safety rules, tool contracts). This rewrite is an experimental transformation, not an optimization recommendation.
+                    </p>
+                    <p class="info-text" style="margin-top: 6px; font-size: 0.9em; color: #64748b;">
+                        Weight bands: <strong>0%</strong> omit · <strong>1–29%</strong> minimize · <strong>30–69%</strong> retain · <strong>70–100%</strong> emphasize
+                    </p>
                     <div id="total-budget" class="total-budget">
                         Total Budget: <strong id="total-budget-value">100%</strong>
                     </div>
@@ -430,7 +436,7 @@
                     </div>
                     <div class="card-body">
                         <p class="info-text" style="margin-bottom: 16px;">
-                            CSV format: <code>input,output</code> (or <code>chat_content,suggested_message</code>). Case-insensitive column names. The prompt will be defined separately for all pairs.
+                            CSV format (case-insensitive headers): required <code>output</code> (aliases: <code>suggested_message</code>, <code>response</code>) plus at least one of <code>input</code>/<code>chat_content</code>, <code>rag_context</code>, <code>tool_results</code>, <code>other_input</code>, and/or per-row <code>prompt</code>. Shared prompt above applies when a row has no <code>prompt</code> column. UTF-8 (BOM OK). Prompt text is preserved exactly.
                         </p>
                         
                         <!-- Manual Entry Form -->
