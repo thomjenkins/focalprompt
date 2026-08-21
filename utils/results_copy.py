@@ -46,8 +46,9 @@ NON_SIGNIFICANT_CAUTION = (
 )
 
 EXCLUDED_UNVERIFIED = (
-    "Couldn't locate this focus verbatim in your prompt, so it wasn't tested. "
-    "The tagger may have paraphrased it."
+    "Couldn't uniquely ground this focus to an exact span of your prompt, so it "
+    "wasn't tested. Repair the span manually or re-detect with a clearer "
+    "evidence quote."
 )
 
 EXCLUDED_DYNAMIC_SLOT = (

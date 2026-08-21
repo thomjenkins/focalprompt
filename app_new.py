@@ -1,15 +1,22 @@
 #!/usr/bin/env python3
 """
-Flask web application for FocalPrompt - Refactored Version
-
-This is the new modular structure. The old app.py is preserved as app.py.backup.
+Flask web application for Focal Prompt — research toolkit UI + optional hosted demo.
 """
 
+import json
 import os
 import sys
-from flask import Flask, render_template, jsonify
+from pathlib import Path
+
+from flask import Flask, jsonify, render_template, request
 
 from utils.experiment_config import EXPERIMENT_COPY
+from utils.hosted_mode import (
+    allow_live_inference,
+    check_live_allowed,
+    is_hosted_mode,
+    path_requires_live,
+)
 from utils.results_copy import COPY
 
 # Load environment variables from .env file (for local development)
@@ -74,8 +81,14 @@ except Exception as e:
 try:
     from routes.batch_routes import batch_bp
     app.register_blueprint(batch_bp)
+    batch_routes = [r for r in app.url_map.iter_rules() if 'batch' in r.endpoint]
+    print(f"✅ Registered batch_bp with {len(batch_routes)} routes", file=sys.stderr)
+    for route in batch_routes:
+        print(f"   - {list(route.methods)} {route}", file=sys.stderr)
 except Exception as e:
-    print(f"Error registering batch_bp: {e}", file=sys.stderr)
+    print(f"❌ Error registering batch_bp: {type(e).__name__}: {e}", file=sys.stderr)
+    import traceback
+    traceback.print_exc(file=sys.stderr)
 
 try:
     from routes.agent_routes import agent_bp
@@ -90,40 +103,10 @@ except Exception as e:
     print(f"Error registering optimization_bp: {e}", file=sys.stderr)
 
 try:
-    from routes.auth_routes import auth_bp
-    app.register_blueprint(auth_bp)
-except Exception as e:
-    print(f"Error registering auth_bp: {e}", file=sys.stderr)
-
-try:
-    from routes.payment_routes import payment_bp
-    app.register_blueprint(payment_bp)
-except Exception as e:
-    print(f"Error registering payment_bp: {e}", file=sys.stderr)
-
-try:
-    from routes.usage_routes import usage_bp
-    app.register_blueprint(usage_bp)
-except Exception as e:
-    print(f"Error registering usage_bp: {e}", file=sys.stderr)
-
-try:
     from routes.pricing_routes import pricing_bp
     app.register_blueprint(pricing_bp)
 except Exception as e:
     print(f"Error registering pricing_bp: {e}", file=sys.stderr)
-
-try:
-    from routes.credit_routes import credit_bp
-    app.register_blueprint(credit_bp)
-except Exception as e:
-    print(f"Error registering credit_bp: {e}", file=sys.stderr)
-
-try:
-    from routes.api_key_routes import api_key_bp
-    app.register_blueprint(api_key_bp)
-except Exception as e:
-    print(f"Error registering api_key_bp: {e}", file=sys.stderr)
 
 try:
     from routes.api_v1_routes import register_v1_routes
@@ -136,22 +119,99 @@ def _page_copy():
     return {**COPY, **EXPERIMENT_COPY}
 
 
+_EXAMPLES_DIR = Path(__file__).resolve().parent / 'examples' / 'canonical'
+
+
+def _list_canonical_experiments():
+    items = []
+    if not _EXAMPLES_DIR.is_dir():
+        return items
+    for path in sorted(_EXAMPLES_DIR.glob('*.json')):
+        try:
+            data = json.loads(path.read_text(encoding='utf-8'))
+        except (OSError, json.JSONDecodeError):
+            continue
+        items.append({
+            'id': data.get('id') or path.stem,
+            'title': data.get('title') or path.stem,
+            'description': data.get('description') or '',
+        })
+    return items
+
+
+def _load_experiment(experiment_id: str):
+    path = _EXAMPLES_DIR / f'{experiment_id}.json'
+    if not path.is_file():
+        # Also allow id field mismatch: scan
+        for candidate in _EXAMPLES_DIR.glob('*.json'):
+            try:
+                data = json.loads(candidate.read_text(encoding='utf-8'))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if data.get('id') == experiment_id:
+                return data
+        return None
+    try:
+        return json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+@app.before_request
+def _hosted_live_gate():
+    if not path_requires_live(request.path):
+        return None
+    ok, err = check_live_allowed(request.headers.get('X-Forwarded-For', request.remote_addr or 'unknown'))
+    if ok:
+        return None
+    return jsonify(err), 503
+
+
 @app.route('/')
-def index():
-    """Serve the main page."""
+def landing():
+    """Research landing (hosted) or toolkit entry (local default)."""
+    if is_hosted_mode():
+        return render_template(
+            'landing.html',
+            allow_live=allow_live_inference(),
+        )
     return render_template('index.html', results_copy=_page_copy())
 
 
-@app.route('/login')
-def login():
-    """Serve login page."""
-    return render_template('login.html')
+@app.route('/lab')
+@app.route('/app')
+def lab():
+    """Full analysis lab UI."""
+    return render_template('index.html', results_copy=_page_copy())
 
 
-@app.route('/signup')
-def signup():
-    """Serve signup page."""
-    return render_template('signup.html')
+@app.route('/about')
+def about():
+    return render_template(
+        'landing.html',
+        allow_live=allow_live_inference(),
+    )
+
+
+@app.route('/experiments')
+def list_experiments():
+    return render_template(
+        'experiment.html',
+        experiments=_list_canonical_experiments(),
+        experiment=None,
+    )
+
+
+@app.route('/experiments/<experiment_id>')
+def show_experiment(experiment_id):
+    experiment = _load_experiment(experiment_id)
+    if not experiment:
+        return render_template(
+            'experiment.html',
+            experiments=_list_canonical_experiments(),
+            experiment=None,
+        ), 404
+    return render_template('experiment.html', experiment=experiment, experiments=None)
 
 
 @app.errorhandler(404)
@@ -283,18 +343,23 @@ def internal_error(error):
 def health():
     """Health check endpoint."""
     try:
-        ai_gateway_key = os.getenv("AI_GATEWAY_API_KEY")
-        database_url = (
-            os.getenv('DATABASE_URL') or
-            os.getenv('DATABASE_POSTGRES_URL') or
-            os.getenv('DATABASE_SUPABASE_URL')
-        )
+        from utils.inference_config import resolve_inference
+        ai_gateway_key = os.getenv('AI_GATEWAY_API_KEY')
+        try:
+            cfg = resolve_inference()
+            backend = cfg.get('backend')
+            inference_ready = bool(cfg.get('api_key'))
+        except Exception:
+            backend = None
+            inference_ready = False
         return jsonify({
             'status': 'ok',
-            'ai_gateway_configured': ai_gateway_key is not None and len(ai_gateway_key) > 0,
-            'database_configured': database_url is not None,
-            'secret_key_set': os.getenv('SECRET_KEY') is not None,
-            'vercel': os.getenv('VERCEL') is not None
+            'hosted_mode': is_hosted_mode(),
+            'allow_live_inference': allow_live_inference(),
+            'ai_gateway_configured': bool(ai_gateway_key),
+            'inference_backend': backend,
+            'inference_ready': inference_ready,
+            'vercel': os.getenv('VERCEL') is not None,
         })
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500

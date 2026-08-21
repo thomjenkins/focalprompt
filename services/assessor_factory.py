@@ -1,114 +1,117 @@
 #!/usr/bin/env python3
 """
-Assessor factory for creating and managing FocalAssessor instances.
+Assessor factory — BYO inference with Vercel AI Gateway as the preferred default.
 
-Replaces global state management with a factory pattern.
-Now uses Vercel AI Gateway for all LLM requests.
+When AI_GATEWAY_API_KEY is set (and backend is not forced elsewhere), chat goes
+through AIGatewayProvider. Direct provider SDKs and OpenAI-compatible local
+endpoints are also supported via utils.inference_config.resolve_inference.
 """
 
-import os
-from typing import Optional
+from __future__ import annotations
+
+from typing import Any, Mapping, Optional
+
 from core.focal_assessor import FocalAssessor
 from core.ai_gateway_provider import AIGatewayProvider
+from core.llm_providers import get_provider, defaultModels
+from utils.inference_config import resolve_inference
+from utils.model_provider import resolve_model_and_provider
 
 
 class AssessorFactory:
-    """Factory for creating FocalAssessor instances."""
-    
+    """Factory for creating FocalAssessor instances from BYO credentials."""
+
     def __init__(self):
-        """Initialize the factory."""
         self._assessor = None
-        self._assessor_model = None
-        self._assessor_provider = None
-        self._gateway_api_key = None  # Lazy load - don't check at import time
-    
-    def _get_gateway_api_key(self):
-        """Get gateway API key, checking only when needed."""
-        if self._gateway_api_key is None:
-            self._gateway_api_key = os.getenv("AI_GATEWAY_API_KEY")
-            if not self._gateway_api_key:
-                # Provide helpful error message
-                import sys
-                print("ERROR: AI_GATEWAY_API_KEY environment variable not set.", file=sys.stderr)
-                print("Please set it in your Vercel project settings:", file=sys.stderr)
-                print("1. Go to Vercel Dashboard → Your Project → Settings → Environment Variables", file=sys.stderr)
-                print("2. Add AI_GATEWAY_API_KEY with your gateway API key", file=sys.stderr)
-                print("3. The key can be found in Settings → AI Gateway", file=sys.stderr)
-                raise ValueError(
-                    "AI_GATEWAY_API_KEY environment variable not set. "
-                    "Please set it in your Vercel project settings. "
-                    "You can find your AI Gateway API key in the Vercel dashboard under your project's AI Gateway settings."
-                )
-        return self._gateway_api_key
-    
+        self._cache_key = None
+
     def get_assessor(
         self,
-        api_key: Optional[str] = None,  # Ignored - we use gateway
+        api_key: Optional[str] = None,
         model: Optional[str] = None,
-        provider: Optional[str] = None
+        provider: Optional[str] = None,
+        backend: Optional[str] = None,
+        base_url: Optional[str] = None,
+        data: Optional[Mapping[str, Any]] = None,
     ) -> FocalAssessor:
-        """
-        Get or create the assessor instance using Vercel AI Gateway.
-        
-        Args:
-            api_key: Ignored - we use AI Gateway instead
-            model: Model name to use
-            provider: Provider name ('openai', 'anthropic', 'google', 'grok')
-            
-        Returns:
-            FocalAssessor instance
-        """
-        # Use provided provider, or default to openai
-        provider = provider or "openai"
-        
-        # Use provided model, or default based on provider
-        if not model:
-            from core.llm_providers import defaultModels
-            model = defaultModels.get(provider, "gpt-4o-mini")
-        
-        # Create a new assessor if model or provider changed
-        if (self._assessor is None or 
-            self._assessor_model != model or 
-            self._assessor_provider != provider):
-            # Create AI Gateway provider (lazy check for API key)
-            gateway_api_key = self._get_gateway_api_key()
-            gateway_provider = AIGatewayProvider(gateway_api_key)
-            
-            # Create assessor with gateway provider
-            self._assessor = FocalAssessor(provider_instance=gateway_provider, model=model, provider=provider)
-            self._assessor_model = model
-            self._assessor_provider = provider
-        
+        payload = dict(data or {})
+        if api_key is not None:
+            payload['api_key'] = api_key
+        if backend is not None:
+            payload['backend'] = backend
+        if base_url is not None:
+            payload['base_url'] = base_url
+        if model is not None:
+            payload['model'] = model
+        if provider is not None:
+            payload['provider'] = provider
+
+        model_in = payload.get('model') or model or 'gpt-4o-mini'
+        provider_in = payload.get('provider') or provider or 'openai'
+        model_in, provider_in = resolve_model_and_provider(model_in, provider_in)
+        payload['model'] = model_in
+        payload['provider'] = provider_in
+
+        cfg = resolve_inference(payload, provider=provider_in, model=model_in)
+        model_name = cfg['model'] or defaultModels.get(cfg['provider'], 'gpt-4o-mini')
+        cache_key = (
+            cfg['backend'],
+            cfg['provider'],
+            model_name,
+            cfg.get('base_url'),
+            (cfg.get('api_key') or '')[:8],
+        )
+        if self._assessor is None or self._cache_key != cache_key:
+            if cfg['backend'] == 'vercel_gateway':
+                provider_instance = AIGatewayProvider(
+                    cfg['api_key'],
+                    base_url=cfg.get('base_url'),
+                )
+                provider_name = cfg['provider']
+            elif cfg['backend'] == 'openai_compatible':
+                provider_instance = get_provider(
+                    'openai_compatible',
+                    cfg['api_key'],
+                    base_url=cfg['base_url'],
+                )
+                provider_name = cfg['provider']
+            else:
+                provider_instance = get_provider(cfg['provider'], cfg['api_key'])
+                provider_name = cfg['provider']
+
+            self._assessor = FocalAssessor(
+                provider_instance=provider_instance,
+                model=model_name,
+                provider=provider_name,
+            )
+            self._cache_key = cache_key
         return self._assessor
-    
+
     def clear_cache(self):
-        """Clear the cached assessor (force recreation on next get_assessor call)."""
         self._assessor = None
-        self._assessor_api_key = None
-        self._assessor_model = None
-        self._assessor_provider = None
+        self._cache_key = None
 
 
-# Global factory instance (can be replaced with dependency injection later)
 _assessor_factory = AssessorFactory()
 
 
 def get_assessor(
     api_key: Optional[str] = None,
     model: Optional[str] = None,
-    provider: Optional[str] = None
+    provider: Optional[str] = None,
+    backend: Optional[str] = None,
+    base_url: Optional[str] = None,
+    data: Optional[Mapping[str, Any]] = None,
 ) -> FocalAssessor:
-    """
-    Get or create the assessor instance (convenience function).
-    
-    Args:
-        api_key: API key for the provider
-        model: Model name to use
-        provider: Provider name
-        
-    Returns:
-        FocalAssessor instance
-    """
-    return _assessor_factory.get_assessor(api_key=api_key, model=model, provider=provider)
+    return _assessor_factory.get_assessor(
+        api_key=api_key,
+        model=model,
+        provider=provider,
+        backend=backend,
+        base_url=base_url,
+        data=data,
+    )
 
 
+def clear_assessor_cache():
+    _assessor_factory.clear_cache()

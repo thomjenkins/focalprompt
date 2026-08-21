@@ -2,7 +2,7 @@
 """
 Register versioned public API paths and serve OpenAPI spec.
 
-v1 routes are aliases to the same handlers as /api/... so behavior and billing match.
+v1 routes are aliases to the same handlers as /api/... (analytical only; no key management).
 """
 
 import json
@@ -33,7 +33,6 @@ def v1_root():
     return jsonify({
         'version': 1,
         'documentation': '/api/v1/openapi.json',
-        'keys': '/api/v1/keys',
     })
 
 

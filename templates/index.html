@@ -3,31 +3,21 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FocalPrompt - Focus Assessment Tool</title>
+    <title>Focal Prompt — analysis lab</title>
     <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='favicon-32x32.png') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
     <div class="container">
         <header>
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                <div style="flex: 1;"></div>
-                <div style="flex: 1; text-align: center;">
-                    <img src="{{ url_for('static', filename='focalpromptlogo.png') }}" alt="FocalPrompt Logo" style="max-width: 800px; max-height: 160px; width: auto; height: auto; display: block; margin: 0 auto;">
-                    <p class="subtitle">Building AI agents with focus</p>
-                </div>
-                <div style="flex: 1; text-align: right;">
-                    <div id="auth-section">
-                        <span id="credit-balance" style="display: none; margin-right: 12px; padding: 6px 12px; background: #e8f4f8; border-radius: 4px; font-weight: 600; color: var(--primary-color);" title="Account Credit Balance">
-                            💰 <span id="credit-balance-amount">$0.00</span>
-                        </span>
-                        <span id="user-info" style="display: none; margin-right: 10px; cursor: pointer;" title="Click to view account"></span>
-                        <button id="account-btn" style="display: none; background: var(--primary-color); color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin-right: 8px;">Account</button>
-                        <button id="top-up-btn" style="display: none; background: #28a745; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin-right: 8px;">Top Up</button>
-                        <button id="login-btn" style="background: var(--primary-color); color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin-right: 8px;">Login</button>
-                        <button id="logout-btn" style="display: none; background: #dc3545; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer;">Logout</button>
-                    </div>
-                </div>
+            <div style="text-align: center; margin-bottom: 20px;">
+                <img src="{{ url_for('static', filename='focalpromptlogo.png') }}" alt="Focal Prompt" style="max-width: 800px; max-height: 160px; width: auto; height: auto; display: block; margin: 0 auto;">
+                <p class="subtitle">Reported focus vs perturbation-derived behavioural sensitivity</p>
+                <p style="margin: 8px 0 0; font-size: 0.9rem; color: #666;">
+                    <a href="/about">About</a> ·
+                    <a href="/experiments">Precomputed experiments</a> ·
+                    BYO inference (set <code>AI_GATEWAY_API_KEY</code> or a provider key)
+                </p>
             </div>
         </header>
 
@@ -146,21 +136,25 @@
                                 You can then generate a single output for the prompt as provided. This will use the individual instance of any dynamic inputs currently provided in the prompt.
                             </p>
                             
-                            <h3 style="margin-top: 32px; color: var(--primary-color);">Prompt Analysis</h3>
-                            
-                            <p><strong>4. Assess Focus Distribution</strong></p>
+                            <h3 style="margin-top: 32px; color: var(--primary-color);">Experiments A / B / C</h3>
+
+                            <p><strong>Experiment A — Reported focus (Assess Focus Distribution)</strong></p>
                             <p>
-                                Section 4 will then assess the single output and your prompt foci to determine where the LLM paid most attention in producing that output.
+                                Score a single completion against your foci. Scores are the model’s behavioural self-report of how that output attended to each focus — not transformer attention weights.
                             </p>
                             
                             <p><strong>5. Adjust Intended Focus</strong></p>
                             <p>
-                                You can use sliders to adjust the intended focus, and our model will attempt to rewrite your prompt to reflect the intended focus. You can generate an output using the new suggested prompt to test it.
+                                Use sliders to set an intended focus mix; rewrite attempts to reflect that mix. Generate a new output to compare.
                             </p>
                             
-                            <p><strong>6. Ablation Analysis</strong></p>
+                            <p><strong>Experiment B — Perturbation sensitivity (Ablation Analysis)</strong></p>
                             <p>
-                                Ablation analysis tests whether deleting each focus shifts the model's behaviour in embedding space. The original prompt is sampled several times, then each locatable focus is deleted in turn and the remaining prompt is sampled. A permutation test asks whether the two groups of embeddings are farther apart than chance; q-values are Benjamini–Hochberg-adjusted across the foci that were actually tested.
+                                Delete each verified focus span, resample, embed outputs, and test whether the embedding shift exceeds a permutation null. q-values are Benjamini–Hochberg-adjusted across tested foci.
+                            </p>
+                            <p><strong>Experiment C — Reported vs revealed</strong></p>
+                            <p>
+                                Compare Experiment A scores with Experiment B significance on the same foci. Disagreement is informative (e.g. citation rules that embeddings miss).
                             </p>
                             <p style="background: #e8f4f8; padding: 12px; border-radius: 6px; border-left: 4px solid #0c5460; margin: 16px 0;">
                                 FocalPrompt detects whether removing each focus shifts the model's behaviour in semantic embedding space. It does not measure correctness, quality, or safety, and it does not tell you what to delete.
@@ -310,7 +304,7 @@
             <!-- Assessment Section -->
             <section class="card">
                 <div class="card-header">
-                    <h2>4. Assess Focus Distribution</h2>
+                    <h2>4. Experiment A — Reported focus</h2>
                     <div class="button-group">
                         <button id="load-assessment-checkpoint-btn" class="btn btn-outline">
                             📂 Load Assessment Checkpoint
@@ -324,6 +318,9 @@
                     </div>
                 </div>
                 <div class="card-body">
+                    <p class="info-text">
+                        Model self-assessment of one completion (behavioural report). This is not transformer attention.
+                    </p>
                     <div id="assessment-results" class="assessment-results">
                         <p class="empty-state">Click "Assess Focus" to see the results.</p>
                     </div>
@@ -341,7 +338,13 @@
                     </div>
                 </div>
                 <div class="card-body">
-                    <p class="info-text">Adjust the sliders below to change the desired focus distribution. The total must equal 100%.</p>
+                    <p class="info-text">Sliders are <strong>rewrite weights</strong> (your intent for rewriting), initialized from reported-focus scores. Reported focus is introspective self-report — not causal importance. Edit freely before rewriting. Total must equal 100%.</p>
+                    <p class="info-text" style="margin-top: 8px; color: #92400e; background: #fef3c7; padding: 8px 12px; border-radius: 6px;">
+                        Removing a focus (0%) may change correctness or behavior (schemas, safety rules, tool contracts). This rewrite is an experimental transformation, not an optimization recommendation.
+                    </p>
+                    <p class="info-text" style="margin-top: 6px; font-size: 0.9em; color: #64748b;">
+                        Weight bands: <strong>0%</strong> omit · <strong>1–29%</strong> minimize · <strong>30–69%</strong> retain · <strong>70–100%</strong> emphasize
+                    </p>
                     <div id="total-budget" class="total-budget">
                         Total Budget: <strong id="total-budget-value">100%</strong>
                     </div>
@@ -365,7 +368,7 @@
             <!-- Ablation Analysis Section -->
             <section class="card">
                 <div class="card-header">
-                    <h2>6. Ablation Analysis</h2>
+                    <h2>6. Experiment B — Perturbation sensitivity</h2>
                     <div class="button-group">
                         <button id="load-ablation-checkpoint-btn" class="btn btn-outline">
                             📂 Load Ablation Checkpoint
@@ -377,7 +380,7 @@
                 </div>
                 <div class="card-body">
                     <p class="info-text">
-                        FocalPrompt detects whether removing each focus shifts the model's behaviour in semantic embedding space. It does not measure correctness, quality, or safety, and it does not tell you what to delete.
+                        Leave-one-focus-out ablation with permutation testing. Detects whether removing each focus shifts behaviour in embedding space — not correctness, quality, or safety, and not a delete recommendation. Compare with Experiment A for reported vs revealed (Experiment C).
                     </p>
                     <div class="experiment-config" data-foci-source="ablation">
                         <h3 class="experiment-config-title">Experiment configuration</h3>
@@ -433,7 +436,7 @@
                     </div>
                     <div class="card-body">
                         <p class="info-text" style="margin-bottom: 16px;">
-                            CSV format: <code>input,output</code> (or <code>chat_content,suggested_message</code>). Case-insensitive column names. The prompt will be defined separately for all pairs.
+                            CSV format (case-insensitive headers): required <code>output</code> (aliases: <code>suggested_message</code>, <code>response</code>) plus at least one of <code>input</code>/<code>chat_content</code>, <code>rag_context</code>, <code>tool_results</code>, <code>other_input</code>, and/or per-row <code>prompt</code>. Shared prompt above applies when a row has no <code>prompt</code> column. UTF-8 (BOM OK). Prompt text is preserved exactly.
                         </p>
                         
                         <!-- Manual Entry Form -->
@@ -781,43 +784,6 @@
             </div>
             <div class="modal-footer">
                 <button id="error-modal-ok" class="btn btn-primary">OK</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Account Modal -->
-    <div id="account-modal" class="modal" style="display: none;">
-        <div class="modal-overlay"></div>
-        <div class="modal-content" style="max-width: 600px;">
-            <div class="modal-header">
-                <h3 style="margin: 0; color: var(--primary-color);">👤 Account</h3>
-                <button class="modal-close" id="account-modal-close">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div id="account-content">
-                    <div style="margin-bottom: 24px;">
-                        <h4 style="margin: 0 0 8px 0;">Account Information</h4>
-                        <p style="margin: 4px 0;"><strong>Email:</strong> <span id="account-email">-</span></p>
-                        <p style="margin: 4px 0;"><strong>Tier:</strong> <span id="account-tier">-</span></p>
-                        <p style="margin: 4px 0;"><strong>Status:</strong> <span id="account-status">-</span></p>
-                    </div>
-                    <div style="margin-bottom: 24px;">
-                        <h4 style="margin: 0 0 8px 0;">Usage This Month</h4>
-                        <div id="account-usage" style="color: #666;">
-                            <p>Loading usage data...</p>
-                        </div>
-                    </div>
-                    <div style="border-top: 1px solid var(--border-color); padding-top: 16px; margin-top: 16px;">
-                        <h4 style="margin: 0 0 8px 0;">Payment Method</h4>
-                        <p style="margin-bottom: 12px; color: #666; font-size: 0.9em;">
-                            Pay-as-you-go pricing with 50% markup. Charges are processed automatically via Stripe.
-                        </p>
-                        <button id="manage-payment-btn" class="btn btn-primary" style="width: 100%;">Manage Payment Method</button>
-                    </div>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button id="account-modal-ok" class="btn btn-primary">Close</button>
             </div>
         </div>
     </div>

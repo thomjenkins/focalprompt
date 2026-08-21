@@ -1,0 +1,168 @@
+{
+  "id": "vet-triage-reported-vs-revealed",
+  "title": "Veterinary triage — reported focus vs perturbation sensitivity",
+  "description": "Canonical demonstration comparing Experiment A (model-assessed / reported focus on one completion) with Experiment B (leave-one-focus-out behavioural sensitivity under permutation + BH).",
+  "framing": {
+    "experiment_a": "Reported focus — behavioural self-report of how a single completion attended to each focus. Not transformer attention weights.",
+    "experiment_b": "Perturbation-derived sensitivity — whether deleting each verified span shifts output embeddings beyond a permutation null, after Benjamini–Hochberg correction.",
+    "experiment_c": "Side-by-side comparison of reported scores vs revealed (significant) influence."
+  },
+  "meta": {
+    "model": "gpt-4o-mini",
+    "provider": "openai",
+    "backend": "vercel_gateway",
+    "temperature": 0.7,
+    "n_baseline": 10,
+    "n_ablated": 5,
+    "alpha": 0.05,
+    "embedding_model": "text-embedding-3-small",
+    "focalprompt_version": "0.2.0",
+    "note": "Precomputed for the public demo. Re-run locally with your credentials to reproduce on other models."
+  },
+  "prompt": "You are a veterinary triage assistant.\n\nAlways cite the source of any medical claim.\n\nRespond in JSON with keys: urgency, differentials, next_steps.\n\nUser message: My dog ate chocolate an hour ago and seems restless.",
+  "sample_output": "{\n  \"urgency\": \"high\",\n  \"differentials\": [\"theobromine toxicity\", \"GI upset\"],\n  \"next_steps\": [\"Contact emergency vet\", \"Estimate chocolate type/amount\"]\n}",
+  "foci": [
+    {
+      "focus": "Role",
+      "prompt_section": "You are a veterinary triage assistant.",
+      "is_dynamic": false
+    },
+    {
+      "focus": "Cite sources",
+      "prompt_section": "Always cite the source of any medical claim.",
+      "is_dynamic": false
+    },
+    {
+      "focus": "JSON schema",
+      "prompt_section": "Respond in JSON with keys: urgency, differentials, next_steps.",
+      "is_dynamic": false
+    },
+    {
+      "focus": "User message",
+      "prompt_section": "User message: My dog ate chocolate an hour ago and seems restless.",
+      "is_dynamic": true
+    }
+  ],
+  "reported_focus": {
+    "foci": [
+      {
+        "focus": "Role",
+        "score": 18,
+        "explanation": "Output stays in triage-assistant voice but does not expand on role identity."
+      },
+      {
+        "focus": "Cite sources",
+        "score": 5,
+        "explanation": "No citations appear in the JSON response despite the instruction."
+      },
+      {
+        "focus": "JSON schema",
+        "score": 42,
+        "explanation": "Output strictly follows the required keys and structure."
+      },
+      {
+        "focus": "User message",
+        "score": 35,
+        "explanation": "Content addresses chocolate ingestion and restlessness."
+      }
+    ],
+    "epistemic_note": "Scores are model self-assessment of a single completion (behavioural report), not attention-head weights."
+  },
+  "perturbation": {
+    "n_baseline": 10,
+    "n_ablated": 5,
+    "temperature": 0.7,
+    "alpha": 0.05,
+    "influence_scores": [
+      {
+        "focus": "Role",
+        "t_obs": 0.0412,
+        "influence": 0.0412,
+        "normalized_influence": 0.22,
+        "p_value": 0.18,
+        "q_value": 0.27,
+        "is_significant": false,
+        "null_mean": 0.028,
+        "null_std": 0.015,
+        "exclusion_reason": null
+      },
+      {
+        "focus": "Cite sources",
+        "t_obs": 0.0195,
+        "influence": 0.0195,
+        "normalized_influence": 0.1,
+        "p_value": 0.42,
+        "q_value": 0.42,
+        "is_significant": false,
+        "null_mean": 0.027,
+        "null_std": 0.014,
+        "exclusion_reason": null,
+        "note": "Low reported score and non-significant perturbation — embedding metric may miss citation behaviour."
+      },
+      {
+        "focus": "JSON schema",
+        "t_obs": 0.1284,
+        "influence": 0.1284,
+        "normalized_influence": 0.68,
+        "p_value": 0.002,
+        "q_value": 0.006,
+        "is_significant": true,
+        "null_mean": 0.031,
+        "null_std": 0.016,
+        "exclusion_reason": null
+      },
+      {
+        "focus": "User message",
+        "t_obs": null,
+        "influence": null,
+        "normalized_influence": null,
+        "p_value": null,
+        "q_value": null,
+        "is_significant": false,
+        "exclusion_reason": "dynamic_slot"
+      }
+    ],
+    "excluded": [
+      {
+        "focus": "User message",
+        "reason": "dynamic_slot"
+      }
+    ]
+  },
+  "comparison": {
+    "rows": [
+      {
+        "focus": "Role",
+        "reported_score": 18,
+        "t_obs": 0.0412,
+        "q_value": 0.27,
+        "is_significant": false,
+        "reading": "Modest reported attention; no detectable embedding shift at this sample size."
+      },
+      {
+        "focus": "Cite sources",
+        "reported_score": 5,
+        "t_obs": 0.0195,
+        "q_value": 0.42,
+        "is_significant": false,
+        "reading": "Both lenses agree the citation instruction was weakly expressed — still not proof it is inert."
+      },
+      {
+        "focus": "JSON schema",
+        "reported_score": 42,
+        "t_obs": 0.1284,
+        "q_value": 0.006,
+        "is_significant": true,
+        "reading": "High reported focus and significant perturbation — format constraint shaped behaviour under both lenses."
+      },
+      {
+        "focus": "User message",
+        "reported_score": 35,
+        "t_obs": null,
+        "q_value": null,
+        "is_significant": false,
+        "reading": "Reported focus on the user turn; subtractive ablation skipped (dynamic slot)."
+      }
+    ]
+  }
+}

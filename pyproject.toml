@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "focalprompt"
+version = "0.2.0"
+description = "Tools for studying how AI systems allocate attention and respond to their informational environment"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Focal Prompt contributors" }]
+keywords = [
+  "ai",
+  "llm",
+  "interpretability",
+  "behavioral-ecology",
+  "prompt",
+  "ablation",
+  "permutation-test",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+  "anthropic>=0.34.0",
+  "google-generativeai>=0.8.0",
+  "requests>=2.31.0",
+  "flask>=3.0.0",
+  "flask-cors>=4.0.0",
+  "waitress>=2.1.2",
+  "numpy>=1.24.0",
+  "werkzeug>=3.0.0",
+  "itsdangerous>=2.1.2",
+  "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0.0", "pytest-mock>=3.10.0", "pytest-cov>=4.0.0"]
+openai = ["openai>=1.0.0"]
+
+[project.scripts]
+focalprompt = "focalprompt.cli:main"
+
+[project.urls]
+Homepage = "https://focalprompt.com"
+Repository = "https://github.com/thomjenkins/focalprompt"
+
+[tool.setuptools.packages.find]
+include = ["focalprompt*", "core*", "services*", "utils*", "routes*", "models*", "middleware*"]
+
+[tool.setuptools.package-data]
+focalprompt = ["py.typed"]

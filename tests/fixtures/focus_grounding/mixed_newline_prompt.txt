@@ -1,0 +1,5 @@
+SYSTEM
+Use a literal backslash-n sequence when showing escaped text: show \n not a real break.
+Then print a real blank line after the example.
+
+Done.

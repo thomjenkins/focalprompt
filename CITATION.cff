@@ -1,0 +1,24 @@
+cff-version: 1.2.0
+title: Focal Prompt
+message: If you use this software, please cite it as below.
+type: software
+authors:
+  - family-names: Jenkins
+    given-names: Thomas
+repository-code: https://github.com/thomjenkins/focalprompt
+url: https://focalprompt.com
+abstract: >-
+  Focal Prompt is an open-source research toolkit for studying how language
+  models allocate attention and respond to their informational environment.
+  It compares reported focus (model self-assessment of a completion) with
+  perturbation-derived behavioural sensitivity (leave-one-focus-out ablation,
+  embedding distance, permutation testing, and Benjamini–Hochberg FDR control).
+keywords:
+  - large language models
+  - behavioural ecology
+  - prompt ablation
+  - permutation test
+  - interpretability
+license: Apache-2.0
+version: 0.2.0
+date-released: "2026-08-20"

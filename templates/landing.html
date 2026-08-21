@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Focal Prompt — behavioural ecology of AI systems</title>
+    <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='favicon-32x32.png') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        .landing { max-width: 820px; margin: 0 auto; padding: 48px 24px 80px; }
+        .landing h1 { font-size: 1.75rem; margin: 16px 0 8px; color: var(--primary-color); }
+        .landing .lede { font-size: 1.1rem; line-height: 1.6; color: #333; margin-bottom: 28px; }
+        .landing .cta-row { display: flex; flex-wrap: wrap; gap: 12px; margin: 28px 0 40px; }
+        .landing .panel { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 8px; padding: 20px; margin-bottom: 16px; }
+        .landing .panel h2 { margin: 0 0 8px; font-size: 1.1rem; color: var(--primary-color); }
+        .landing .panel p { margin: 0; line-height: 1.55; color: #444; }
+        .landing .note { font-size: 0.95rem; color: #555; margin-top: 32px; line-height: 1.5; }
+        .landing .brand-mark { max-width: 420px; width: 100%; height: auto; display: block; }
+    </style>
+</head>
+<body>
+    <div class="landing">
+        <img class="brand-mark" src="{{ url_for('static', filename='focalpromptlogo.png') }}" alt="Focal Prompt">
+        <h1>Tools for studying how AI systems allocate attention and respond to context</h1>
+        <p class="lede">
+            Focal Prompt is an open-source research toolkit for the behavioural ecology of language models:
+            decompose a prompt into foci, compare <strong>reported focus</strong> (model self-assessment of a completion)
+            with <strong>perturbation-derived behavioural sensitivity</strong> (leave-one-focus-out ablation + permutation testing),
+            and run the same experiment across models.
+        </p>
+        <div class="cta-row">
+            <a class="btn btn-primary" href="{{ url_for('list_experiments') }}">View precomputed experiment</a>
+            <a class="btn btn-outline" href="{{ url_for('lab') }}">Open analysis lab</a>
+            <a class="btn btn-outline" href="https://github.com/thomjenkins/focalprompt">GitHub</a>
+        </div>
+
+        <div class="panel">
+            <h2>Experiment A — Reported focus</h2>
+            <p>
+                Ask the model how a single completion attended to each focus (scores summing toward 100).
+                This is behavioural self-report, not transformer attention weights.
+            </p>
+        </div>
+        <div class="panel">
+            <h2>Experiment B — Perturbation sensitivity</h2>
+            <p>
+                Delete each verified focus span, resample, embed outputs, and test whether the embedding shift
+                exceeds a permutation null. q-values use Benjamini–Hochberg FDR control.
+            </p>
+        </div>
+        <div class="panel">
+            <h2>Experiment C — Reported vs revealed</h2>
+            <p>
+                Compare the two lenses on the same foci. Agreement and disagreement are both scientifically useful —
+                especially when embeddings miss structural instructions such as citation rules.
+            </p>
+        </div>
+
+        <p class="note">
+            Live analysis on this site
+            {% if allow_live %}
+            may be available under a capped demo budget.
+            {% else %}
+            is disabled by default; use precomputed experiments here, or run the toolkit locally with your own
+            <code>AI_GATEWAY_API_KEY</code> / provider credentials.
+            {% endif %}
+            Inference is never billed to the project maintainers for open-source use — you bring your own keys.
+        </p>
+    </div>
+</body>
+</html>

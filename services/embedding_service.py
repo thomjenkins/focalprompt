@@ -26,27 +26,43 @@ def _check_requests():
 
 
 class EmbeddingService:
-    """Service for generating text embeddings via AI Gateway."""
+    """Service for generating text embeddings (Gateway or OpenAI-compatible)."""
     
-    def __init__(self, gateway_api_key: str = None, base_url: str = None):
+    def __init__(
+        self,
+        gateway_api_key: str = None,
+        base_url: str = None,
+        model: str = None,
+        api_key: str = None,
+    ):
         """
         Initialize embedding service.
         
         Args:
-            gateway_api_key: Vercel AI Gateway API key (defaults to AI_GATEWAY_API_KEY env var)
-            base_url: Optional custom gateway URL (defaults to Vercel's gateway)
+            gateway_api_key: Legacy alias for api_key (AI Gateway or OpenAI-compatible)
+            api_key: Bearer token
+            base_url: OpenAI-compatible /embeddings base (defaults to Gateway URL)
+            model: Embedding model id
         """
-        self.gateway_api_key = gateway_api_key or os.getenv("AI_GATEWAY_API_KEY")
+        from utils.inference_config import resolve_embedding_config
+        if gateway_api_key or api_key or base_url or model:
+            self.gateway_api_key = api_key or gateway_api_key or os.getenv("AI_GATEWAY_API_KEY")
+            self.base_url = (base_url or os.getenv("AI_GATEWAY_URL") or os.getenv("FOCALPROMPT_EMBEDDING_BASE_URL") or "https://ai-gateway.vercel.sh/v1").rstrip('/')
+            self.model = model or os.getenv("FOCALPROMPT_EMBEDDING_MODEL") or (
+                "openai/text-embedding-3-small"
+                if "ai-gateway.vercel.sh" in self.base_url
+                else "text-embedding-3-small"
+            )
+        else:
+            cfg = resolve_embedding_config()
+            self.gateway_api_key = cfg['api_key']
+            self.base_url = cfg['base_url']
+            self.model = cfg['model']
         if not self.gateway_api_key:
-            raise ValueError("AI_GATEWAY_API_KEY not provided and not found in environment variables")
-        
-        # Vercel AI Gateway endpoint (OpenAI-compatible)
-        # Official URL: https://ai-gateway.vercel.sh/v1
-        self.base_url = base_url or os.getenv("AI_GATEWAY_URL", "https://ai-gateway.vercel.sh/v1")
-        self.base_url = self.base_url.rstrip('/')
-        
-        # OpenAI embedding model (via gateway)
-        self.model = "openai/text-embedding-3-small"
+            raise ValueError(
+                "No embedding API key. Set AI_GATEWAY_API_KEY or OPENAI_API_KEY "
+                "(or pass api_key=)."
+            )
     
     def get_embedding(self, text: str) -> np.ndarray:
         """

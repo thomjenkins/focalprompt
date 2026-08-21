@@ -182,7 +182,8 @@ class FocalAssessor:
             temperature=0.3
         )
         
-        result = json.loads(response['content'])
+        from utils.llm_json import parse_llm_json
+        result = parse_llm_json(response.get('content', ''))
         
         # Parse the response
         foci = [

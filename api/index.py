@@ -99,6 +99,31 @@ def build_app():
 
         _ensure_agent_bp_registered()
 
+        def _ensure_batch_bp_registered():
+            batch_routes = [r for r in flask_app.url_map.iter_rules() if 'batch' in r.endpoint]
+            parse_routes = [r for r in flask_app.url_map.iter_rules() if '/api/parse-batch-csv' in str(r)]
+            if len(batch_routes) == 0 or len(parse_routes) == 0:
+                try:
+                    print("🔄 FORCE REGISTERING batch_bp...", file=sys.stderr)
+                    import routes.batch_routes
+                    # Avoid double-registration if some batch routes already exist.
+                    if len(batch_routes) == 0:
+                        flask_app.register_blueprint(routes.batch_routes.batch_bp)
+                        print("✅ batch_bp force-registered successfully", file=sys.stderr)
+                    else:
+                        print(
+                            "⚠️ batch blueprint present but /api/parse-batch-csv missing; "
+                            "restart/redeploy required to pick up updated routes",
+                            file=sys.stderr,
+                        )
+                    parse_after = [r for r in flask_app.url_map.iter_rules() if '/api/parse-batch-csv' in str(r)]
+                    print(f"   parse-batch-csv routes: {len(parse_after)}", file=sys.stderr)
+                except Exception as e:
+                    print(f"❌ Failed to force-register batch_bp: {type(e).__name__}: {e}", file=sys.stderr)
+                    traceback.print_exc(file=sys.stderr)
+
+        _ensure_batch_bp_registered()
+
         from flask import jsonify as flask_jsonify
 
         @flask_app.route('/api/diagnostic', methods=['GET'])
