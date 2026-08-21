@@ -3917,16 +3917,22 @@ async function handleRunBatchAnalysis(e) {
             tool_results: pair.tool_results || ''
         };
         // Prefer per-row CSV prompt when present (exact text; do not trim —
-        // ablation spans depend on byte-for-text fidelity). Else shared UI prompt.
-        const sharedPrompt = batchPromptInput ? batchPromptInput.value : '';
+        // ablation spans depend on byte-for-text fidelity). Else shared prompt
+        // (typed or reconstructed from foci above).
         const rowPrompt = (typeof pair.prompt === 'string') ? pair.prompt : null;
         return {
             inputs: inputs,
             output: pair.output,
-            prompt: (rowPrompt !== null && rowPrompt.length > 0) ? rowPrompt : sharedPrompt
+            prompt: (rowPrompt !== null && rowPrompt.length > 0) ? rowPrompt : prompt
         };
     });
-    
+
+    if (pairsWithPrompt.some(p => !(p.prompt && String(p.prompt).length > 0))) {
+        showErrorModal(
+            'Every pair needs a non-empty prompt. Enter the shared prompt above, include a per-row prompt column in the CSV, or ensure foci cover the source text.'
+        );
+        return;
+    }    
     // Generate session ID for checkpointing
     const sessionId = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
     
@@ -4089,28 +4095,31 @@ async function handleRunBatchAnalysis(e) {
                 
             case 'error':
                 console.error('Error event received:', data);
-                console.error('Error message:', data.message);
+                {
+                const errText = data.message || data.error || 'Unknown error';
+                console.error('Error message:', errText);
                 
                 // If we have a session ID and completed pairs, try to load checkpoint
                 if (sessionId && completedCount > 0) {
                     console.log(`Error occurred but ${completedCount} pairs completed. Attempting to load checkpoint...`);
                     loadCheckpointData(sessionId).then(success => {
                         if (success) {
-                            showError(`Analysis encountered an error: ${data.message || 'Unknown error'}\n\n` +
+                            showError(`Analysis encountered an error: ${errText}\n\n` +
                                      `However, ${completedCount} pairs were completed and loaded from checkpoint.`);
                         } else {
-                            showError(`Error: ${data.message || 'Unknown error'}. ${completedCount} pairs completed but checkpoint not found.`);
+                            showError(`Error: ${errText}. ${completedCount} pairs completed but checkpoint not found.`);
                         }
                     }).catch(e => {
                         console.error('Failed to load checkpoint:', e);
-                        showError(`Error: ${data.message || 'Unknown error'}. ${completedCount} pairs completed.`);
+                        showError(`Error: ${errText}. ${completedCount} pairs completed.`);
                     });
                 } else {
-                    showError('Error: ' + (data.message || 'Unknown error'));
+                    showError('Error: ' + errText);
                 }
                 
                 if (data.pair_index !== undefined) {
-                    console.error(`Error processing pair ${data.pair_index}:`, data.message);
+                    console.error(`Error processing pair ${data.pair_index}:`, errText);
+                }
                 }
                 break;
         }

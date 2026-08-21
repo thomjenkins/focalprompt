@@ -160,10 +160,10 @@ def test_sole_focus_empty_remainder_runs_and_flags(ablation_service, mock_provid
     assert row['prompt_empty'] is True
     assert row['ablated_prompt'] == ''
     assert 'ablated_output' in row
+    # Empty ablated prompts must not hit the gateway (real providers reject them).
     contents = _user_contents(mock_provider)
-    assert '' in contents
-    assert contents.count(prompt) == 2  # baseline samples
-    assert contents.count('') == 2
+    assert contents.count(prompt) == 2  # baseline samples only
+    assert '' not in contents
 
 
 def test_dynamic_focus_no_llm_call(ablation_service, mock_provider):

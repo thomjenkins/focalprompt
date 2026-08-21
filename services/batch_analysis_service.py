@@ -54,6 +54,12 @@ class BatchAnalysisService:
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
     
     def _complete(self, prompt: str, temperature: float) -> Dict:
+        if not (prompt or '').strip():
+            raise ValueError(
+                'Cannot call the model with an empty prompt. '
+                'Enter the shared batch prompt (or a per-row prompt), and ensure '
+                'ablated prompts are non-empty before sampling.'
+            )
         return gateway_chat_completion(
             self.provider,
             self.model,
@@ -63,6 +69,9 @@ class BatchAnalysisService:
         )
     
     def _sample_outputs(self, prompt: str, n: int, temperature: float):
+        # Whole-prompt ablation yields an empty string; do not hit the gateway.
+        if not (prompt or '').strip():
+            return [''] * n, 0, 0
         outputs = []
         in_tok = 0
         out_tok = 0
@@ -98,6 +107,15 @@ class BatchAnalysisService:
         try:
             require_stochastic_temperature(temperature)
             prompt = pair_data.get('prompt', '')
+            if not (prompt or '').strip():
+                return {
+                    'success': False,
+                    'pair_index': pair_idx,
+                    'error': (
+                        'Pair prompt is empty. Set the shared prompt in Batch Analysis, '
+                        'include a per-row prompt in the CSV, or ensure foci cover the source text.'
+                    ),
+                }
             classified = classify_foci_for_ablation(prompt, foci_list)
 
             baseline_outputs, input_tokens, output_tokens = self._sample_outputs(
@@ -298,7 +316,7 @@ class BatchAnalysisService:
             if result.get('success'):
                 yield f"data: {json.dumps({'type': 'pair_result', 'pair_index': pair_idx, 'result': result})}\n\n"
             else:
-                yield f"data: {json.dumps({'type': 'error', 'pair_index': pair_idx, 'error': result.get('error', 'Unknown error')})}\n\n"
+                yield f"data: {json.dumps({'type': 'error', 'pair_index': pair_idx, 'error': result.get('error', 'Unknown error'), 'message': result.get('error', 'Unknown error')})}\n\n"
         
         yield f"data: {json.dumps({'type': 'progress', 'stage': 'calculating_statistics', 'message': 'Calculating statistics...'})}\n\n"
         

@@ -63,6 +63,9 @@ class AblationService:
         return response
     
     def _sample_outputs(self, prompt: str, n: int, temperature: float):
+        # Whole-prompt ablation can leave an empty string; do not call the gateway.
+        if not (prompt or '').strip():
+            return [''] * n, 0, 0
         outputs = []
         in_tok = 0
         out_tok = 0
