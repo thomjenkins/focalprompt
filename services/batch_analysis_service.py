@@ -28,6 +28,26 @@ from utils.permutation_test import (
 )
 
 
+
+def _sse_safe_pair_result(result: Dict) -> Dict:
+    """Drop bulky sample texts from SSE payloads so browsers can render mid-stream."""
+    if not isinstance(result, dict):
+        return result
+    slim = dict(result)
+    for key in (
+        'baseline_outputs',
+        'ablated_outputs',
+        'baseline_embeddings',
+        'ablated_embeddings',
+        'pair_data',
+    ):
+        slim.pop(key, None)
+    baseline = slim.get('baseline_output')
+    if isinstance(baseline, str) and len(baseline) > 500:
+        slim['baseline_output'] = baseline[:500] + '…'
+    return slim
+
+
 class BatchAnalysisService:
     """Service for batch ablation analysis."""
     
@@ -311,12 +331,36 @@ class BatchAnalysisService:
             }
             self.checkpoint_service.save_checkpoint(session_id, checkpoint_data, 'batch_analysis')
             
-            yield f"data: {json.dumps({'type': 'progress', 'stage': 'processing', 'completed': completed_count, 'total': total_pairs, 'pair_index': pair_idx})}\n\n"
-            
+            progress_event = {
+                'type': 'progress',
+                'stage': 'processing',
+                'message': 'Processing pairs',
+                'completed': completed_count,
+                'total': total_pairs,
+                'pair_index': pair_idx,
+            }
+            yield f"data: {json.dumps(progress_event)}\n\n"
+
             if result.get('success'):
-                yield f"data: {json.dumps({'type': 'pair_result', 'pair_index': pair_idx, 'result': result})}\n\n"
+                # Stream a UI-sized payload (drop raw sample texts) so the
+                # browser can render even if the final complete event is cut.
+                pair_event = {
+                    'type': 'pair_result',
+                    'pair_index': pair_idx,
+                    'completed': completed_count,
+                    'total': total_pairs,
+                    'result': _sse_safe_pair_result(result),
+                }
+                yield f"data: {json.dumps(pair_event)}\n\n"
             else:
-                yield f"data: {json.dumps({'type': 'error', 'pair_index': pair_idx, 'error': result.get('error', 'Unknown error'), 'message': result.get('error', 'Unknown error')})}\n\n"
+                err = result.get('error', 'Unknown error')
+                err_event = {
+                    'type': 'error',
+                    'pair_index': pair_idx,
+                    'error': err,
+                    'message': err,
+                }
+                yield f"data: {json.dumps(err_event)}\n\n"
         
         yield f"data: {json.dumps({'type': 'progress', 'stage': 'calculating_statistics', 'message': 'Calculating statistics...'})}\n\n"
         
@@ -345,13 +389,14 @@ class BatchAnalysisService:
         }
         self.checkpoint_service.save_checkpoint(session_id, checkpoint_data, 'batch_analysis')
         
+        safe_pairs = [_sse_safe_pair_result(r) for r in pair_results]
         final_result = {
             'type': 'complete',
             'session_id': session_id,
             'completed': completed_count,
             'total_pairs': total_pairs,
-            'pair_results': pair_results,
-            'results': pair_results,
+            'pair_results': safe_pairs,
+            'results': safe_pairs,
             'statistics': statistics,
             'focus_distribution_statistics': focus_distribution_statistics,
             'cost_breakdown': cost_breakdown,
@@ -360,5 +405,5 @@ class BatchAnalysisService:
             'n_ablated': n_ablated,
             'alpha': alpha,
         }
-        
+
         yield f"data: {json.dumps(final_result)}\n\n"

@@ -3952,11 +3952,77 @@ async function handleRunBatchAnalysis(e) {
         batchProgressText.textContent = `Starting analysis...`;
     }
     
-    // Store interim results
+    // Accumulate pair results so we can render even if the stream is cut
+    // before the final "complete" event (common on hosted serverless timeouts).
     let interimResults = [];
     let interimStatistics = {};
+    let interimFocusDistributionStatistics = {};
+    let interimCostBreakdown = {};
     let completedCount = 0;
-    
+    let sawCompleteEvent = false;
+    let streamHadError = false;
+
+    function finalizeBatchResults(options) {
+        options = options || {};
+        const pairResults = (options.pairResults || interimResults || []).slice();
+        if (!pairResults.length) {
+            if (!streamHadError && !options.silentIfEmpty) {
+                showError(
+                    'Batch analysis finished without any pair results. ' +
+                    'The connection may have closed early (hosted runs can time out). ' +
+                    'Try fewer pairs, lower sample counts, or run locally.'
+                );
+            }
+            return false;
+        }
+        const completeData = {
+            results: pairResults,
+            pair_results: pairResults,
+            statistics: options.statistics || interimStatistics || {},
+            focus_distribution_statistics:
+                options.focusDistributionStatistics ||
+                options.focus_distribution_statistics ||
+                interimFocusDistributionStatistics ||
+                {},
+            cost_breakdown:
+                options.costBreakdown ||
+                options.cost_breakdown ||
+                interimCostBreakdown ||
+                {}
+        };
+        window.batchResultsData = completeData;
+        renderBatchResults(completeData);
+        if (exportResultsBtn) exportResultsBtn.disabled = false;
+        if (batchProgressText) {
+            const suffix = options.partial
+                ? ' (stream ended early — showing completed pairs)'
+                : '';
+            batchProgressText.textContent =
+                `Analysis complete! ${pairResults.length} pair(s) processed.${suffix}`;
+        }
+        if (batchResults && batchResults.scrollIntoView) {
+            batchResults.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+        return true;
+    }
+
+    function upsertInterimPair(pairIndex, result) {
+        if (!result || typeof result !== 'object') return;
+        const idx = (pairIndex !== undefined && pairIndex !== null)
+            ? pairIndex
+            : result.pair_index;
+        const enriched = Object.assign({}, result);
+        if (idx !== undefined && idx !== null && enriched.pair_index === undefined) {
+            enriched.pair_index = idx;
+        }
+        const existing = interimResults.findIndex(function (r) {
+            return r && r.pair_index === enriched.pair_index;
+        });
+        if (existing >= 0) interimResults[existing] = enriched;
+        else interimResults.push(enriched);
+        completedCount = interimResults.length;
+    }
+
     try {
         console.log('Sending streaming request to /api/batch-analysis-stream');
         const response = await fetch('/api/batch-analysis-stream', {
@@ -3972,9 +4038,8 @@ async function handleRunBatchAnalysis(e) {
                 resume: false
             }))
         });
-        
+
         if (!response.ok) {
-            // Try to parse error, but SSE might not be JSON
             let errorMsg = 'Failed to start batch analysis';
             try {
                 const errorData = await response.json();
@@ -3984,33 +4049,32 @@ async function handleRunBatchAnalysis(e) {
             }
             throw new Error(errorMsg);
         }
-        
-        // Read streaming response
+
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
-        
+
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
-            
+
             buffer += decoder.decode(value, { stream: true });
             const lines = buffer.split('\n');
-            buffer = lines.pop() || ''; // Keep incomplete line in buffer
-            
+            buffer = lines.pop() || '';
+
             for (const line of lines) {
-                if (line.startsWith('data: ')) {
-                    try {
-                        const data = JSON.parse(line.slice(6));
-                        handleStreamEvent(data);
-                    } catch (e) {
-                        console.error('Error parsing SSE data:', e, line);
-                    }
+                if (!line.startsWith('data: ')) continue;
+                const payload = line.slice(6);
+                // Huge complete payloads can truncate mid-line; skip partial JSON quietly.
+                try {
+                    const data = JSON.parse(payload);
+                    handleStreamEvent(data);
+                } catch (e) {
+                    console.error('Error parsing SSE data:', e, payload.slice(0, 200));
                 }
             }
         }
-        
-        // Process any remaining buffer
+
         if (buffer.startsWith('data: ')) {
             try {
                 const data = JSON.parse(buffer.slice(6));
@@ -4019,120 +4083,171 @@ async function handleRunBatchAnalysis(e) {
                 console.error('Error parsing final SSE data:', e);
             }
         }
-        
+
+        // If the host closed the stream before "complete", still show what we got.
+        if (!sawCompleteEvent) {
+            finalizeBatchResults({
+                partial: true,
+                silentIfEmpty: streamHadError
+            });
+        }
+
     } catch (error) {
-        showError('Error running batch analysis: ' + error.message);
+        streamHadError = true;
+        // Prefer showing partial results over only an error toast.
+        if (interimResults.length) {
+            finalizeBatchResults({ partial: true });
+            showError(
+                'Batch analysis interrupted: ' + error.message +
+                '\n\nShowing ' + interimResults.length + ' completed pair(s).'
+            );
+        } else {
+            showError('Error running batch analysis: ' + error.message);
+        }
         console.error('Batch analysis error:', error);
     } finally {
         hideLoading();
         if (batchProgress) {
-            batchProgress.classList.add('hidden');
+            // Keep progress visible briefly when we rendered results so users see status.
+            if (!window.batchResultsData) {
+                batchProgress.classList.add('hidden');
+            }
         }
     }
-    
+
     function handleStreamEvent(data) {
-        console.log('SSE Event:', data.type, data);
-        
+        console.log('SSE Event:', data.type);
+
         switch (data.type) {
             case 'progress':
                 if (batchProgressText) {
                     if (data.stage === 'noise_calculation' || data.stage === 'baseline_sampling') {
                         if (data.sample) {
-                            batchProgressText.textContent = `Sampling baseline outputs: ${data.sample}/${data.total}...`;
+                            batchProgressText.textContent =
+                                `Sampling baseline outputs: ${data.sample}/${data.total}...`;
                         } else {
-                            batchProgressText.textContent = data.message || 'Sampling baseline outputs...';
+                            batchProgressText.textContent =
+                                data.message || 'Sampling baseline outputs...';
                         }
                     } else if (data.stage === 'processing') {
-                        batchProgressText.textContent = `${data.message} (${data.completed}/${data.total} completed)`;
-                    } else if (data.stage === 'calculating_stats') {
-                        batchProgressText.textContent = data.message || 'Calculating final statistics...';
+                        const completed = data.completed != null ? data.completed : completedCount;
+                        const total = data.total != null ? data.total : '?';
+                        batchProgressText.textContent =
+                            (data.message || 'Processing pairs') +
+                            ` (${completed}/${total} completed)`;
+                    } else if (
+                        data.stage === 'calculating_stats' ||
+                        data.stage === 'calculating_statistics'
+                    ) {
+                        batchProgressText.textContent =
+                            data.message || 'Calculating final statistics...';
                     } else {
                         batchProgressText.textContent = data.message || 'Processing...';
                     }
                 }
+                if (data.completed != null) completedCount = data.completed;
                 break;
-                
+
+            case 'pair_result':
             case 'pair_complete':
-                completedCount = data.completed || 0;
-                if (batchProgressText) {
-                    batchProgressText.textContent = `Completed ${completedCount}/${data.total} pairs...`;
+                if (data.result) {
+                    upsertInterimPair(data.pair_index, data.result);
+                } else if (data.completed != null) {
+                    completedCount = data.completed;
                 }
-                // Update interim results display if needed
-                updateInterimResults();
+                if (batchProgressText) {
+                    const total = data.total != null ? data.total : '';
+                    batchProgressText.textContent = total !== ''
+                        ? `Completed ${completedCount}/${total} pairs...`
+                        : `Completed ${completedCount} pair(s)...`;
+                }
                 break;
-                
+
             case 'checkpoint':
                 console.log(`Checkpoint saved: ${data.completed} pairs completed`);
-                if (batchProgressText) {
-                    batchProgressText.textContent += ` (Checkpoint saved)`;
-                }
                 break;
-                
+
             case 'resume':
                 console.log(`Resuming: ${data.completed} pairs already completed`);
                 completedCount = data.completed || 0;
                 break;
-                
+
             case 'complete':
-                // Final results (server sends pair_results + statistics; results is an alias)
+                sawCompleteEvent = true;
                 {
-                const pairResults = data.pair_results || data.results || [];
-                const completeData = {
-                    results: pairResults,
-                    pair_results: pairResults,
-                    statistics: data.statistics || {},
-                    focus_distribution_statistics: data.focus_distribution_statistics || {},
-                    cost_breakdown: data.cost_breakdown || {}
-                };
-                window.batchResultsData = completeData;
-                renderBatchResults(completeData);
-                if (exportResultsBtn) exportResultsBtn.disabled = false;
-                if (batchProgressText) {
-                    batchProgressText.textContent = `Analysis complete! ${pairResults.length} pairs processed.`;
-                }
+                const pairResults = data.pair_results || data.results || interimResults || [];
+                interimResults = pairResults.slice();
+                interimStatistics = data.statistics || interimStatistics || {};
+                interimFocusDistributionStatistics =
+                    data.focus_distribution_statistics ||
+                    interimFocusDistributionStatistics ||
+                    {};
+                interimCostBreakdown =
+                    data.cost_breakdown || interimCostBreakdown || {};
+                finalizeBatchResults({
+                    pairResults: pairResults,
+                    statistics: interimStatistics,
+                    focus_distribution_statistics: interimFocusDistributionStatistics,
+                    cost_breakdown: interimCostBreakdown,
+                    partial: false
+                });
                 }
                 break;
-                
+
             case 'error':
                 console.error('Error event received:', data);
                 {
                 const errText = data.message || data.error || 'Unknown error';
-                console.error('Error message:', errText);
-                
-                // If we have a session ID and completed pairs, try to load checkpoint
-                if (sessionId && completedCount > 0) {
-                    console.log(`Error occurred but ${completedCount} pairs completed. Attempting to load checkpoint...`);
+                streamHadError = true;
+                // Pair-level failures still leave other pairs usable.
+                if (data.pair_index !== undefined && data.result) {
+                    upsertInterimPair(data.pair_index, Object.assign({
+                        success: false,
+                        error: errText
+                    }, data.result));
+                } else if (data.pair_index !== undefined) {
+                    upsertInterimPair(data.pair_index, {
+                        success: false,
+                        pair_index: data.pair_index,
+                        error: errText
+                    });
+                }
+                if (sessionId && completedCount > 0 && data.pair_index === undefined) {
+                    console.log(
+                        `Error occurred but ${completedCount} pairs completed. Attempting checkpoint...`
+                    );
                     loadCheckpointData(sessionId).then(success => {
                         if (success) {
-                            showError(`Analysis encountered an error: ${errText}\n\n` +
-                                     `However, ${completedCount} pairs were completed and loaded from checkpoint.`);
+                            showError(
+                                `Analysis encountered an error: ${errText}\n\n` +
+                                `However, ${completedCount} pairs were completed and loaded from checkpoint.`
+                            );
+                        } else if (interimResults.length) {
+                            finalizeBatchResults({ partial: true });
+                            showError(
+                                `Error: ${errText}. Showing ${interimResults.length} completed pair(s).`
+                            );
                         } else {
-                            showError(`Error: ${errText}. ${completedCount} pairs completed but checkpoint not found.`);
+                            showError(
+                                `Error: ${errText}. ${completedCount} pairs completed but checkpoint not found.`
+                            );
                         }
                     }).catch(e => {
                         console.error('Failed to load checkpoint:', e);
+                        if (interimResults.length) finalizeBatchResults({ partial: true });
                         showError(`Error: ${errText}. ${completedCount} pairs completed.`);
                     });
-                } else {
+                } else if (data.pair_index === undefined) {
                     showError('Error: ' + errText);
-                }
-                
-                if (data.pair_index !== undefined) {
+                } else {
                     console.error(`Error processing pair ${data.pair_index}:`, errText);
                 }
                 }
                 break;
         }
     }
-    
-    function updateInterimResults() {
-        // Optionally show interim statistics as pairs complete
-        // This can be expanded to show a live table or chart
-        if (completedCount > 0 && completedCount % 10 === 0) {
-            console.log(`Interim progress: ${completedCount} pairs completed`);
-        }
-    }
 }
+
 
 // Attach handler using event delegation on parent container
 function attachBatchAnalysisHandler() {
