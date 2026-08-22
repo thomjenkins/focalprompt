@@ -2854,7 +2854,126 @@ function renderAblationResults(data) {
             URL.revokeObjectURL(url);
         });
     }
+
+    bindBehavioralDifferenceReviewHandlers(data);
 }
+
+function bindBehavioralDifferenceReviewHandlers(data) {
+    if (!ablationResults) return;
+    const collect = window.FocalPromptResults && window.FocalPromptResults.collectFocusRecords;
+    const records = collect ? collect(data) : [];
+    const byName = {};
+    records.forEach((r) => {
+        const n = r.focus || r.focus_name;
+        if (n) byName[n] = r;
+    });
+
+    ablationResults.querySelectorAll('.btn-review-llm-diff').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+            const focus = btn.getAttribute('data-focus');
+            const rec = byName[focus];
+            if (!rec) {
+                alert('Could not find stored samples for focus: ' + focus);
+                return;
+            }
+            const baselineOutputs = data.baseline_outputs || (data.baseline_output ? [data.baseline_output] : []);
+            const ablatedOutputs = rec.ablated_outputs || (rec.ablated_output ? [rec.ablated_output] : []);
+            if (!baselineOutputs.length || !ablatedOutputs.length) {
+                alert('Need stored baseline and ablated outputs for qualitative difference review.');
+                return;
+            }
+            btn.disabled = true;
+            const prev = btn.textContent;
+            btn.textContent = 'Judging difference…';
+            try {
+                const response = await fetch('/api/behavioral-difference/llm-judge', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        focus: focus,
+                        removed_span: rec.prompt_section || rec.focus_text || '',
+                        baseline_outputs: baselineOutputs,
+                        ablated_outputs: ablatedOutputs,
+                        prompt: data.prompt || '',
+                        blind: true,
+                        n_judges: 1,
+                        provider: userProvider,
+                        model: userModel,
+                        api_key: userApiKey,
+                    }),
+                });
+                const result = await response.json();
+                if (!response.ok) {
+                    throw new Error(result.error || result.message || 'LLM difference review failed');
+                }
+                const scores = data.influence_scores;
+                const apply = (item) => {
+                    if ((item.focus || item.focus_name) === focus) {
+                        item.llm_behavioral_difference = result;
+                    }
+                };
+                if (Array.isArray(scores)) scores.forEach(apply);
+                else if (scores && typeof scores === 'object') Object.values(scores).forEach(apply);
+                if (rec) rec.llm_behavioral_difference = result;
+                window.singleAblationResults = data;
+                renderAblationResults(data);
+            } catch (err) {
+                alert(err.message || String(err));
+                btn.disabled = false;
+                btn.textContent = prev;
+            }
+        });
+    });
+
+    ablationResults.querySelectorAll('.btn-review-human-diff').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+            const focus = btn.getAttribute('data-focus');
+            const materialRaw = window.prompt(
+                'Material behavioral difference for "' + focus + '"?\n' +
+                'Enter yes / no / uncertain\n' +
+                '(Do NOT judge which output is better — only whether they differ.)',
+                'yes'
+            );
+            if (materialRaw === null) return;
+            const scoreRaw = window.prompt('Overall difference score 0–5 (change magnitude only):', '4');
+            if (scoreRaw === null) return;
+            const notes = window.prompt('Optional notes on how they differ (not which is better):', '') || '';
+            const structure = window.prompt('structure_format difference 0–5 (optional):', '0') || '0';
+            const compliance = window.prompt('instruction_compliance difference 0–5 (optional):', '0') || '0';
+            try {
+                const response = await fetch('/api/behavioral-difference/human-review', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        material_behavioral_difference: materialRaw,
+                        overall_difference_score: Number(scoreRaw),
+                        dimensions: {
+                            structure_format: Number(structure),
+                            instruction_compliance: Number(compliance),
+                        },
+                        notes: notes,
+                        blinded: false,
+                    }),
+                });
+                const result = await response.json();
+                if (!response.ok) throw new Error(result.error || 'Human review failed');
+                const scores = data.influence_scores;
+                const apply = (item) => {
+                    if ((item.focus || item.focus_name) === focus) {
+                        item.human_behavioral_difference = result;
+                    }
+                };
+                if (Array.isArray(scores)) scores.forEach(apply);
+                else if (scores && typeof scores === 'object') Object.values(scores).forEach(apply);
+                window.singleAblationResults = data;
+                renderAblationResults(data);
+            } catch (err) {
+                alert(err.message || String(err));
+            }
+        });
+    });
+}
+
 
 // Make removeFocus available globally
 window.removeFocus = removeFocus;

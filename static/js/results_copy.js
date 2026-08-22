@@ -237,6 +237,89 @@
         );
     }
 
+
+    function differenceBand(score) {
+        var s = Number(score);
+        if (Number.isNaN(s)) return 'not assessed';
+        if (s <= 0) return 'None';
+        if (s <= 2) return 'Weak';
+        if (s <= 3) return 'Moderate';
+        return 'Strong';
+    }
+
+    function renderEvidenceLenses(focus) {
+        var C = getCopy();
+        var sem = focus.semantic_perturbation || {};
+        var llm = focus.llm_behavioral_difference || {};
+        var hum = focus.human_behavioral_difference || {};
+        var rec = focus.review_recommendation || {};
+        var sig = sem.is_significant !== undefined ? sem.is_significant : focus.is_significant;
+        var q = sem.q_value !== undefined ? sem.q_value : focus.q_value;
+        var qTxt = formatQValue(q);
+        var semLine;
+        if (sig === true) semLine = 'Detectable semantic perturbation (q = ' + qTxt + ')';
+        else if (sig === false) semLine = 'No detectable semantic perturbation (q = ' + qTxt + ')';
+        else semLine = 'Semantic perturbation not assessed';
+
+        var llmStatus = llm.status || 'not_run';
+        var llmLine;
+        if (llmStatus === 'complete') {
+            var band = differenceBand(llm.overall_difference_score);
+            var dims = llm.dimensions || {};
+            var dimBits = [];
+            ['structure_format', 'instruction_compliance', 'content'].forEach(function (k) {
+                if (dims[k]) dimBits.push(k.replace(/_/g, ' ') + ': ' + dims[k] + '/5');
+            });
+            llmLine = band;
+            if (dimBits.length) llmLine += ' — ' + dimBits.join('; ');
+            if (llm.summary) llmLine += '. ' + llm.summary;
+            llmLine = escapeHtml(llmLine);
+        } else if (llmStatus === 'failed') {
+            llmLine = escapeHtml('Failed: ' + (llm.error || 'judge error'));
+        } else {
+            llmLine = 'Not run';
+        }
+
+        var humStatus = hum.status || 'not_run';
+        var humLine;
+        if (humStatus === 'complete') {
+            var hBand = differenceBand(hum.overall_difference_score);
+            if (hum.material_behavioral_difference === true) humLine = 'Difference confirmed (' + hBand + ')';
+            else if (hum.material_behavioral_difference === false) humLine = 'No material difference (' + hBand + ')';
+            else humLine = 'Uncertain (' + hBand + ')';
+            if (hum.notes) humLine += '. ' + hum.notes;
+            humLine = escapeHtml(humLine);
+        } else if (humStatus === 'pending') {
+            humLine = 'Pending human review';
+        } else {
+            humLine = 'Not run';
+        }
+
+        var focusKey = escapeHtml(focusName(focus));
+        var recommend = '';
+        if (rec.review_recommended) {
+            var reasons = (rec.reasons || []).join(', ');
+            recommend = '<p class="review-recommended">Review recommended'
+                + (reasons ? ' (' + escapeHtml(reasons) + ')' : '')
+                + ' — advisory only.</p>';
+        }
+
+        return (
+            '<div class="evidence-lenses" data-focus="' + focusKey + '">' +
+            '<p class="multi-lens-explainer">' + escapeHtml(C.MULTI_LENS_EXPLAINER || '') + '</p>' +
+            '<div class="lens-row"><strong>' + escapeHtml(C.LENS_SEMANTIC_TITLE || 'Semantic perturbation') + ':</strong> ' + escapeHtml(semLine) + '</div>' +
+            '<div class="lens-row"><strong>' + escapeHtml(C.LENS_LLM_TITLE || 'LLM behavioral difference') + ':</strong> ' + llmLine + '</div>' +
+            '<div class="lens-row"><strong>' + escapeHtml(C.LENS_HUMAN_TITLE || 'Human-observed difference') + ':</strong> ' + humLine + '</div>' +
+            recommend +
+            '<div class="behavioral-review-actions">' +
+            '<button type="button" class="btn btn-outline btn-review-llm-diff" data-focus="' + focusKey + '">' +
+            escapeHtml(C.REVIEW_BEHAVIORAL_DIFFERENCE || 'Review behavioral difference') + ' (LLM)</button> ' +
+            '<button type="button" class="btn btn-outline btn-review-human-diff" data-focus="' + focusKey + '">' +
+            'Record human difference review</button>' +
+            '</div></div>'
+        );
+    }
+
     function renderFocusCard(focus, alpha) {
         var C = getCopy();
         alpha = alpha == null ? DEFAULT_ALPHA : alpha;
@@ -274,6 +357,10 @@
                 body.push('<p class="focus-prompt-empty">' + escapeHtml(C.PROMPT_EMPTY_NOTE) + '</p>');
             }
             body.push(renderStatisticalDetail(focus));
+        }
+
+        if (!excluded) {
+            body.push(renderEvidenceLenses(focus));
         }
 
         return '<article class="' + classes.join(' ') + '">' + body.join('') + '</article>';
@@ -398,6 +485,7 @@
         isNearThreshold: isNearThreshold,
         collectFocusRecords: collectFocusRecords,
         renderFocusCard: renderFocusCard,
+        renderEvidenceLenses: renderEvidenceLenses,
         renderDefinition: renderDefinition,
         renderRunHeader: renderRunHeader,
         renderMethodsPanel: renderMethodsPanel,

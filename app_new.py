@@ -79,6 +79,12 @@ except Exception as e:
     print(f"Error registering ablation_bp: {e}", file=sys.stderr)
 
 try:
+    from routes.behavioral_difference_routes import behavioral_difference_bp
+    app.register_blueprint(behavioral_difference_bp)
+except Exception as e:
+    print(f"Error registering behavioral_difference_bp: {e}", file=sys.stderr)
+
+try:
     from routes.batch_routes import batch_bp
     app.register_blueprint(batch_bp)
     batch_routes = [r for r in app.url_map.iter_rules() if 'batch' in r.endpoint]

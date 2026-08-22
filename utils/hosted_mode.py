@@ -122,6 +122,7 @@ LIVE_INFERENCE_PREFIXES = (
     '/api/rewrite-prompt',
     '/api/build-agent-prompt',
     '/api/ablation',
+    '/api/behavioral-difference/llm-judge',
     '/api/batch-analysis',
     '/api/assess-chat-foci',
     '/api/generate-agent-response',
