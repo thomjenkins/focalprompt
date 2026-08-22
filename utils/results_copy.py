@@ -92,8 +92,25 @@ Benjamini–Hochberg correction. Each experiment tests several foci at once. Raw
 
 Known limitations. Embedding blindness: short structural instructions — output formats, escalation rules, guardrails — can change what the model does while barely moving output embeddings. A non-significant result is a failure to detect a shift at this sample size, not evidence that the text is inert. Leave-one-out conditionality: each focus is deleted while the rest of the prompt stays. Redundant instructions can mask each other (deleting one copy may not shift behaviour if another remains). Interacting instructions can be misattributed (the measured shift is the effect of deleting this span in this surrounding prompt, not an isolated effect of the idea). Locality: results hold for this model, this temperature, and this surrounding prompt only. They do not automatically generalise to other models, decoding settings, or prompt revisions."""
 
+
+MULTI_LENS_EXPLAINER = (
+    "Embedding similarity captures semantic change. Qualitative review can detect "
+    "structural, procedural, stylistic, or compliance changes that embeddings may miss. "
+    "The LLM judge is not ground truth; it is an independent difference lens."
+)
+
+LENS_SEMANTIC_TITLE = "Semantic perturbation"
+LENS_LLM_TITLE = "LLM behavioral difference"
+LENS_HUMAN_TITLE = "Human-observed difference"
+REVIEW_BEHAVIORAL_DIFFERENCE = "Review behavioral difference"
+
 COPY = {
     'DEFINITION': DEFINITION,
+    'MULTI_LENS_EXPLAINER': MULTI_LENS_EXPLAINER,
+    'LENS_SEMANTIC_TITLE': LENS_SEMANTIC_TITLE,
+    'LENS_LLM_TITLE': LENS_LLM_TITLE,
+    'LENS_HUMAN_TITLE': LENS_HUMAN_TITLE,
+    'REVIEW_BEHAVIORAL_DIFFERENCE': REVIEW_BEHAVIORAL_DIFFERENCE,
     'VERDICT_SIGNIFICANT': VERDICT_SIGNIFICANT,
     'VERDICT_NOT_SIGNIFICANT': VERDICT_NOT_SIGNIFICANT,
     'NON_SIGNIFICANT_CAUTION': NON_SIGNIFICANT_CAUTION,
@@ -322,6 +339,101 @@ def render_statistical_detail(focus: Mapping[str, Any]) -> str:
     return ''.join(parts)
 
 
+def _difference_band(score) -> str:
+    try:
+        s = int(score)
+    except (TypeError, ValueError):
+        return 'not assessed'
+    if s <= 0:
+        return 'None'
+    if s <= 2:
+        return 'Weak'
+    if s <= 3:
+        return 'Moderate'
+    return 'Strong'
+
+
+def render_evidence_lenses(focus: Mapping[str, Any]) -> str:
+    """Render independent semantic / LLM / human difference lenses (not quality)."""
+    sem = focus.get('semantic_perturbation') or {}
+    llm = focus.get('llm_behavioral_difference') or {}
+    hum = focus.get('human_behavioral_difference') or {}
+    rec = focus.get('review_recommendation') or {}
+
+    sig = sem.get('is_significant', focus.get('is_significant'))
+    q = sem.get('q_value', focus.get('q_value'))
+    q_txt = format_q_value(q)
+    if sig is True:
+        sem_line = f'Detectable semantic perturbation (q = {q_txt})'
+    elif sig is False:
+        sem_line = f'No detectable semantic perturbation (q = {q_txt})'
+    else:
+        sem_line = 'Semantic perturbation not assessed'
+
+    llm_status = llm.get('status') or 'not_run'
+    if llm_status == 'complete':
+        band = _difference_band(llm.get('overall_difference_score'))
+        dims = llm.get('dimensions') or {}
+        dim_bits = []
+        for key in ('structure_format', 'instruction_compliance', 'content'):
+            if key in dims and dims[key]:
+                dim_bits.append(f"{key.replace('_', ' ')}: {dims[key]}/5")
+        llm_line = band
+        if dim_bits:
+            llm_line += ' — ' + '; '.join(dim_bits)
+        if llm.get('summary'):
+            llm_line += '. ' + str(llm.get('summary'))
+        llm_line = _esc(llm_line)
+    elif llm_status == 'failed':
+        llm_line = _esc(f"Failed: {llm.get('error') or 'judge error'}")
+    else:
+        llm_line = 'Not run'
+
+    hum_status = hum.get('status') or 'not_run'
+    if hum_status == 'complete':
+        mat = hum.get('material_behavioral_difference')
+        band = _difference_band(hum.get('overall_difference_score'))
+        if mat is True:
+            hum_line = f'Difference confirmed ({band})'
+        elif mat is False:
+            hum_line = f'No material difference ({band})'
+        else:
+            hum_line = f'Uncertain ({band})'
+        if hum.get('notes'):
+            hum_line += '. ' + str(hum.get('notes'))
+        hum_line = _esc(hum_line)
+    elif hum_status == 'pending':
+        hum_line = 'Pending human review'
+    else:
+        hum_line = 'Not run'
+
+    focus_key = _esc(str(focus.get('focus') or focus.get('focus_name') or ''))
+    recommend = ''
+    if rec.get('review_recommended'):
+        reasons = ', '.join(str(r) for r in (rec.get('reasons') or []))
+        recommend = (
+            '<p class="review-recommended">Review recommended'
+            + (f' ({_esc(reasons)})' if reasons else '')
+            + ' — advisory only.</p>'
+        )
+
+    return (
+        f'<div class="evidence-lenses" data-focus="{focus_key}">'
+        f'<p class="multi-lens-explainer">{_esc(MULTI_LENS_EXPLAINER)}</p>'
+        f'<div class="lens-row"><strong>{_esc(LENS_SEMANTIC_TITLE)}:</strong> {_esc(sem_line)}</div>'
+        f'<div class="lens-row"><strong>{_esc(LENS_LLM_TITLE)}:</strong> {llm_line}</div>'
+        f'<div class="lens-row"><strong>{_esc(LENS_HUMAN_TITLE)}:</strong> {hum_line}</div>'
+        f'{recommend}'
+        f'<div class="behavioral-review-actions">'
+        f'<button type="button" class="btn btn-outline btn-review-llm-diff" data-focus="{focus_key}">'
+        f'{_esc(REVIEW_BEHAVIORAL_DIFFERENCE)} (LLM)</button> '
+        f'<button type="button" class="btn btn-outline btn-review-human-diff" data-focus="{focus_key}">'
+        f'Record human difference review</button>'
+        f'</div></div>'
+    )
+
+
+
 def render_focus_card(focus: Mapping[str, Any], alpha: float = DEFAULT_ALPHA) -> str:
     name = _focus_name(focus)
     excluded = excluded_explanation(focus)
@@ -358,6 +470,9 @@ def render_focus_card(focus: Mapping[str, Any], alpha: float = DEFAULT_ALPHA) ->
         if prompt_empty:
             body.append(f'<p class="focus-prompt-empty">{_esc(PROMPT_EMPTY_NOTE)}</p>')
         body.append(render_statistical_detail(focus))
+
+    if not excluded:
+        body.append(render_evidence_lenses(focus))
 
     return f'<article class="{" ".join(classes)}">{"".join(body)}</article>'
 

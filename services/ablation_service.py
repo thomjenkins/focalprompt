@@ -22,6 +22,7 @@ from utils.permutation_test import (
     require_stochastic_temperature,
     design_test_type,
 )
+from services.behavioral_difference_service import enrich_influence_item_for_review
 
 # Space sequential completions so a 429 on sample 1 does not become a burst.
 SAMPLE_GAP_SECONDS = 1.5
@@ -250,6 +251,12 @@ class AblationService:
                 equal_share = 100.0 / len(influence_scores)
                 for item in influence_scores:
                     item['normalized_influence'] = equal_share
+
+        # Attach independent evidence lenses (semantic + empty LLM/human slots).
+        # Qualitative difference review is selective and never auto-run here.
+        influence_scores = [
+            enrich_influence_item_for_review(item) for item in influence_scores
+        ]
 
         n_attr = len(influence_scores)
         if n_ablated < 1:
