@@ -88,10 +88,6 @@ def test_assess_focus_with_user_foci_reattaches_prompt_section(mock_assessor):
         {'focus': 'Role', 'prompt_section': long_section},
         {'focus': 'Tone', 'prompt_section': 'Be empathetic.'},
     ]
-    mock_assessor._build_assessment_prompt_with_foci = Mock(
-        wraps=FocalAssessor._build_assessment_prompt_with_foci
-    )
-    # Use real builder via unbound method by binding a real-ish assessor helper
     real = FocalAssessor.__new__(FocalAssessor)
     mock_assessor._build_assessment_prompt_with_foci = (
         lambda prompt, output, foci, max_foci=None: real._build_assessment_prompt_with_foci(
@@ -123,9 +119,45 @@ def test_assess_focus_with_user_foci_reattaches_prompt_section(mock_assessor):
         'System prompt here', 'out', user_foci, None
     )
     assert 'Do NOT include prompt_section' in built
+    assert 'ORIGINAL PROMPT:' not in built
     assert long_section not in built  # excerpted in the foci list
     call_kw = mock_assessor.provider.chat_completion.call_args.kwargs
     assert call_kw.get('max_tokens') == 4096
+
+
+def test_assess_focus_retries_when_first_response_truncated(mock_assessor):
+    """Truncated prompt_section echo triggers one retry with stricter instructions."""
+    user_foci = [
+        {'focus': 'Role', 'prompt_section': 'You are a vet assistant.'},
+        {'focus': 'Tone', 'prompt_section': 'Be kind.'},
+    ]
+    real = FocalAssessor.__new__(FocalAssessor)
+    mock_assessor._build_assessment_prompt_with_foci = (
+        lambda prompt, output, foci, max_foci=None: real._build_assessment_prompt_with_foci(
+            prompt, output, foci, max_foci
+        )
+    )
+    truncated = (
+        '{\n  "foci": [\n    {\n      "focus": "Role",\n'
+        '      "prompt_section": "You are an AI assistant designed to help veterinary'
+    )
+    good = json.dumps({
+        'foci': [
+            {'focus': 'Role', 'score': 60, 'explanation': 'In role.'},
+            {'focus': 'Tone', 'score': 40, 'explanation': 'Kind.'},
+        ],
+        'overall_summary': 'ok',
+    })
+    mock_assessor.provider.chat_completion.side_effect = [
+        {'content': truncated, 'usage': {'prompt_tokens': 5, 'completion_tokens': 5}},
+        {'content': good, 'usage': {'prompt_tokens': 5, 'completion_tokens': 10}},
+    ]
+    service = AssessmentService(mock_assessor)
+    result = service.assess_focus('p', 'o', user_foci=user_foci)
+    assert len(result['foci']) == 2
+    assert mock_assessor.provider.chat_completion.call_count == 2
+    retry_user = mock_assessor.provider.chat_completion.call_args_list[1].kwargs['messages'][1]['content']
+    assert 'CRITICAL RETRY' in retry_user
 
 
 def test_detect_dynamic_foci(mock_assessor):

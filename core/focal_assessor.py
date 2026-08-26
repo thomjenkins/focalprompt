@@ -231,12 +231,12 @@ class FocalAssessor:
                 foci_lines.append(f"{i+1}. Focus: {name}")
         foci_list_text = '\n'.join(foci_lines)
 
-        return f"""Analyze the following prompt and output to assess focus distribution.
+        # Foci excerpts + output are enough; pasting the full ORIGINAL PROMPT
+        # encourages models to echo long spans into JSON and truncate.
+        _ = prompt
+        return f"""Assess how the LLM OUTPUT distributes attention across the USER-DEFINED FOCI.
 
-ORIGINAL PROMPT:
-{prompt}
-
-USER-DEFINED FOCI (you must assess ALL of these):
+USER-DEFINED FOCI (you must assess ALL of these; Excerpt is context only — do not copy it into your JSON):
 {foci_list_text}
 
 LLM OUTPUT:
@@ -244,12 +244,12 @@ LLM OUTPUT:
 
 TASK:
 1. For EACH of the user-defined foci above, assess how much attention the output gives to it.
-2. Assign points to each focus based on how much attention/emphasis the output gives to that specific part of the prompt.
+2. Assign points to each focus based on how much attention/emphasis the output gives to that focus.
 3. CRITICAL: You must assess ALL {len(user_foci)} foci listed above. If a focus is not addressed, give it 0 points but still include it.
 4. CRITICAL: The total of all points must equal exactly 100 points (not percentages, but points that sum to 100).
 5. Provide a brief explanation for each score that references specific parts of the output.
 
-Return your analysis as a JSON object with this structure:
+Return your analysis as a JSON object with this EXACT structure (three keys per focus only):
 {{
   "foci": [
     {{
@@ -264,7 +264,9 @@ Return your analysis as a JSON object with this structure:
 CRITICAL REQUIREMENTS:
 - You MUST include ALL {len(user_foci)} foci from the user-defined list
 - Use the EXACT focus names provided above
-- Do NOT include prompt_section in the JSON (it is already known)
+- Each focus object may ONLY have: focus, score, explanation
+- Do NOT include prompt_section, excerpt, quote, or any other keys
+- Do NOT copy Excerpt text into the JSON
 - Keep explanations short so the JSON response stays complete
 - The sum of all scores MUST equal exactly 100.0 points
 - If a focus is completely ignored, give it 0 points but still include it with an explanation

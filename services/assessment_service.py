@@ -540,6 +540,8 @@ Only mark as dynamic if confidence > 0.6.""",
         max_foci: Optional[int] = None,
     ) -> Dict:
         """Assess focus distribution in output relative to prompt."""
+        from utils.llm_json import parse_assessment_json
+
         usage = None
         if user_foci and len(user_foci) > 0:
             assessment_prompt = self.assessor._build_assessment_prompt_with_foci(
@@ -549,30 +551,55 @@ Only mark as dynamic if confidence > 0.6.""",
             provider_name = getattr(self.assessor, 'provider_name', 'openai')
             import inspect
             needs_provider = 'provider' in inspect.signature(provider.chat_completion).parameters
-            chat_kwargs: Dict[str, Any] = {
-                'messages': [
-                    {
-                        'role': 'system',
-                        'content': (
-                            'You are an expert at analyzing how well LLM outputs address '
-                            'different aspects of prompts. You assess the level of attention '
-                            'given to each specified focus point. Always return complete, '
-                            'valid JSON only — never truncate mid-string.'
-                        ),
-                    },
-                    {'role': 'user', 'content': assessment_prompt},
-                ],
-                'model': self.assessor.model,
-                'response_format': {'type': 'json_object'},
-                'temperature': 0.3,
-                'max_tokens': 4096,
-            }
-            if needs_provider:
-                chat_kwargs['provider'] = provider_name
 
-            response = provider.chat_completion(**chat_kwargs)
+            def _chat(user_content: str) -> Dict[str, Any]:
+                chat_kwargs: Dict[str, Any] = {
+                    'messages': [
+                        {
+                            'role': 'system',
+                            'content': (
+                                'You assess how LLM outputs address named foci. '
+                                'Return complete valid JSON only. Each focus object '
+                                'may only include focus, score, and explanation — '
+                                'never prompt_section or quoted prompt text.'
+                            ),
+                        },
+                        {'role': 'user', 'content': user_content},
+                    ],
+                    'model': self.assessor.model,
+                    'response_format': {'type': 'json_object'},
+                    'temperature': 0.2,
+                    'max_tokens': 4096,
+                }
+                if needs_provider:
+                    chat_kwargs['provider'] = provider_name
+                return provider.chat_completion(**chat_kwargs)
+
+            response = _chat(assessment_prompt)
             usage = response.get('usage')
-            result = parse_llm_json(response.get('content', ''))
+            raw = response.get('content', '')
+            try:
+                result = parse_assessment_json(raw)
+            except ValueError:
+                # One retry with an explicit anti-echo instruction — models still
+                # sometimes paste long Role spans into prompt_section and truncate.
+                retry_prompt = (
+                    assessment_prompt
+                    + '\n\nCRITICAL RETRY: Your previous JSON was invalid or truncated '
+                    'because it included long prompt text. Return ONLY '
+                    '{"foci":[{"focus":"...","score":0,"explanation":"..."}],'
+                    '"overall_summary":"..."} with ALL foci. No prompt_section keys.'
+                )
+                response = _chat(retry_prompt)
+                if response.get('usage') and usage:
+                    for k, v in (response['usage'] or {}).items():
+                        try:
+                            usage[k] = int(usage.get(k) or 0) + int(v or 0)
+                        except (TypeError, ValueError):
+                            pass
+                elif response.get('usage'):
+                    usage = response.get('usage')
+                result = parse_assessment_json(response.get('content', ''))
 
             # Reattach known prompt spans by focus name — never rely on the model
             # echoing long prompt_section strings (common truncation / invalid JSON).
@@ -593,6 +620,19 @@ Only mark as dynamic if confidence > 0.6.""",
                         explanation=item.get('explanation') or '',
                     )
                 )
+            # Ensure every user focus appears (model may have dropped some after recovery)
+            seen = {f.focus for f in foci_list}
+            for f in user_foci:
+                name = (f.get('focus') or '').strip()
+                if name and name not in seen:
+                    foci_list.append(
+                        FocusScore(
+                            focus=name,
+                            prompt_section=f.get('prompt_section') or '',
+                            score=0.0,
+                            explanation='Not scored in model response; defaulted to 0.',
+                        )
+                    )
             total = sum(f.score for f in foci_list)
             if abs(total - 100.0) > 0.1 and total > 0:
                 for focus in foci_list:
