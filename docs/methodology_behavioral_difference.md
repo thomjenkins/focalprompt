@@ -81,10 +81,25 @@ span, and baseline/ablated sets, then record material difference
 
 ## Experiment C
 
-Reported focus vs revealed sensitivity is shown under **separate faithfulness
-lenses** (semantic / LLM / human). Labels such as `semantic_blind_spot` or
-`metric_disagreement` describe agreement across lenses; they do not override
-raw results or invent ground truth.
+Reported focus vs revealed sensitivity is compared in the Prompt Analysis UI
+(**section 7**) after both Experiment A and Experiment B have been run.
+
+The table labels each focus:
+
+- **Agree (high)** — high reported score and significant perturbation
+- **Agree (quiet)** — low reported score and non-significant perturbation
+- **Disagreement (over-reported candidate)** — high reported, not significant
+- **Disagreement (under-reported candidate)** — low reported, significant
+
+A descriptive Spearman ρ links reported-score ranks to normalized T_obs shares
+(not a causal ranking). Optional **Explain disagreements (LLM)** returns
+hypotheses only — it does not adjudicate which lens is correct and does not
+recommend deletions.
+
+Faithfulness labels such as `semantic_blind_spot` or `metric_disagreement`
+remain available when LLM/human behavioral-difference lenses have been run.
+They describe agreement across lenses; they do not override raw results or
+invent ground truth.
 
 ## Batch
 

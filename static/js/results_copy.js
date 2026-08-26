@@ -427,17 +427,27 @@
         parts.push('</div>');
         parts.push(renderMethodsPanel());
 
-        if (data.baseline_output || (data.ablation_results && data.ablation_results.length)) {
+        if (data.baseline_output || (data.baseline_outputs && data.baseline_outputs.length) || (data.ablation_results && data.ablation_results.length)) {
             parts.push('<div class="ablation-outputs-section">');
             parts.push('<button id="toggle-all-outputs" class="btn btn-outline" type="button">Show sampled outputs</button>');
             parts.push('<div id="all-outputs-container" class="hidden">');
-            if (data.baseline_output) {
+            var baselines = (data.baseline_outputs && data.baseline_outputs.length)
+                ? data.baseline_outputs
+                : (data.baseline_output ? [data.baseline_output] : []);
+            if (baselines.length) {
                 parts.push(
                     '<div class="output-comparison-item">' +
-                    '<h4>Baseline output (full prompt, first sample)</h4>' +
-                    '<div class="output-text">' + escapeHtml(data.baseline_output) + '</div>' +
-                    '</div>'
+                    '<h4>Baseline outputs (full prompt, ' + baselines.length + ' sample' +
+                    (baselines.length === 1 ? '' : 's') + ')</h4>'
                 );
+                baselines.forEach(function (text, idx) {
+                    parts.push(
+                        '<div class="output-text" style="margin-top:8px"><strong>Sample ' +
+                        (idx + 1) + '</strong><pre style="white-space:pre-wrap;margin:4px 0 0">' +
+                        escapeHtml(text) + '</pre></div>'
+                    );
+                });
+                parts.push('</div>');
             }
             records.forEach(function (rec) {
                 var outputs = rec.ablated_outputs;
@@ -445,10 +455,17 @@
                 if (!outputs || !outputs.length) return;
                 parts.push(
                     '<div class="output-comparison-item">' +
-                    '<h4>Ablated output: ' + escapeHtml(focusName(rec)) + '</h4>' +
-                    '<div class="output-text">' + escapeHtml(outputs[0]) + '</div>' +
-                    '</div>'
+                    '<h4>Ablated outputs: ' + escapeHtml(focusName(rec)) +
+                    ' (' + outputs.length + ')</h4>'
                 );
+                outputs.forEach(function (text, idx) {
+                    parts.push(
+                        '<div class="output-text" style="margin-top:8px"><strong>Sample ' +
+                        (idx + 1) + '</strong><pre style="white-space:pre-wrap;margin:4px 0 0">' +
+                        escapeHtml(text) + '</pre></div>'
+                    );
+                });
+                parts.push('</div>');
             });
             parts.push('</div></div>');
         }

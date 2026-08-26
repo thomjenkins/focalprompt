@@ -400,6 +400,8 @@ const generateFocusedOutputBtn = document.getElementById('generate-focused-outpu
 const resetSlidersBtn = document.getElementById('reset-sliders-btn');
 const rewrittenPromptContainer = document.getElementById('rewritten-prompt-container');
 const rewrittenPrompt = document.getElementById('rewritten-prompt');
+const adjustedOutputContainer = document.getElementById('adjusted-output-container');
+const adjustedOutput = document.getElementById('adjusted-output');
 const compareIntentBtn = document.getElementById('compare-intent-btn');
 const focusControlSection = document.getElementById('focus-control-section');
 const totalBudget = document.getElementById('total-budget');
@@ -464,6 +466,7 @@ const batchProgress = document.getElementById('batch-progress');
 const batchProgressText = document.getElementById('batch-progress-text');
 const batchResults = document.getElementById('batch-results');
 const exportResultsBtn = document.getElementById('export-results-btn');
+const exportResultsJsonBtn = document.getElementById('export-results-json-btn');
 const batchCostEstimate = document.getElementById('batch-cost-estimate');
 const batchCostEstimateContent = document.getElementById('batch-cost-estimate-content');
 const loadCheckpointBtn = document.getElementById('load-checkpoint-btn');
@@ -2060,6 +2063,8 @@ function renderAssessment(data) {
     } else {
         compareIntentBtn.classList.add('hidden');
     }
+
+    refreshExperimentCComparison();
 }
 
 // Utility: Escape HTML
@@ -2394,9 +2399,26 @@ if (rewritePromptBtn) {
                 throw new Error(data.error || 'Failed to rewrite prompt');
             }
             
-            rewrittenPromptText = data.rewritten_prompt;
+            const nextRewritten = (data.rewritten_prompt || '').trim();
+            if (!nextRewritten) {
+                throw new Error(
+                    'Rewrite returned an empty prompt. Try again or adjust focus weights.'
+                );
+            }
+            // Never overwrite the original prompt field — only the rewritten panel.
+            rewrittenPromptText = nextRewritten;
             rewrittenPrompt.textContent = rewrittenPromptText;
             rewrittenPromptContainer.classList.remove('hidden');
+            if (adjustedOutputContainer) {
+                adjustedOutputContainer.classList.add('hidden');
+            }
+            if (adjustedOutput) {
+                adjustedOutput.textContent = '';
+            }
+            if (generateFocusedOutputBtn) {
+                generateFocusedOutputBtn.disabled = false;
+            }
+            rewrittenPromptContainer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
             
             // Store intended distribution for comparison (normalize to 100)
             const totalWeight = weights.reduce((sum, w) => sum + (w.rewrite_weight || 0), 0);
@@ -2471,27 +2493,25 @@ if (generateFocusedOutputBtn) {
                 throw new Error(data.error || 'Failed to generate output');
             }
             
-            outputInput.value = data.output;
-            
-            // Scroll to output area and highlight it briefly
+            const generated = data.output || '';
+            // Keep section 3 in sync for assess/compare flows, but show result
+            // next to the rewritten prompt so it is obvious what was produced.
             if (outputInput) {
-                outputInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                
-                // Highlight the output field briefly
-                const originalBorder = outputInput.style.border;
-                outputInput.style.border = '2px solid #4F46E5';
-                outputInput.style.transition = 'border 0.3s ease';
-                
-                setTimeout(() => {
-                    outputInput.style.border = originalBorder;
-                }, 2000);
+                outputInput.value = generated;
+            }
+            if (adjustedOutput) {
+                adjustedOutput.textContent = generated;
+            }
+            if (adjustedOutputContainer) {
+                adjustedOutputContainer.classList.remove('hidden');
+                adjustedOutputContainer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
             }
             
             // Show success message
             const successMsg = document.createElement('div');
             successMsg.className = 'success-message';
             successMsg.style.cssText = 'position: fixed; top: 20px; right: 20px; background: #10b981; color: white; padding: 12px 20px; border-radius: 6px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); z-index: 10000; font-size: 14px;';
-            successMsg.textContent = '✓ Output generated and added to Output field below';
+            successMsg.textContent = '✓ Output generated from rewritten prompt (shown below)';
             document.body.appendChild(successMsg);
             
             setTimeout(() => {
@@ -2829,20 +2849,20 @@ function renderAblationResults(data) {
 
     if (downloadBtn) {
         downloadBtn.addEventListener('click', () => {
-            const downloadData = {
+            // Export the full scored result: all n_baseline full-prompt samples
+            // (baseline_outputs), every focus's ablated_outputs, stats, and prompt.
+            // Do not slim to baseline_output[0] only.
+            const baselineOutputs = Array.isArray(data.baseline_outputs) && data.baseline_outputs.length
+                ? data.baseline_outputs
+                : (data.baseline_output ? [data.baseline_output] : []);
+            const downloadData = Object.assign({}, data, {
                 timestamp: new Date().toISOString(),
-                baseline_output: data.baseline_output,
-                ablation_results: data.ablation_results,
-                influence_scores: data.influence_scores,
-                summary: data.summary,
-                n_baseline: data.n_baseline,
-                n_ablated: data.n_ablated,
-                temperature: data.temperature,
-                test_type: data.test_type,
-                power_warning: data.power_warning || null,
-                significance_method: data.significance_method || null,
-                cost_breakdown: data.cost_breakdown || null
-            };
+                baseline_outputs: baselineOutputs,
+                baseline_output: data.baseline_output || (baselineOutputs[0] || null),
+                num_baseline_samples: data.num_baseline_samples != null
+                    ? data.num_baseline_samples
+                    : baselineOutputs.length,
+            });
             const blob = new Blob([JSON.stringify(downloadData, null, 2)], { type: 'application/json' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -2856,6 +2876,7 @@ function renderAblationResults(data) {
     }
 
     bindBehavioralDifferenceReviewHandlers(data);
+    refreshExperimentCComparison();
 }
 
 function bindBehavioralDifferenceReviewHandlers(data) {
@@ -2974,6 +2995,246 @@ function bindBehavioralDifferenceReviewHandlers(data) {
     });
 }
 
+
+// ---------------------------------------------------------------------------
+// Experiment C — Reported focus (A) vs perturbation sensitivity (B)
+// ---------------------------------------------------------------------------
+const experimentCResults = document.getElementById('experiment-c-results');
+const refreshExperimentCBtn = document.getElementById('refresh-experiment-c-btn');
+const explainExperimentCBtn = document.getElementById('explain-experiment-c-btn');
+window.experimentCComparison = null;
+
+function getExperimentAReportedPayload() {
+    const fociList = (assessmentFoci && assessmentFoci.length)
+        ? assessmentFoci
+        : [];
+    return {
+        foci: fociList.map(function (f) {
+            return {
+                focus: f.focus,
+                score: typeof f.score === 'number' ? f.score : (f.reported_focus_score || 0),
+                explanation: f.explanation || '',
+                prompt_section: f.prompt_section || ''
+            };
+        })
+    };
+}
+
+async function refreshExperimentCComparison() {
+    if (!experimentCResults) return;
+    const reported = getExperimentAReportedPayload();
+    const ablation = window.singleAblationResults;
+    const explainBtn = explainExperimentCBtn;
+
+    if (!reported.foci.length || !ablation || !(ablation.influence_scores || ablation.ablation_results)) {
+        experimentCResults.innerHTML =
+            '<p class="empty-state">Run <strong>Assess Focus Distribution</strong> (Experiment A) and ' +
+            '<strong>Ablation Analysis</strong> (Experiment B) to compare reported focus with perturbation sensitivity.</p>';
+        if (explainBtn) explainBtn.disabled = true;
+        window.experimentCComparison = null;
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/compare-reported-vs-revealed', {
+            method: 'POST',
+            headers: getApiHeaders(),
+            body: JSON.stringify(getApiBody({
+                reported: reported,
+                perturbation: ablation,
+                influence_scores: ablation.influence_scores
+            }))
+        });
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(data.error || 'Comparison failed');
+        }
+        window.experimentCComparison = data;
+        renderExperimentCComparison(data);
+        if (explainBtn) {
+            const nDis = (data.summary && data.summary.n_disagreements) || 0;
+            explainBtn.disabled = nDis === 0;
+            explainBtn.title = nDis
+                ? 'Ask the LLM for hypotheses about A↔B disagreements'
+                : 'No disagreements to explain at the current thresholds';
+        }
+    } catch (err) {
+        console.error('Experiment C comparison error:', err);
+        experimentCResults.innerHTML =
+            '<p class="error-message">Could not compare Experiment A and B: ' +
+            escapeHtml(err.message || String(err)) + '</p>';
+        if (explainBtn) explainBtn.disabled = true;
+    }
+}
+
+function renderExperimentCComparison(data) {
+    if (!experimentCResults || !data) return;
+    const summary = data.summary || {};
+    const rows = data.rows || [];
+    const rho = summary.spearman_reported_vs_normalized_influence;
+    const rhoTxt = (rho === null || rho === undefined || Number.isNaN(Number(rho)))
+        ? 'n/a'
+        : Number(rho).toFixed(2);
+
+    let html = '<div class="experiment-c-summary">';
+    html += '<p><strong>Concordance summary</strong></p>';
+    html += '<p>Compared ' + (summary.n_foci_compared || rows.length) + ' foci. ';
+    html += 'Agree (high): ' + (summary.n_concordant_high || 0) + '. ';
+    html += 'Agree (quiet): ' + (summary.n_concordant_quiet || 0) + '. ';
+    html += 'Disagreements: ' + (summary.n_disagreements || 0);
+    if (summary.disagreement_foci && summary.disagreement_foci.length) {
+        html += ' (' + summary.disagreement_foci.map(escapeHtml).join(', ') + ')';
+    }
+    html += '.</p>';
+    html += '<p>Rank correlation (reported score vs normalized T_obs share): ρ = ' +
+        escapeHtml(rhoTxt) + '. ' + escapeHtml(summary.interpretation || '') + '</p>';
+    html += '<p style="font-size:0.9em;color:#64748b;margin:0">High reported focus uses threshold ≥ ' +
+        escapeHtml(String(summary.reported_high_threshold != null ? summary.reported_high_threshold : 15)) +
+        ' points. Significance is Experiment B BH q &lt; α.</p>';
+    html += '</div>';
+
+    html += '<table class="experiment-c-table"><thead><tr>';
+    html += '<th>Focus</th><th>Reported (A)</th><th>Perturbation (B)</th><th>Share %</th><th>Concordance</th>';
+    html += '</tr></thead><tbody>';
+
+    const sorted = rows.slice().sort(function (a, b) {
+        const sa = Number(a.reported_score);
+        const sb = Number(b.reported_score);
+        if (Number.isFinite(sb) && Number.isFinite(sa) && sb !== sa) return sb - sa;
+        return String(a.focus || '').localeCompare(String(b.focus || ''));
+    });
+
+    sorted.forEach(function (row) {
+        const conc = row.concordance || {};
+        const key = conc.key || 'incomplete';
+        const sig = row.is_significant;
+        let sigTxt = 'n/a';
+        if (sig === true) sigTxt = 'significant (q=' + formatExperimentCQ(row.q_value) + ')';
+        else if (sig === false) sigTxt = 'not significant (q=' + formatExperimentCQ(row.q_value) + ')';
+        const share = row.normalized_influence != null
+            ? Number(row.normalized_influence).toFixed(1)
+            : '—';
+        const score = row.reported_score != null ? Number(row.reported_score).toFixed(1) : '—';
+        html += '<tr class="experiment-c-row-' + escapeHtml(key) + '">';
+        html += '<td><strong>' + escapeHtml(row.focus || '') + '</strong></td>';
+        html += '<td>' + escapeHtml(score) + '</td>';
+        html += '<td>' + escapeHtml(sigTxt) + '</td>';
+        html += '<td>' + escapeHtml(share) + '</td>';
+        html += '<td>' + escapeHtml(conc.label || key) + '</td>';
+        html += '</tr>';
+    });
+    html += '</tbody></table>';
+
+    const explainBox = document.getElementById('experiment-c-explanation');
+    if (explainBox) {
+        // keep prior explanation if present below
+    }
+    experimentCResults.innerHTML = html;
+    if (window.experimentCExplanationHtml) {
+        experimentCResults.innerHTML += window.experimentCExplanationHtml;
+    }
+}
+
+function formatExperimentCQ(q) {
+    if (q === null || q === undefined) return 'n/a';
+    const n = Number(q);
+    if (Number.isNaN(n)) return String(q);
+    if (window.FocalPromptResults && window.FocalPromptResults.formatQValue) {
+        return window.FocalPromptResults.formatQValue(n);
+    }
+    return n.toPrecision(3);
+}
+
+function renderExperimentCExplanation(explanation) {
+    if (!explanation) return '';
+    let html = '<div class="experiment-c-explain" id="experiment-c-explanation">';
+    html += '<h4>LLM hypotheses for disagreements</h4>';
+    html += '<p style="font-size:0.9em;color:#64748b">' +
+        escapeHtml(explanation.note || 'Hypotheses only — not adjudication of A vs B.') +
+        '</p>';
+    if (explanation.status === 'skipped') {
+        html += '<p>' + escapeHtml(explanation.overall_summary || explanation.reason || 'Skipped.') + '</p>';
+    } else {
+        if (explanation.overall_summary) {
+            html += '<p>' + escapeHtml(explanation.overall_summary) + '</p>';
+        }
+        (explanation.per_focus || []).forEach(function (item) {
+            html += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border-color)">';
+            html += '<strong>' + escapeHtml(item.focus || '') + '</strong>';
+            html += '<p style="margin:6px 0">' + escapeHtml(item.hypothesis || '') + '</p>';
+            if (item.likely_mechanisms && item.likely_mechanisms.length) {
+                html += '<p style="font-size:0.9em;margin:4px 0"><em>Mechanisms:</em> ' +
+                    escapeHtml(item.likely_mechanisms.join(', ')) + '</p>';
+            }
+            if (item.what_would_resolve) {
+                html += '<p style="font-size:0.9em;margin:4px 0"><em>Next check:</em> ' +
+                    escapeHtml(item.what_would_resolve) + '</p>';
+            }
+            html += '</div>';
+        });
+        if (explanation.caveats && explanation.caveats.length) {
+            html += '<ul style="margin-top:12px">';
+            explanation.caveats.forEach(function (c) {
+                html += '<li>' + escapeHtml(c) + '</li>';
+            });
+            html += '</ul>';
+        }
+    }
+    html += '</div>';
+    return html;
+}
+
+if (refreshExperimentCBtn) {
+    refreshExperimentCBtn.addEventListener('click', function () {
+        window.experimentCExplanationHtml = '';
+        refreshExperimentCComparison();
+    });
+}
+
+if (explainExperimentCBtn) {
+    explainExperimentCBtn.addEventListener('click', async function () {
+        if (!window.experimentCComparison) {
+            showErrorModal('Refresh the Experiment C comparison first.');
+            return;
+        }
+        const nDis = (window.experimentCComparison.summary || {}).n_disagreements || 0;
+        if (!nDis) {
+            showErrorModal('No disagreements to explain at the current thresholds.');
+            return;
+        }
+        showLoading('Asking the LLM to hypothesize about A↔B disagreements…');
+        explainExperimentCBtn.disabled = true;
+        try {
+            const response = await fetch('/api/explain-reported-vs-revealed', {
+                method: 'POST',
+                headers: getApiHeaders(),
+                body: JSON.stringify(getApiBody({
+                    comparison: window.experimentCComparison,
+                    prompt: promptInput ? promptInput.value : '',
+                    temperature: 0.3
+                }))
+            });
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.error || 'Explanation failed');
+            }
+            window.experimentCExplanationHtml = renderExperimentCExplanation(data.explanation || data);
+            renderExperimentCComparison(window.experimentCComparison);
+            const el = document.getElementById('experiment-c-explanation');
+            if (el && el.scrollIntoView) {
+                el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }
+        } catch (err) {
+            showError('Error explaining disagreements: ' + err.message);
+            console.error(err);
+        } finally {
+            hideLoading();
+            const n = (window.experimentCComparison && window.experimentCComparison.summary
+                && window.experimentCComparison.summary.n_disagreements) || 0;
+            explainExperimentCBtn.disabled = n === 0;
+        }
+    });
+}
 
 // Make removeFocus available globally
 window.removeFocus = removeFocus;
@@ -3266,7 +3527,7 @@ if (generateAgentResponseBtn) {
                 },
                 body: JSON.stringify({
                     foci: window.fociWeightsData.foci_weights.map(fw => {
-                        // Find the original focus to get prompt_section
+                        // Find the original focus to get prompt_section + dynamic flags
                         const originalFocus = agentFoci.find(f => f.focus === fw.focus);
                         if (!originalFocus) {
                             console.warn(`Could not find original focus for: ${fw.focus}`);
@@ -3274,9 +3535,12 @@ if (generateAgentResponseBtn) {
                         return {
                             focus: fw.focus,
                             weight: fw.weight,
-                            prompt_section: originalFocus ? originalFocus.prompt_section : ''
+                            prompt_section: originalFocus ? originalFocus.prompt_section : '',
+                            is_dynamic: originalFocus ? !!originalFocus.is_dynamic : false,
+                            dynamic_type: originalFocus ? (originalFocus.dynamic_type || null) : null
                         };
                     }),
+                    all_foci: agentFoci,
                     chat_content: chatContent,
                     chat_weight: window.fociWeightsData.chat_weight,
                     model: userModel || 'gpt-4o-mini',
@@ -4181,6 +4445,7 @@ async function handleRunBatchAnalysis(e) {
         window.batchResultsData = completeData;
         renderBatchResults(completeData);
         if (exportResultsBtn) exportResultsBtn.disabled = false;
+        if (exportResultsJsonBtn) exportResultsJsonBtn.disabled = false;
         if (batchResults && batchResults.scrollIntoView) {
             batchResults.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
@@ -4213,6 +4478,7 @@ async function handleRunBatchAnalysis(e) {
             };
             renderBatchResults(window.batchResultsData);
             if (exportResultsBtn) exportResultsBtn.disabled = false;
+            if (exportResultsJsonBtn) exportResultsJsonBtn.disabled = false;
             showError(
                 'Batch analysis interrupted: ' + error.message +
                 '\n\nShowing ' + pairResults.length + ' completed pair(s).'
@@ -4475,6 +4741,7 @@ async function loadCheckpointData(sessionId, checkpointType = 'batch_analysis') 
             renderBatchResults(checkpointData);
             
             if (exportResultsBtn) exportResultsBtn.disabled = false;
+            if (exportResultsJsonBtn) exportResultsJsonBtn.disabled = false;
             
             hideLoading();
             alert(`Checkpoint loaded successfully! ${checkpoint.pair_results?.length || 0} pairs loaded.`);
@@ -4838,6 +5105,42 @@ if (exportResultsBtn) {
         const a = document.createElement('a');
         a.href = url;
         a.download = `batch-analysis-results-${new Date().toISOString().split('T')[0]}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    });
+}
+
+// Batch Analysis: Export full JSON (includes all baseline_outputs / ablated_outputs per pair)
+if (exportResultsJsonBtn) {
+    exportResultsJsonBtn.addEventListener('click', () => {
+        if (!window.batchResultsData) {
+            showErrorModal('No results to export.');
+            return;
+        }
+        const data = window.batchResultsData;
+        const pairResults = data.pair_results || data.results || [];
+        const missingBaselines = pairResults.filter(function (r) {
+            return r && r.success !== false && !(r.baseline_outputs && r.baseline_outputs.length);
+        }).length;
+        if (missingBaselines) {
+            console.warn(
+                'JSON export: ' + missingBaselines +
+                ' pair(s) lack baseline_outputs (likely slimmed SSE payload). ' +
+                'Load a full checkpoint or re-run client-paced batch to include all samples.'
+            );
+        }
+        const downloadData = Object.assign({}, data, {
+            timestamp: new Date().toISOString(),
+            pair_results: pairResults,
+            results: pairResults,
+        });
+        const blob = new Blob([JSON.stringify(downloadData, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `batch-analysis-results-${new Date().toISOString().split('T')[0]}.json`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);

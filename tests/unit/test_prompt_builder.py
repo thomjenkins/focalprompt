@@ -67,3 +67,54 @@ def test_build_prompt_appends_chat_only_without_placeholder():
     assert 'Test chat' in result
 
 
+def test_chat_included_even_when_normalized_chat_weight_is_tiny():
+    """Regression: many foci dilute chat_weight below the old 0.1 gate."""
+    relevant_foci = [
+        {'focus': f'Focus {i}', 'weight': 0.12, 'prompt_section': f'Section {i}'}
+        for i in range(8)
+    ]
+    foci_list = [
+        {'focus': f'Focus {i}', 'prompt_section': f'Section {i}', 'is_dynamic': False}
+        for i in range(8)
+    ]
+    chat = 'Owner: Can we schedule a booster for Max next Tuesday?'
+    # Mimic post-normalization chat_weight that used to drop chat entirely.
+    result = build_prompt_with_dynamic_foci(
+        relevant_foci, foci_list, {'chat_content': chat}, chat_weight=0.05
+    )
+    assert chat in result
+    assert 'Current Chat Context' in result
+
+
+def test_chat_included_when_dynamic_flags_missing_from_weight_rows():
+    """UI used to omit is_dynamic on weight rows; chat must still appear."""
+    relevant_foci = [
+        {'focus': 'Role', 'weight': 0.8, 'prompt_section': 'You are a clinic assistant.'},
+        {'focus': 'Live chat', 'weight': 0.4, 'prompt_section': 'Consider the current conversation.'},
+    ]
+    # Full catalog has the dynamic flag; weight rows do not (old client bug).
+    foci_list = [
+        {'focus': 'Role', 'prompt_section': 'You are a clinic assistant.', 'is_dynamic': False},
+        {
+            'focus': 'Live chat',
+            'prompt_section': 'Consider the current conversation.',
+            'is_dynamic': True,
+            'dynamic_type': 'chat',
+        },
+    ]
+    chat = 'Please book a dental cleaning for Bella.'
+    result = build_prompt_with_dynamic_foci(
+        relevant_foci, foci_list, {'chat_content': chat}, chat_weight=0.08
+    )
+    assert chat in result
+    assert '{{CHAT_CONTENT}}' not in result
+    assert result.count(chat) == 1
+
+
+def test_empty_chat_does_not_force_section():
+    relevant_foci = [
+        {'focus': 'Role', 'weight': 0.9, 'prompt_section': 'You are helpful.'},
+    ]
+    foci_list = relevant_foci
+    result = build_prompt_with_dynamic_foci(relevant_foci, foci_list, {'chat_content': '   '})
+    assert 'Current Chat Context' not in result

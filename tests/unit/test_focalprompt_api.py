@@ -28,6 +28,8 @@ def test_compare_reported_vs_revealed():
     cmp = _compare_reported_vs_revealed(reported, perturbation)
     assert cmp['rows'][0]['reported_score'] == 40
     assert cmp['rows'][0]['is_significant'] is True
+    assert cmp['rows'][0]['concordance']['key'] == 'concordant_high'
+    assert 'summary' in cmp
     assert 'transformer attention' in cmp['rows'][0]['note'].lower() or 'not' in cmp['rows'][0]['note'].lower()
 
 

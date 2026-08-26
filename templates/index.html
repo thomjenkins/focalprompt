@@ -365,8 +365,15 @@
                         </button>
                     </div>
                     <div id="rewritten-prompt-container" class="rewritten-prompt-container hidden">
+                        <p class="info-text" style="margin-bottom: 10px;">
+                            The original prompt in section 2 is unchanged. This is a separate rewritten copy used only for “Generate Output with Adjusted Focus.”
+                        </p>
                         <h4>Rewritten Prompt:</h4>
                         <div id="rewritten-prompt" class="rewritten-prompt"></div>
+                        <div id="adjusted-output-container" class="adjusted-output-container hidden">
+                            <h4>Output from Rewritten Prompt:</h4>
+                            <div id="adjusted-output" class="rewritten-prompt"></div>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -418,6 +425,33 @@
                     </div>
                     <div id="ablation-results" class="ablation-results">
                         <p class="empty-state">Click "Run Ablation Analysis" to test whether deleting each focus shifts the model's behaviour.</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Experiment C: Reported vs revealed -->
+            <section class="card" id="experiment-c-section">
+                <div class="card-header">
+                    <h2>7. Experiment C — Reported vs revealed</h2>
+                    <div class="button-group">
+                        <button id="refresh-experiment-c-btn" class="btn btn-outline" type="button">
+                            🔄 Refresh comparison
+                        </button>
+                        <button id="explain-experiment-c-btn" class="btn btn-primary" type="button" disabled>
+                            💬 Explain disagreements (LLM)
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <p class="info-text">
+                        After you run <strong>Experiment A</strong> (Assess Focus Distribution) and
+                        <strong>Experiment B</strong> (Ablation), this view asks whether the foci with
+                        the strongest detected perturbation are also those with the highest reported
+                        focus — and where they disagree. Disagreement is informative; neither lens
+                        is ground truth.
+                    </p>
+                    <div id="experiment-c-results" class="experiment-c-results">
+                        <p class="empty-state">Run Assess Focus Distribution and Ablation Analysis to compare reported focus with perturbation sensitivity.</p>
                     </div>
                 </div>
             </section>
@@ -595,6 +629,9 @@
                             </button>
                             <button id="export-results-btn" class="btn btn-outline" disabled>
                                 💾 Export to CSV
+                            </button>
+                            <button id="export-results-json-btn" class="btn btn-outline" disabled>
+                                💾 Export to JSON
                             </button>
                         </div>
                     </div>

@@ -203,21 +203,28 @@ def rewrite_prompt():
         return jsonify({'error': str(e)}), 500
 
 
-@assessment_bp.route('/api/build-agent-prompt', methods=['POST'])
-def build_agent_prompt():
-    """Build a prompt from relevant foci and dynamic inputs."""
+@assessment_bp.route('/api/build-agent-prompt-from-inputs', methods=['POST'])
+def build_agent_prompt_from_inputs():
+    """Build a prompt from relevant foci and an inputs dict (legacy helper).
+
+    Prefer ``/api/build-agent-prompt`` on the agent blueprint for the Agent Builder UI.
+    """
     try:
-        data = request.json
+        data = request.json or {}
         relevant_foci = data.get('foci', [])
-        foci_list = data.get('all_foci', [])
-        inputs = data.get('inputs', {})
+        foci_list = data.get('all_foci') or relevant_foci
+        inputs = dict(data.get('inputs') or {})
+        # Accept top-level chat_content as well (same shape as agent builder).
+        if not inputs.get('chat_content') and data.get('chat_content'):
+            inputs['chat_content'] = data.get('chat_content')
         chat_weight = data.get('chat_weight', 0.5)
         
         if not relevant_foci:
             return jsonify({'error': 'Relevant foci are required'}), 400
         
-        # Build prompt using utility function
-        constructed_prompt = build_prompt_with_dynamic_foci(relevant_foci, foci_list, inputs, chat_weight)
+        constructed_prompt = build_prompt_with_dynamic_foci(
+            relevant_foci, foci_list, inputs, chat_weight
+        )
         
         return jsonify({
             'constructed_prompt': constructed_prompt

@@ -104,9 +104,12 @@ def test_run_ablation_scores_verified_static_foci(ablation_service, mock_provide
         PROMPT, _static_foci(), n_baseline=2, n_ablated=2, permutation_seed=0
     )
     assert 'baseline_output' in result
+    assert len(result['baseline_outputs']) == 2
+    assert result['baseline_output'] == result['baseline_outputs'][0]
     assert len(result['influence_scores']) == 3
     assert all(item['attributable'] is True for item in result['influence_scores'])
     assert all('ablated_prompt' in item for item in result['influence_scores'])
+    assert all(len(item.get('ablated_outputs') or []) == 2 for item in result['influence_scores'])
     for row in result['ablation_results']:
         assert set(row['ablated_prompt']) <= set(PROMPT)
         start, end = row['char_start'], row['char_end']
@@ -117,7 +120,7 @@ def test_run_ablation_scores_verified_static_foci(ablation_service, mock_provide
             assert row['ablated_prompt'] != raw
         else:
             assert row['ablated_prompt'] == raw
-
+        assert len(row.get('ablated_outputs') or []) == 2
 
 def test_unverified_focus_excluded_no_score(ablation_service, mock_provider):
     foci = [

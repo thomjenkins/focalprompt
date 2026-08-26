@@ -228,6 +228,8 @@ class AblationService:
                 'char_end': ablation['char_end'],
                 'ablated_prompt': ablation['ablated_prompt'],
                 'prompt_empty': ablation.get('prompt_empty', False),
+                'ablated_output': ablation.get('ablated_output'),
+                'ablated_outputs': list(ablation.get('ablated_outputs') or []),
                 'similarity': float(1.0 - t_obs),
                 'influence': float(t_obs),
                 't_obs': float(t_obs),

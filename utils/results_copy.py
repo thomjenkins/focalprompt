@@ -537,20 +537,31 @@ def render_ablation_results_html(data: Mapping[str, Any]) -> str:
     parts.append('</div>')
     parts.append(render_methods_panel())
 
-    if data.get('baseline_output') or data.get('ablation_results'):
+    if data.get('baseline_output') or data.get('baseline_outputs') or data.get('ablation_results'):
         parts.append('<div class="ablation-outputs-section">')
         parts.append(
             '<button id="toggle-all-outputs" class="btn btn-outline" type="button">'
             'Show sampled outputs</button>'
         )
         parts.append('<div id="all-outputs-container" class="hidden">')
-        if data.get('baseline_output'):
+        baselines = list(data.get('baseline_outputs') or [])
+        if not baselines and data.get('baseline_output'):
+            baselines = [data.get('baseline_output')]
+        if baselines:
+            n = len(baselines)
+            label = 'sample' if n == 1 else 'samples'
             parts.append(
                 '<div class="output-comparison-item">'
-                '<h4>Baseline output (full prompt, first sample)</h4>'
-                f'<div class="output-text">{_esc(data.get("baseline_output"))}</div>'
-                '</div>'
+                f'<h4>Baseline outputs (full prompt, {n} {label})</h4>'
             )
+            for idx, text in enumerate(baselines):
+                parts.append(
+                    '<div class="output-text" style="margin-top:8px">'
+                    f'<strong>Sample {idx + 1}</strong>'
+                    f'<pre style="white-space:pre-wrap;margin:4px 0 0">{_esc(text)}</pre>'
+                    '</div>'
+                )
+            parts.append('</div>')
         for rec in records:
             outputs = rec.get('ablated_outputs') or (
                 [rec['ablated_output']] if rec.get('ablated_output') else []
@@ -559,10 +570,16 @@ def render_ablation_results_html(data: Mapping[str, Any]) -> str:
                 continue
             parts.append(
                 '<div class="output-comparison-item">'
-                f'<h4>Ablated output: {_esc(_focus_name(rec))}</h4>'
-                f'<div class="output-text">{_esc(outputs[0])}</div>'
-                '</div>'
+                f'<h4>Ablated outputs: {_esc(_focus_name(rec))} ({len(outputs)})</h4>'
             )
+            for idx, text in enumerate(outputs):
+                parts.append(
+                    '<div class="output-text" style="margin-top:8px">'
+                    f'<strong>Sample {idx + 1}</strong>'
+                    f'<pre style="white-space:pre-wrap;margin:4px 0 0">{_esc(text)}</pre>'
+                    '</div>'
+                )
+            parts.append('</div>')
         parts.append('</div></div>')
 
     if data.get('cost_breakdown'):

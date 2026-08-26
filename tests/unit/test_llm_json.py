@@ -31,3 +31,12 @@ def test_prose_wrapper():
 def test_empty_raises():
     with pytest.raises(ValueError, match='Empty'):
         parse_llm_json('')
+
+
+def test_truncated_json_mentions_truncation():
+    truncated = (
+        '{\n  "foci": [\n    {\n      "focus": "Role",\n'
+        '      "prompt_section": "You are an AI assistant designed to help veterinary'
+    )
+    with pytest.raises(ValueError, match='truncat|incomplete'):
+        parse_llm_json(truncated)

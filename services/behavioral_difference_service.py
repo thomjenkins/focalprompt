@@ -705,3 +705,383 @@ def select_foci_for_behavioral_review(
             'LLM/human difference review is opt-in and capped.'
         ),
     }
+
+
+# ---------------------------------------------------------------------------
+# Experiment C — Reported focus (A) vs perturbation sensitivity (B)
+# ---------------------------------------------------------------------------
+
+AB_CONCORDANCE_COPY = {
+    'concordant_high': (
+        'Agree (high): highest/high reported focus and detectable perturbation.'
+    ),
+    'concordant_quiet': (
+        'Agree (quiet): low reported focus and no detectable perturbation.'
+    ),
+    'disagreement_over_reported': (
+        'Disagreement: high reported focus, but no detectable embedding-space '
+        'shift. Possible over-report, embedding blindness (e.g. schema/safety '
+        'rules), redundancy, or an underpowered test.'
+    ),
+    'disagreement_under_reported': (
+        'Disagreement: low reported focus, but detectable perturbation. The '
+        'model may have under-credited a span that still shifts behaviour when '
+        'removed.'
+    ),
+    'incomplete': (
+        'Incomplete: missing reported score or significance for this focus.'
+    ),
+}
+
+
+def ab_concordance_label(
+    reported_score: Optional[float],
+    semantic_significant: Optional[bool],
+    *,
+    reported_high_threshold: float = 15.0,
+) -> Dict[str, Any]:
+    """Label agreement between Experiment A score and Experiment B significance."""
+    if reported_score is None or semantic_significant is None:
+        key = 'incomplete'
+    else:
+        try:
+            high = float(reported_score) >= float(reported_high_threshold)
+        except (TypeError, ValueError):
+            return {
+                'key': 'incomplete',
+                'label': AB_CONCORDANCE_COPY['incomplete'],
+                'is_disagreement': False,
+            }
+        if high and semantic_significant is True:
+            key = 'concordant_high'
+        elif (not high) and semantic_significant is False:
+            key = 'concordant_quiet'
+        elif high and semantic_significant is False:
+            key = 'disagreement_over_reported'
+        else:
+            key = 'disagreement_under_reported'
+    return {
+        'key': key,
+        'label': AB_CONCORDANCE_COPY[key],
+        'is_disagreement': key.startswith('disagreement_'),
+        'reported_high_threshold': float(reported_high_threshold),
+    }
+
+
+def _spearman_rho(xs: Sequence[float], ys: Sequence[float]) -> Optional[float]:
+    """Spearman rank correlation; None if fewer than 2 paired points."""
+    n = min(len(xs), len(ys))
+    if n < 2:
+        return None
+    pairs = [(float(xs[i]), float(ys[i])) for i in range(n)]
+    # Average ranks for ties
+    def ranks(vals: List[float]) -> List[float]:
+        order = sorted(range(len(vals)), key=lambda i: vals[i])
+        out = [0.0] * len(vals)
+        i = 0
+        while i < len(vals):
+            j = i
+            while j + 1 < len(vals) and vals[order[j + 1]] == vals[order[i]]:
+                j += 1
+            avg = (i + j) / 2.0 + 1.0
+            for k in range(i, j + 1):
+                out[order[k]] = avg
+            i = j + 1
+        return out
+
+    rx = ranks([p[0] for p in pairs])
+    ry = ranks([p[1] for p in pairs])
+    mx = sum(rx) / n
+    my = sum(ry) / n
+    num = sum((rx[i] - mx) * (ry[i] - my) for i in range(n))
+    denx = sum((rx[i] - mx) ** 2 for i in range(n)) ** 0.5
+    deny = sum((ry[i] - my) ** 2 for i in range(n)) ** 0.5
+    if denx == 0 or deny == 0:
+        return None
+    return num / (denx * deny)
+
+
+def compare_reported_vs_revealed(
+    reported: Mapping[str, Any],
+    perturbation: Mapping[str, Any],
+    *,
+    reported_high_threshold: float = 15.0,
+) -> Dict[str, Any]:
+    """
+    Experiment C: side-by-side reported focus (A) vs perturbation sensitivity (B).
+
+    Does not invent ground truth. Disagreement rows are candidates for review /
+    LLM explanation.
+    """
+    report_by = {
+        (f.get('focus') or '').strip(): f
+        for f in (reported.get('foci') or [])
+    }
+    scores = perturbation.get('influence_scores') or []
+    if isinstance(scores, dict):
+        scores = list(scores.values())
+
+    rows: List[Dict[str, Any]] = []
+    for item in scores:
+        name = (item.get('focus') or item.get('focus_name') or '').strip()
+        if not name:
+            continue
+        rep = report_by.get(name) or {}
+        sem = item.get('semantic_perturbation') or {}
+        llm = item.get('llm_behavioral_difference') or {}
+        hum = item.get('human_behavioral_difference') or {}
+
+        semantic_sig = sem.get('is_significant', item.get('is_significant'))
+        llm_material = None
+        if llm.get('status') == 'complete':
+            llm_material = bool(llm.get('material_behavioral_difference'))
+        human_material = None
+        if hum.get('status') == 'complete':
+            hm = hum.get('material_behavioral_difference')
+            human_material = True if hm is True else (False if hm is False else None)
+
+        reported_score = rep.get('score')
+        if reported_score is None:
+            reported_score = rep.get('reported_focus_score')
+
+        concordance = ab_concordance_label(
+            reported_score,
+            semantic_sig,
+            reported_high_threshold=reported_high_threshold,
+        )
+        faithfulness = multi_lens_faithfulness_label(
+            reported_score=reported_score,
+            semantic_significant=semantic_sig,
+            llm_material=llm_material,
+            human_material=human_material,
+            reported_high_threshold=reported_high_threshold,
+        )
+        rows.append({
+            'focus': name,
+            'prompt_section': (
+                rep.get('prompt_section')
+                or item.get('prompt_section')
+                or ''
+            ),
+            'reported_score': reported_score,
+            'reported_explanation': rep.get('explanation'),
+            't_obs': item.get('t_obs', sem.get('t_obs')),
+            'influence': item.get('influence'),
+            'normalized_influence': item.get(
+                'normalized_influence', sem.get('normalized_influence')
+            ),
+            'standardized_effect': item.get(
+                'standardized_effect', sem.get('standardized_effect')
+            ),
+            'p_value': item.get('p_value', sem.get('p_value')),
+            'q_value': item.get('q_value', sem.get('q_value')),
+            'is_significant': semantic_sig,
+            'semantic_perturbation': sem or {
+                't_obs': item.get('t_obs'),
+                'normalized_influence': item.get('normalized_influence'),
+                'standardized_effect': item.get('standardized_effect'),
+                'p_value': item.get('p_value'),
+                'q_value': item.get('q_value'),
+                'is_significant': item.get('is_significant'),
+            },
+            'llm_behavioral_difference': llm,
+            'human_behavioral_difference': hum,
+            'concordance': concordance,
+            'faithfulness': faithfulness,
+            'note': (
+                'Reported focus is model self-assessment of a completion '
+                '(Experiment A), not transformer attention. Semantic '
+                'perturbation is leave-one-out embedding-space shift '
+                '(Experiment B). Disagreement is informative, not a verdict '
+                'on which lens is “correct.”'
+            ),
+        })
+
+    # Rank concordance: reported score vs normalized influence (descriptive).
+    paired_r: List[float] = []
+    paired_i: List[float] = []
+    for row in rows:
+        rs = row.get('reported_score')
+        ni = row.get('normalized_influence')
+        if rs is None or ni is None:
+            continue
+        try:
+            paired_r.append(float(rs))
+            paired_i.append(float(ni))
+        except (TypeError, ValueError):
+            continue
+    rho = _spearman_rho(paired_r, paired_i)
+
+    disagreements = [r for r in rows if (r.get('concordance') or {}).get('is_disagreement')]
+    n_high_sig = sum(
+        1 for r in rows
+        if (r.get('concordance') or {}).get('key') == 'concordant_high'
+    )
+    n_quiet = sum(
+        1 for r in rows
+        if (r.get('concordance') or {}).get('key') == 'concordant_quiet'
+    )
+
+    return {
+        'rows': rows,
+        'summary': {
+            'n_foci_compared': len(rows),
+            'n_concordant_high': n_high_sig,
+            'n_concordant_quiet': n_quiet,
+            'n_disagreements': len(disagreements),
+            'disagreement_foci': [r['focus'] for r in disagreements],
+            'spearman_reported_vs_normalized_influence': rho,
+            'reported_high_threshold': float(reported_high_threshold),
+            'interpretation': (
+                'Spearman ρ links reported-focus ranks to descriptive '
+                'normalized T_obs shares — not a causal importance ranking. '
+                'Significance (q) is the Experiment B detection claim.'
+                if rho is not None
+                else 'Not enough paired foci to compute rank correlation.'
+            ),
+        },
+        'framing': {
+            'experiment_a': 'model-assessed / reported focus distribution',
+            'experiment_b': (
+                'semantic perturbation sensitivity (cheap first pass); optional '
+                'LLM and human behavioral-difference review'
+            ),
+            'experiment_c': (
+                'comparison of reported focus vs revealed sensitivity: which '
+                'foci agree, which disagree, and (optionally) an LLM hypothesis '
+                'for disagreements'
+            ),
+        },
+    }
+
+
+def build_disagreement_explanation_prompt(
+    comparison: Mapping[str, Any],
+    *,
+    original_prompt: str = '',
+) -> str:
+    """User message for an LLM that hypothesizes why A and B disagree."""
+    rows = [
+        r for r in (comparison.get('rows') or [])
+        if (r.get('concordance') or {}).get('is_disagreement')
+    ]
+    if not rows:
+        return ''
+
+    blocks = []
+    for r in rows:
+        conc = r.get('concordance') or {}
+        blocks.append(
+            f"Focus: {r.get('focus')}\n"
+            f"Prompt span: {(r.get('prompt_section') or '')[:400]}\n"
+            f"Reported score (A): {r.get('reported_score')}\n"
+            f"Reported explanation: {(r.get('reported_explanation') or '')[:400]}\n"
+            f"Perturbation significant (B): {r.get('is_significant')}\n"
+            f"q_value: {r.get('q_value')}; t_obs: {r.get('t_obs')}; "
+            f"normalized_influence: {r.get('normalized_influence')}; "
+            f"standardized_effect: {r.get('standardized_effect')}\n"
+            f"Concordance: {conc.get('key')} — {conc.get('label')}"
+        )
+
+    prompt_excerpt = (original_prompt or '')[:2500]
+    return f"""You are helping a researcher interpret disagreement between two experiments on the same prompt foci.
+
+Experiment A (Reported focus): an LLM scores how much a *single completion* appears to reflect each focus (introspective / behavioural self-report — not transformer attention).
+
+Experiment B (Perturbation sensitivity): leave-one-focus-out deletion + embedding centroid distance + permutation / BH. A significant result means removing that span shifted outputs in embedding space beyond sampling variation at this sample size. Non-significant ≠ unused.
+
+These lenses can disagree for legitimate reasons (embedding blindness to schemas/safety, redundant instructions, underpowered tests, assessment of one sample vs distributional sensitivity, etc.). Do NOT declare which experiment is "correct." Do NOT recommend deleting foci. Hypothesize *possible* explanations.
+
+ORIGINAL PROMPT (excerpt):
+{prompt_excerpt or '(not provided)'}
+
+DISAGREEMENT ROWS:
+{chr(10).join('---\n' + b for b in blocks)}
+
+Return JSON:
+{{
+  "overall_summary": "2-4 sentences on the pattern of agreement/disagreement",
+  "per_focus": [
+    {{
+      "focus": "exact focus name",
+      "hypothesis": "why A and B may disagree for this focus",
+      "likely_mechanisms": ["embedding_blindness|redundancy|underpowered|single_sample_vs_distribution|other"],
+      "what_would_resolve": "concrete next check (e.g. LLM behavioral-difference review, more samples, inspect outputs)"
+    }}
+  ],
+  "caveats": ["short caveats"]
+}}
+"""
+
+
+class ReportedVsRevealedExplainer:
+    """Optional LLM narrative for Experiment C disagreements (not ground truth)."""
+
+    def __init__(self, provider, model: str, provider_name: Optional[str] = None):
+        self.provider = provider
+        self.model = model
+        self.provider_name = provider_name or 'openai'
+
+    def explain(
+        self,
+        comparison: Mapping[str, Any],
+        *,
+        original_prompt: str = '',
+        temperature: float = 0.3,
+    ) -> Dict[str, Any]:
+        disagreements = [
+            r for r in (comparison.get('rows') or [])
+            if (r.get('concordance') or {}).get('is_disagreement')
+        ]
+        if not disagreements:
+            return {
+                'status': 'skipped',
+                'reason': 'no_disagreements',
+                'overall_summary': 'No A↔B disagreements to explain at the current thresholds.',
+                'per_focus': [],
+                'caveats': [
+                    'Absence of disagreement does not mean the lenses measure the same thing.'
+                ],
+            }
+
+        user = build_disagreement_explanation_prompt(
+            comparison, original_prompt=original_prompt
+        )
+        response = gateway_chat_completion(
+            self.provider,
+            self.model,
+            self.provider_name,
+            [
+                {
+                    'role': 'system',
+                    'content': (
+                        'You explain disagreements between reported-focus scores and '
+                        'perturbation sensitivity. Difference ≠ quality. Never claim '
+                        'ground truth or recommend deletions. Return valid JSON only.'
+                    ),
+                },
+                {'role': 'user', 'content': user},
+            ],
+            temperature=temperature,
+            response_format={'type': 'json_object'},
+        )
+        raw = response.get('content') or '{}'
+        from utils.llm_json import parse_llm_json
+        try:
+            parsed = parse_llm_json(raw)
+        except ValueError:
+            parsed = {}
+        if not isinstance(parsed, dict):
+            parsed = {}
+
+        return {
+            'status': 'complete',
+            'overall_summary': parsed.get('overall_summary') or '',
+            'per_focus': parsed.get('per_focus') or [],
+            'caveats': parsed.get('caveats') or [],
+            'n_disagreements_explained': len(disagreements),
+            'note': (
+                'LLM hypotheses only. They do not adjudicate Experiment A vs B.'
+            ),
+            'usage': response.get('usage'),
+        }

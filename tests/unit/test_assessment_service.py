@@ -77,6 +77,57 @@ def test_assess_focus(mock_assessor):
     assert result is not None
 
 
+def test_assess_focus_with_user_foci_reattaches_prompt_section(mock_assessor):
+    """Model may omit prompt_section; we restore it from user-defined foci."""
+    long_section = (
+        "You are an AI assistant designed to help veterinary teams provide "
+        "informative, empathetic, and professional responses to queries from "
+        "clients about their pets and clinical workflows." * 3
+    )
+    user_foci = [
+        {'focus': 'Role', 'prompt_section': long_section},
+        {'focus': 'Tone', 'prompt_section': 'Be empathetic.'},
+    ]
+    mock_assessor._build_assessment_prompt_with_foci = Mock(
+        wraps=FocalAssessor._build_assessment_prompt_with_foci
+    )
+    # Use real builder via unbound method by binding a real-ish assessor helper
+    real = FocalAssessor.__new__(FocalAssessor)
+    mock_assessor._build_assessment_prompt_with_foci = (
+        lambda prompt, output, foci, max_foci=None: real._build_assessment_prompt_with_foci(
+            prompt, output, foci, max_foci
+        )
+    )
+    mock_assessor.provider.chat_completion.return_value = {
+        'content': json.dumps({
+            'foci': [
+                {'focus': 'Role', 'score': 70, 'explanation': 'Output stays in role.'},
+                {'focus': 'Tone', 'score': 30, 'explanation': 'Tone is warm.'},
+            ],
+            'overall_summary': 'Mostly role.',
+        }),
+        'usage': {'prompt_tokens': 10, 'completion_tokens': 20},
+    }
+
+    service = AssessmentService(mock_assessor)
+    result = service.assess_focus(
+        'System prompt here',
+        'Hello, I can help with your pet.',
+        user_foci=user_foci,
+    )
+    by_name = {f['focus']: f for f in result['foci']}
+    assert by_name['Role']['prompt_section'] == long_section
+    assert by_name['Tone']['prompt_section'] == 'Be empathetic.'
+    # Prompt must not ask the model to echo full prompt_section into JSON
+    built = mock_assessor._build_assessment_prompt_with_foci(
+        'System prompt here', 'out', user_foci, None
+    )
+    assert 'Do NOT include prompt_section' in built
+    assert long_section not in built  # excerpted in the foci list
+    call_kw = mock_assessor.provider.chat_completion.call_args.kwargs
+    assert call_kw.get('max_tokens') == 4096
+
+
 def test_detect_dynamic_foci(mock_assessor):
     """Test dynamic focus detection."""
     service = AssessmentService(mock_assessor)

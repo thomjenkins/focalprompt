@@ -217,11 +217,20 @@ class FocalAssessor:
         max_foci: Optional[int]
     ) -> str:
         """Build assessment prompt using user-defined foci."""
-        foci_list_text = '\n'.join([
-            f"{i+1}. Focus: {f.get('focus', 'Unknown')}\n   Prompt Section: {f.get('prompt_section', '')}"
-            for i, f in enumerate(user_foci)
-        ])
-        
+        # Short excerpts only — do not ask the model to echo full spans back as JSON
+        # (long prompt_section copies routinely truncate mid-string and break parsing).
+        foci_lines = []
+        for i, f in enumerate(user_foci):
+            name = f.get('focus', 'Unknown')
+            section = (f.get('prompt_section') or '').strip()
+            if len(section) > 160:
+                section = section[:157].rstrip() + '...'
+            if section:
+                foci_lines.append(f"{i+1}. Focus: {name}\n   Excerpt: {section}")
+            else:
+                foci_lines.append(f"{i+1}. Focus: {name}")
+        foci_list_text = '\n'.join(foci_lines)
+
         return f"""Analyze the following prompt and output to assess focus distribution.
 
 ORIGINAL PROMPT:
@@ -245,9 +254,8 @@ Return your analysis as a JSON object with this structure:
   "foci": [
     {{
       "focus": "The exact focus name from the user-defined list above",
-      "prompt_section": "The exact prompt_section from the user-defined list above",
       "score": 35.0,
-      "explanation": "Brief explanation: (1) which part of the prompt this comes from, (2) how the output addresses it, (3) why this score was given"
+      "explanation": "Brief explanation referencing the output (keep under 2 sentences)"
     }}
   ],
   "overall_summary": "A brief overall assessment of how the output distributes attention across the specified foci"
@@ -255,7 +263,9 @@ Return your analysis as a JSON object with this structure:
 
 CRITICAL REQUIREMENTS:
 - You MUST include ALL {len(user_foci)} foci from the user-defined list
-- Use the EXACT focus names and prompt_sections provided above
+- Use the EXACT focus names provided above
+- Do NOT include prompt_section in the JSON (it is already known)
+- Keep explanations short so the JSON response stays complete
 - The sum of all scores MUST equal exactly 100.0 points
 - If a focus is completely ignored, give it 0 points but still include it with an explanation
 - Scores reflect the relative amount of attention/emphasis the output gives to each prompt component
@@ -336,7 +346,7 @@ Return your analysis as a JSON object with this structure:
   "foci": [
     {{
       "focus": "A specific structural component/requirement/instruction from the prompt itself (e.g., 'Provide first aid advice when appropriate')",
-      "prompt_section": "The exact text from the prompt that defines this focus (quote it directly)",
+      "prompt_section": "A short quote from the prompt (under 120 characters) that identifies this focus",
       "score": 35.0,
       "explanation": "Brief explanation: (1) which part of the prompt this comes from, (2) how the output addresses it, (3) why this score was given"
     }}
@@ -346,6 +356,8 @@ Return your analysis as a JSON object with this structure:
 
 CRITICAL REQUIREMENTS:
 - The foci MUST be based on the actual structural components of the prompt itself, not on abstract concepts
+- Keep prompt_section SHORT (under 120 characters). Do not paste long paragraphs — a brief identifying quote is enough
+- Keep explanations short so the JSON response stays complete
 - Each focus must quote or reference the exact text from the prompt that defines it
 - The sum of all scores MUST equal exactly 100.0 points
 - Scores reflect the relative amount of attention/emphasis the output gives to each prompt component

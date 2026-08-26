@@ -49,4 +49,18 @@ def parse_llm_json(content: str) -> Any:
         except json.JSONDecodeError:
             pass
 
-    raise ValueError(f'LLM did not return valid JSON. Response: {text[:200]}...')
+    hint = ''
+    stripped = text.rstrip()
+    if stripped.count('{') > stripped.count('}') or stripped.count('[') > stripped.count(']'):
+        hint = (
+            ' Response looks truncated (unbalanced braces). '
+            'Retry, or use fewer/shorter foci so the model can finish the JSON.'
+        )
+    elif stripped.endswith(('"', ',', ':')) or '"prompt_section"' in text[:400]:
+        hint = (
+            ' Response looks incomplete or mid-string. '
+            'Focus assessment no longer requires echoing full prompt spans; retry.'
+        )
+    raise ValueError(
+        f'LLM did not return valid JSON.{hint} Response: {text[:200]}...'
+    )

@@ -13,7 +13,9 @@ from services.assessor_factory import get_assessor
 from services.behavioral_difference_service import (
     HumanBehavioralDifferenceRecord,
     LLMBehavioralDifferenceEvaluator,
+    ReportedVsRevealedExplainer,
     aggregate_behavioral_batch_stats,
+    compare_reported_vs_revealed,
     estimate_judge_cost_units,
     recommend_behavioral_review,
     select_foci_for_behavioral_review,
@@ -149,3 +151,66 @@ def select_for_review():
             only_recommended=bool(data.get('only_recommended', True)),
         )
     )
+
+
+@behavioral_difference_bp.route('/api/compare-reported-vs-revealed', methods=['POST'])
+def compare_reported_vs_revealed_route():
+    """Experiment C: concordance between Experiment A scores and Experiment B significance."""
+    data = request.json or {}
+    reported = data.get('reported') or data.get('reported_focus') or {}
+    if 'foci' not in reported and data.get('foci'):
+        reported = {'foci': data.get('foci')}
+    perturbation = data.get('perturbation') or data.get('ablation') or {}
+    if 'influence_scores' not in perturbation and data.get('influence_scores') is not None:
+        perturbation = dict(perturbation)
+        perturbation['influence_scores'] = data.get('influence_scores')
+    if not reported.get('foci'):
+        return jsonify({'error': 'reported.foci (Experiment A) is required'}), 400
+    if not perturbation.get('influence_scores'):
+        return jsonify({'error': 'perturbation.influence_scores (Experiment B) is required'}), 400
+    threshold = data.get('reported_high_threshold', 15.0)
+    try:
+        threshold = float(threshold)
+    except (TypeError, ValueError):
+        threshold = 15.0
+    return jsonify(
+        compare_reported_vs_revealed(
+            reported,
+            perturbation,
+            reported_high_threshold=threshold,
+        )
+    )
+
+
+@behavioral_difference_bp.route('/api/explain-reported-vs-revealed', methods=['POST'])
+def explain_reported_vs_revealed_route():
+    """Optional LLM hypotheses for Experiment C disagreements (not adjudication)."""
+    data = request.json or {}
+    comparison = data.get('comparison')
+    if not comparison:
+        reported = data.get('reported') or data.get('reported_focus') or {}
+        if 'foci' not in reported and data.get('foci'):
+            reported = {'foci': data.get('foci')}
+        perturbation = data.get('perturbation') or data.get('ablation') or {}
+        if 'influence_scores' not in perturbation and data.get('influence_scores') is not None:
+            perturbation = dict(perturbation)
+            perturbation['influence_scores'] = data.get('influence_scores')
+        if not reported.get('foci') or not perturbation.get('influence_scores'):
+            return jsonify({
+                'error': 'Provide comparison, or reported.foci + perturbation.influence_scores',
+            }), 400
+        comparison = compare_reported_vs_revealed(reported, perturbation)
+
+    fields = request_inference_fields(data)
+    assessor = get_assessor(data=fields)
+    explainer = ReportedVsRevealedExplainer(
+        assessor.provider,
+        fields['model'],
+        provider_name=getattr(assessor, 'provider_name', fields['provider']),
+    )
+    result = explainer.explain(
+        comparison,
+        original_prompt=data.get('prompt') or data.get('original_prompt') or '',
+        temperature=float(data.get('temperature') or 0.3),
+    )
+    return jsonify({'comparison_summary': comparison.get('summary'), 'explanation': result})

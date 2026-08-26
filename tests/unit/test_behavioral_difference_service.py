@@ -13,9 +13,11 @@ from services.behavioral_difference_service import (
     LLM_DIFFERENCE_SYSTEM,
     HumanBehavioralDifferenceRecord,
     LLMBehavioralDifferenceEvaluator,
+    ab_concordance_label,
     aggregate_behavioral_batch_stats,
     attach_evidence_lenses,
     build_judge_user_prompt,
+    compare_reported_vs_revealed,
     enrich_influence_item_for_review,
     estimate_judge_cost_units,
     multi_lens_faithfulness_label,
@@ -327,6 +329,7 @@ def test_experiment_c_handles_missing_qualitative_cleanly():
     assert comparison['rows'][0]['faithfulness']['primary_label'] == (
         'possibly_over_reported_semantic_only'
     )
+    assert comparison['rows'][0]['concordance']['key'] == 'disagreement_over_reported'
     assert comparison['rows'][0]['llm_behavioral_difference']['status'] == 'not_run'
 
 
@@ -386,3 +389,63 @@ def test_multi_lens_label_concordance():
         human_material=True,
     )
     assert label['primary_label'] == 'multi_lens_concordance'
+
+
+def test_ab_concordance_labels_cover_agree_and_disagree():
+    assert ab_concordance_label(40, True)['key'] == 'concordant_high'
+    assert ab_concordance_label(5, False)['key'] == 'concordant_quiet'
+    assert ab_concordance_label(40, False)['key'] == 'disagreement_over_reported'
+    assert ab_concordance_label(5, True)['key'] == 'disagreement_under_reported'
+    assert ab_concordance_label(40, False)['is_disagreement'] is True
+
+
+def test_compare_reported_vs_revealed_summary_and_ranks():
+    reported = {
+        'foci': [
+            {'focus': 'HighBoth', 'score': 50, 'explanation': 'a'},
+            {'focus': 'OverReport', 'score': 40, 'explanation': 'b'},
+            {'focus': 'UnderReport', 'score': 5, 'explanation': 'c'},
+            {'focus': 'Quiet', 'score': 3, 'explanation': 'd'},
+        ]
+    }
+    perturbation = {
+        'influence_scores': [
+            {
+                'focus': 'HighBoth',
+                'normalized_influence': 40,
+                'is_significant': True,
+                'q_value': 0.01,
+                't_obs': 0.2,
+            },
+            {
+                'focus': 'OverReport',
+                'normalized_influence': 10,
+                'is_significant': False,
+                'q_value': 0.4,
+                't_obs': 0.01,
+            },
+            {
+                'focus': 'UnderReport',
+                'normalized_influence': 35,
+                'is_significant': True,
+                'q_value': 0.02,
+                't_obs': 0.15,
+            },
+            {
+                'focus': 'Quiet',
+                'normalized_influence': 15,
+                'is_significant': False,
+                'q_value': 0.5,
+                't_obs': 0.02,
+            },
+        ]
+    }
+    cmp = compare_reported_vs_revealed(reported, perturbation)
+    by = {r['focus']: r for r in cmp['rows']}
+    assert by['HighBoth']['concordance']['key'] == 'concordant_high'
+    assert by['OverReport']['concordance']['key'] == 'disagreement_over_reported'
+    assert by['UnderReport']['concordance']['key'] == 'disagreement_under_reported'
+    assert by['Quiet']['concordance']['key'] == 'concordant_quiet'
+    assert cmp['summary']['n_disagreements'] == 2
+    assert set(cmp['summary']['disagreement_foci']) == {'OverReport', 'UnderReport'}
+    assert cmp['summary']['spearman_reported_vs_normalized_influence'] is not None

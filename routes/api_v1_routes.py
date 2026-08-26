@@ -45,12 +45,12 @@ def register_v1_routes(app):
     """Add /api/v1/... URL rules that mirror core JSON API handlers."""
     from routes.assessment_routes import (
         assess,
-        build_agent_prompt,
         detect_dynamic_foci,
         detect_foci,
         generate_output,
         rewrite_prompt,
     )
+    from routes.agent_routes import build_agent_prompt
     from routes.ablation_routes import ablation_analysis
 
     mapping = [

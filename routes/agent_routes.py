@@ -59,6 +59,8 @@ def build_agent_prompt():
         foci = data.get('foci', [])  # List of foci with weights
         chat_content = data.get('chat_content', '')
         chat_weight = data.get('chat_weight', 0.5)
+        # Prefer full foci catalog for dynamic_type lookup (is_dynamic / chat slots).
+        foci_list = data.get('all_foci') or foci
         
         if not foci or len(foci) == 0:
             return jsonify({'error': 'Foci are required'}), 400
@@ -66,13 +68,10 @@ def build_agent_prompt():
         # Build inputs dict for prompt builder
         inputs = {
             'chat_content': chat_content,
-            'rag_context': '',
-            'tool_results': ''
+            'rag_context': data.get('rag_context', '') or '',
+            'tool_results': data.get('tool_results', '') or '',
+            'other_input': data.get('other_input', '') or '',
         }
-        
-        # Get full foci list from agentFoci (we need prompt_section for each)
-        # For now, use the foci passed in (they should have prompt_section)
-        foci_list = foci  # These should already have prompt_section from frontend
         
         # Build prompt using the prompt builder
         from utils.prompt_builder import build_prompt_with_dynamic_foci
@@ -85,6 +84,11 @@ def build_agent_prompt():
         
         if not constructed_prompt or not constructed_prompt.strip():
             return jsonify({'error': 'Failed to build prompt - result was empty'}), 500
+
+        if (chat_content or '').strip() and chat_content not in constructed_prompt:
+            return jsonify({
+                'error': 'Constructed prompt is missing chat content; refusing to generate a useless reply prompt.'
+            }), 500
         
         return jsonify({
             'constructed_prompt': constructed_prompt,

@@ -556,7 +556,8 @@ Only mark as dynamic if confidence > 0.6.""",
                         'content': (
                             'You are an expert at analyzing how well LLM outputs address '
                             'different aspects of prompts. You assess the level of attention '
-                            'given to each specified focus point.'
+                            'given to each specified focus point. Always return complete, '
+                            'valid JSON only — never truncate mid-string.'
                         ),
                     },
                     {'role': 'user', 'content': assessment_prompt},
@@ -564,6 +565,7 @@ Only mark as dynamic if confidence > 0.6.""",
                 'model': self.assessor.model,
                 'response_format': {'type': 'json_object'},
                 'temperature': 0.3,
+                'max_tokens': 4096,
             }
             if needs_provider:
                 chat_kwargs['provider'] = provider_name
@@ -572,15 +574,25 @@ Only mark as dynamic if confidence > 0.6.""",
             usage = response.get('usage')
             result = parse_llm_json(response.get('content', ''))
 
-            foci_list = [
-                FocusScore(
-                    focus=item['focus'],
-                    prompt_section=item.get('prompt_section', ''),
-                    score=float(item['score']),
-                    explanation=item['explanation'],
+            # Reattach known prompt spans by focus name — never rely on the model
+            # echoing long prompt_section strings (common truncation / invalid JSON).
+            section_by_name = {
+                (f.get('focus') or '').strip(): (f.get('prompt_section') or '')
+                for f in user_foci
+            }
+            foci_list = []
+            for item in result.get('foci') or []:
+                name = (item.get('focus') or '').strip()
+                foci_list.append(
+                    FocusScore(
+                        focus=name,
+                        prompt_section=section_by_name.get(
+                            name, item.get('prompt_section', '')
+                        ),
+                        score=float(item.get('score', 0)),
+                        explanation=item.get('explanation') or '',
+                    )
                 )
-                for item in result['foci']
-            ]
             total = sum(f.score for f in foci_list)
             if abs(total - 100.0) > 0.1 and total > 0:
                 for focus in foci_list:
