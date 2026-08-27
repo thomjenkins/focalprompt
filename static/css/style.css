@@ -1848,3 +1848,40 @@ code, .textarea-large, #prompt-input, #batch-prompt-input, #manual-pair-input, #
     gap: 0.5rem;
     margin-top: 0.6rem;
 }
+
+/* Baseline stability + reported-focus dynamics */
+.baseline-stability-panel,
+.reported-focus-dynamics-panel {
+    margin: 16px 0;
+    padding: 14px 16px;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    background: #f8fafc;
+}
+.baseline-stability-warning {
+    color: #92400e;
+    background: #fffbeb;
+    border: 1px solid #fcd34d;
+    padding: 8px 10px;
+    border-radius: 6px;
+}
+.baseline-stability-multimodal {
+    color: #1e3a8a;
+}
+.reported-focus-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 8px 0 12px;
+    font-size: 0.9em;
+}
+.reported-focus-table th,
+.reported-focus-table td {
+    border: 1px solid #e2e8f0;
+    padding: 6px 8px;
+    text-align: left;
+}
+.reported-focus-sample {
+    margin: 10px 0;
+    padding: 8px;
+    border-left: 3px solid #94a3b8;
+}

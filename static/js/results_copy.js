@@ -495,6 +495,141 @@
         return '<div class="results-power-banner" role="status">' + escapeHtml(text) + '</div>';
     }
 
+    function fmtDist(v) {
+        if (v == null || Number.isNaN(Number(v))) return '—';
+        return Number(v).toFixed(4);
+    }
+
+    function renderBaselineStabilityHtml(data) {
+        var bs = data && data.baseline_stability;
+        if (!bs) return '';
+        var C = getCopy();
+        var cls = (bs.classification && bs.classification.label) || 'insufficient_samples';
+        var uiLabel = (bs.classification && bs.classification.ui_label) || cls;
+        var html = '<section class="baseline-stability-panel" data-label="' + escapeHtml(cls) + '">';
+        html += '<h3>' + escapeHtml(C.BASELINE_STABILITY_TITLE || 'Baseline stability / noise') + '</h3>';
+        html += '<p class="info-text">' + escapeHtml(
+            C.BASELINE_STABILITY_DISCLAIMER || bs.disclaimer || ''
+        ) + '</p>';
+        html += '<p class="baseline-stability-label"><strong>' + escapeHtml(uiLabel) + '</strong></p>';
+        (bs.warnings || []).forEach(function (w) {
+            html += '<p class="baseline-stability-warning" role="status">' + escapeHtml(w) + '</p>';
+        });
+        html += '<ul class="baseline-stability-metrics">';
+        html += '<li>Mean pairwise cosine distance: ' + escapeHtml(fmtDist(bs.mean_pairwise_cosine_distance)) + '</li>';
+        html += '<li>Median pairwise cosine distance: ' + escapeHtml(fmtDist(bs.median_pairwise_cosine_distance)) + '</li>';
+        html += '<li>p95 pairwise cosine distance: ' + escapeHtml(fmtDist(bs.p95_pairwise_cosine_distance)) + '</li>';
+        html += '<li>Mean distance from centroid: ' + escapeHtml(fmtDist(bs.mean_distance_from_centroid)) + '</li>';
+        html += '<li>p95 distance from centroid: ' + escapeHtml(fmtDist(bs.p95_distance_from_centroid)) + '</li>';
+        html += '</ul>';
+        var multi = bs.multimodality || {};
+        if (multi.potentially_multimodal) {
+            html += '<p class="baseline-stability-multimodal"><em>Advisory multimodality flag</em> — ';
+            html += escapeHtml(multi.note || 'PC1 median-split suggests possible distinct modes.') + '</p>';
+        } else if (multi.note) {
+            html += '<p class="info-text" style="font-size:0.9em">' + escapeHtml(multi.note) + '</p>';
+        }
+        html += '<p class="info-text" style="font-size:0.85em;color:#64748b">Per-focus descriptive SNR ';
+        html += '(observed shift / baseline dispersion) is attached to each influence row in the JSON. ';
+        html += 'It is not a significance test.</p>';
+        html += '</section>';
+        return html;
+    }
+
+    function renderReportedFocusDynamicsShell() {
+        var C = getCopy();
+        return (
+            '<section class="reported-focus-dynamics-panel" id="reported-focus-dynamics-panel">' +
+            '<h3>' + escapeHtml(C.REPORTED_FOCUS_DYNAMICS_TITLE || 'Per-sample reported-focus dynamics') + '</h3>' +
+            '<p class="info-text">' + escapeHtml(
+                C.REPORTED_FOCUS_DYNAMICS_DISCLAIMER ||
+                'Self-reported focus weights from an LLM judge — not attention weights.'
+            ) + '</p>' +
+            '<button type="button" class="btn btn-outline" id="run-reported-focus-dynamics-btn">' +
+            escapeHtml(C.REPORTED_FOCUS_DYNAMICS_BUTTON || 'Run per-sample reported-focus dynamics') +
+            '</button>' +
+            '<div id="reported-focus-dynamics-results" class="reported-focus-dynamics-results"></div>' +
+            '</section>'
+        );
+    }
+
+    function renderReportedFocusDynamicsHtml(dyn) {
+        if (!dyn) return '<p class="empty-state">No reported-focus dynamics yet.</p>';
+        var html = '<p class="info-text">' + escapeHtml(dyn.disclaimer || '') + '</p>';
+        var names = dyn.focus_names || [];
+        var baseline = dyn.baseline || {};
+        html += '<h4>Baseline (full prompt)</h4>';
+        html += '<p>n=' + escapeHtml(String(
+            baseline.n_scored != null ? baseline.n_scored
+                : (baseline.n_samples != null ? baseline.n_samples : (baseline.samples || []).length)
+        )) + '</p>';
+        html += '<table class="reported-focus-table"><thead><tr><th>Focus</th><th>Mean</th><th>Median</th><th>SD</th><th>Range</th></tr></thead><tbody>';
+        names.forEach(function (name) {
+            var s = (baseline.per_focus && baseline.per_focus[name]) || {};
+            html += '<tr><td>' + escapeHtml(name) + '</td>';
+            html += '<td>' + escapeHtml(fmtDist(s.mean)) + '</td>';
+            html += '<td>' + escapeHtml(fmtDist(s.median)) + '</td>';
+            html += '<td>' + escapeHtml(fmtDist(s.sd)) + '</td>';
+            html += '<td>' + escapeHtml(fmtDist(s.range)) + '</td></tr>';
+        });
+        html += '</tbody></table>';
+        html += '<details class="reported-focus-samples"><summary>Inspect baseline samples</summary>';
+        (baseline.samples || []).forEach(function (sample) {
+            html += '<div class="reported-focus-sample">';
+            html += '<p><strong>Sample ' + escapeHtml(String((sample.sample_index != null ? sample.sample_index : 0) + 1)) + '</strong>';
+            if (sample.behavior_label != null) {
+                html += ' · behaviour label: ' + escapeHtml(String(sample.behavior_label));
+            }
+            html += '</p>';
+            html += '<pre class="output-text" style="white-space:pre-wrap">' + escapeHtml(sample.output || '') + '</pre>';
+            html += '<ul>';
+            names.forEach(function (name) {
+                var w = (sample.weights && sample.weights[name]) || 0;
+                html += '<li>' + escapeHtml(name) + ': ' + escapeHtml(Number(w).toFixed(1)) + '</li>';
+            });
+            html += '</ul></div>';
+        });
+        html += '</details>';
+
+        (dyn.ablations || []).forEach(function (block) {
+            html += '<h4>Ablation: ' + escapeHtml(block.focus || '') + '</h4>';
+            html += '<p>JS divergence vs baseline mean weights: ' +
+                escapeHtml(fmtDist(block.js_divergence_vs_baseline_mean)) +
+                ' (bits; descriptive)</p>';
+            html += '<p>Δ mean weights vs baseline:</p><ul>';
+            names.forEach(function (name) {
+                var d = (block.delta_vs_baseline_mean_weights || {})[name];
+                html += '<li>' + escapeHtml(name) + ': ' + escapeHtml(fmtDist(d)) + '</li>';
+            });
+            html += '</ul>';
+            var summary = block.summary || {};
+            html += '<table class="reported-focus-table"><thead><tr><th>Focus</th><th>Mean</th><th>Median</th><th>SD</th><th>Range</th></tr></thead><tbody>';
+            names.forEach(function (name) {
+                var s = (summary.per_focus && summary.per_focus[name]) || {};
+                html += '<tr><td>' + escapeHtml(name) + '</td>';
+                html += '<td>' + escapeHtml(fmtDist(s.mean)) + '</td>';
+                html += '<td>' + escapeHtml(fmtDist(s.median)) + '</td>';
+                html += '<td>' + escapeHtml(fmtDist(s.sd)) + '</td>';
+                html += '<td>' + escapeHtml(fmtDist(s.range)) + '</td></tr>';
+            });
+            html += '</tbody></table>';
+            html += '<details class="reported-focus-samples"><summary>Inspect ablated samples</summary>';
+            (summary.samples || []).forEach(function (sample) {
+                html += '<div class="reported-focus-sample">';
+                html += '<p><strong>Sample ' + escapeHtml(String((sample.sample_index != null ? sample.sample_index : 0) + 1)) + '</strong></p>';
+                html += '<pre class="output-text" style="white-space:pre-wrap">' + escapeHtml(sample.output || '') + '</pre>';
+                html += '<ul>';
+                names.forEach(function (name) {
+                    var w = (sample.weights && sample.weights[name]) || 0;
+                    html += '<li>' + escapeHtml(name) + ': ' + escapeHtml(Number(w).toFixed(1)) + '</li>';
+                });
+                html += '</ul></div>';
+            });
+            html += '</details>';
+        });
+        return html;
+    }
+
     function renderAblationResultsHtml(data) {
         var alpha = data.alpha != null ? Number(data.alpha) : DEFAULT_ALPHA;
         var parts = [
@@ -503,7 +638,8 @@
             renderDefinition(),
             renderRunHeader(data),
             '</div>',
-            renderPowerBannerHtml(data)
+            renderPowerBannerHtml(data),
+            renderBaselineStabilityHtml(data)
         ];
         var records = enrichFocusRecords(collectFocusRecords(data), data);
         parts.push('<p class="info-text shuffle-robustness-hint">Each tested focus below includes a ' +
@@ -513,6 +649,7 @@
             parts.push(renderFocusCard(rec, alpha, data));
         });
         parts.push('</div>');
+        parts.push(renderReportedFocusDynamicsShell());
         parts.push(renderMethodsPanel());
 
         if (data.baseline_output || (data.baseline_outputs && data.baseline_outputs.length) || (data.ablation_results && data.ablation_results.length)) {
@@ -595,6 +732,8 @@
         renderRunHeader: renderRunHeader,
         renderMethodsPanel: renderMethodsPanel,
         renderPowerBannerHtml: renderPowerBannerHtml,
+        renderBaselineStabilityHtml: renderBaselineStabilityHtml,
+        renderReportedFocusDynamicsHtml: renderReportedFocusDynamicsHtml,
         renderAblationResultsHtml: renderAblationResultsHtml
     };
 })(typeof window !== 'undefined' ? window : this);

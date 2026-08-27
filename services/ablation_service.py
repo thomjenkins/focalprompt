@@ -23,6 +23,8 @@ from utils.permutation_test import (
     require_stochastic_temperature,
     design_test_type,
 )
+from utils.baseline_stability import compute_baseline_stability, attach_signal_to_noise
+from utils.reported_focus_dynamics import build_reported_focus_dynamics
 from services.behavioral_difference_service import enrich_influence_item_for_review
 
 # Space sequential completions so a 429 on sample 1 does not become a burst.
@@ -393,6 +395,10 @@ class AblationService:
                 for item in influence_scores:
                     item['normalized_influence'] = equal_share
 
+        # Baseline-only stability / noise (does not alter the permutation test).
+        baseline_stability = compute_baseline_stability(baseline_embeddings)
+        influence_scores = attach_signal_to_noise(influence_scores, baseline_stability)
+
         # Attach independent evidence lenses (semantic + empty LLM/human slots).
         # Qualitative difference review is selective and never auto-run here.
         influence_scores = [
@@ -419,6 +425,7 @@ class AblationService:
             'baseline_outputs': baseline_outputs,
             'ablation_results': ablation_results,
             'influence_scores': influence_scores,
+            'baseline_stability': baseline_stability,
             'n_baseline': n_baseline,
             'n_ablated': n_ablated,
             'n_permutations': n_permutations,
@@ -437,6 +444,39 @@ class AblationService:
             'power_warning': power_warning,
             'significance_method': 'permutation_bh',
         }
+
+    def run_reported_focus_dynamics(
+        self,
+        prompt: str,
+        foci_list: List[Dict],
+        baseline_outputs: List[str],
+        ablated_outputs: Dict,
+        *,
+        assessment_service=None,
+        behavior_labels: Optional[Dict] = None,
+        association_focus: Optional[str] = None,
+    ) -> Dict:
+        """
+        Optional diagnostic: assess reported focus weights on every sample.
+
+        Requires an AssessmentService-like object with ``assess_focus``.
+        Does not modify permutation significance.
+        """
+        if assessment_service is None:
+            raise ValueError('assessment_service is required for reported-focus dynamics')
+
+        def assess_fn(p: str, output: str, foci: List[Dict]) -> Dict:
+            return assessment_service.assess_focus(p, output, user_foci=foci)
+
+        return build_reported_focus_dynamics(
+            prompt=prompt,
+            foci=foci_list,
+            baseline_outputs=baseline_outputs,
+            ablated_outputs=ablated_outputs,
+            assess_fn=assess_fn,
+            behavior_labels=behavior_labels,
+            association_focus=association_focus,
+        )
     
     def run_ablation(
         self,

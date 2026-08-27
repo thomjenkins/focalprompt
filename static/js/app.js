@@ -2848,6 +2848,8 @@ function renderAblationResults(data) {
     const allOutputsContainer = document.getElementById('all-outputs-container');
     const downloadBtn = document.getElementById('download-ablation-results');
 
+    bindReportedFocusDynamicsHandlers(data);
+
     if (toggleOutputsBtn && allOutputsContainer) {
         toggleOutputsBtn.addEventListener('click', () => {
             if (allOutputsContainer.classList.contains('hidden')) {
@@ -2891,6 +2893,89 @@ function renderAblationResults(data) {
     bindBehavioralDifferenceReviewHandlers(data);
     bindShuffleRobustnessHandlers(data);
     refreshExperimentCComparison({ scroll: true });
+}
+
+function bindReportedFocusDynamicsHandlers(data) {
+    const btn = document.getElementById('run-reported-focus-dynamics-btn');
+    const mount = document.getElementById('reported-focus-dynamics-results');
+    if (!btn || !mount) return;
+
+    if (data.reported_focus_dynamics && window.FocalPromptResults) {
+        mount.innerHTML = window.FocalPromptResults.renderReportedFocusDynamicsHtml(
+            data.reported_focus_dynamics
+        );
+    }
+
+    btn.addEventListener('click', async function () {
+        const prompt = (data && data.prompt) || (promptInput ? promptInput.value.trim() : '');
+        const fociList = (data && (data.foci_list || data.foci)) || foci;
+        const baselines = (data && data.baseline_outputs && data.baseline_outputs.length)
+            ? data.baseline_outputs
+            : (data && data.baseline_output ? [data.baseline_output] : []);
+        if (!prompt || !fociList || !fociList.length || !baselines.length) {
+            showErrorModal('Need prompt, foci, and baseline samples from the ablation run.');
+            return;
+        }
+
+        // Build ablated_outputs map from influence / ablation rows
+        const ablatedMap = {};
+        const scores = Array.isArray(data.influence_scores) ? data.influence_scores : [];
+        const rows = Array.isArray(data.ablation_results) ? data.ablation_results : [];
+        function addOutputs(item) {
+            if (!item || item.attributable === false) return;
+            const idx = item.focus_index;
+            if (idx == null) return;
+            const outs = item.ablated_outputs || (item.ablated_output ? [item.ablated_output] : []);
+            if (outs.length) ablatedMap[String(idx)] = outs;
+        }
+        scores.forEach(addOutputs);
+        rows.forEach(addOutputs);
+        if (!Object.keys(ablatedMap).length) {
+            showErrorModal('No ablated sample texts found to assess.');
+            return;
+        }
+
+        const associationFocus = window.prompt
+            ? window.prompt(
+                'Optional: focus name to associate with behaviour labels (Cancel to skip):',
+                ''
+            )
+            : '';
+
+        btn.disabled = true;
+        const prev = btn.textContent;
+        btn.textContent = 'Running reported-focus dynamics…';
+        showLoading('Assessing reported focus on every sample (this uses extra LLM calls)…');
+        try {
+            const response = await fetch('/api/ablation-reported-focus-dynamics', {
+                method: 'POST',
+                headers: getApiHeaders(),
+                body: JSON.stringify(getApiBody({
+                    prompt: prompt,
+                    foci: fociList,
+                    baseline_outputs: baselines,
+                    ablated_outputs: ablatedMap,
+                    association_focus: associationFocus || null
+                }))
+            });
+            const result = await response.json();
+            if (!response.ok) {
+                throw new Error(result.error || 'Reported-focus dynamics failed');
+            }
+            data.reported_focus_dynamics = result;
+            window.singleAblationResults = data;
+            if (window.FocalPromptResults) {
+                mount.innerHTML = window.FocalPromptResults.renderReportedFocusDynamicsHtml(result);
+            }
+        } catch (err) {
+            showErrorModal('Reported-focus dynamics: ' + (err.message || String(err)));
+            console.error(err);
+        } finally {
+            btn.disabled = false;
+            btn.textContent = prev;
+            hideLoading();
+        }
+    });
 }
 
 function setExperimentCMessage(html) {

@@ -8,6 +8,7 @@ from datetime import datetime
 import uuid
 from services.assessor_factory import get_assessor
 from services.ablation_service import AblationService
+from services.assessment_service import AssessmentService
 from services.embedding_service import EmbeddingService
 from services.cost_calculator import CostCalculator
 from services.checkpoint_service import CheckpointService
@@ -225,6 +226,58 @@ def ablation_shuffle_robustness():
             permutation_seed=permutation_seed,
             temperature=float(temperature),
             inputs=inputs or None,
+        )
+        return jsonify(result)
+    except RateLimitError as e:
+        return _rate_limit_response(e)
+    except Exception as e:
+        msg = str(e)
+        if 'rate limit' in msg.lower() or '429' in msg:
+            return _rate_limit_response(e)
+        return jsonify({'error': msg}), 500
+
+
+@ablation_bp.route('/api/ablation-reported-focus-dynamics', methods=['POST'])
+def ablation_reported_focus_dynamics():
+    """
+    Optional diagnostic: self-reported focus weights on every baseline/ablated sample.
+
+    Not attention weights. Does not change permutation significance from score_from_samples.
+    """
+    try:
+        data = request.json or {}
+        prompt = data.get('prompt', '')
+        foci_list = data.get('foci', [])
+        baseline_outputs = data.get('baseline_outputs') or []
+        ablated_outputs = data.get('ablated_outputs') or {}
+        behavior_labels = data.get('behavior_labels')
+        association_focus = data.get('association_focus')
+
+        if not prompt:
+            return jsonify({'error': 'Prompt is required'}), 400
+        if not foci_list:
+            return jsonify({'error': 'Foci are required'}), 400
+        if not baseline_outputs:
+            return jsonify({'error': 'baseline_outputs is required'}), 400
+        if not ablated_outputs:
+            return jsonify({'error': 'ablated_outputs is required'}), 400
+
+        ablated_map = {}
+        for key, vals in ablated_outputs.items():
+            ablated_map[int(key)] = list(vals or [])
+
+        fields = request_inference_fields(data)
+        assessor = get_assessor(data=fields)
+        assessment_service = AssessmentService(assessor)
+        service = _ablation_service(data)
+        result = service.run_reported_focus_dynamics(
+            prompt,
+            foci_list,
+            baseline_outputs,
+            ablated_map,
+            assessment_service=assessment_service,
+            behavior_labels=behavior_labels,
+            association_focus=association_focus,
         )
         return jsonify(result)
     except RateLimitError as e:
