@@ -66,6 +66,26 @@ def test_429_then_success_returns_content(check, _sleep):
     assert out['content'] == 'hello'
 
 
+@patch('core.ai_gateway_provider.time.sleep', return_value=None)
+@patch('core.ai_gateway_provider._check_requests')
+def test_grok_provider_slug_becomes_xai_on_gateway(check, _sleep):
+    ok = Mock()
+    ok.raise_for_status.return_value = None
+    ok.json.return_value = {
+        'choices': [{'message': {'content': 'ok'}}],
+        'usage': {'prompt_tokens': 1, 'completion_tokens': 1, 'total_tokens': 2},
+    }
+    check.return_value = _requests_mod([ok])
+    provider = AIGatewayProvider('test-key')
+    provider.chat_completion(
+        [{'role': 'user', 'content': 'hi'}],
+        model='grok-4.1-fast-reasoning',
+        provider='grok',
+    )
+    payload = check.return_value.post.call_args.kwargs['json']
+    assert payload['model'] == 'xai/grok-4.1-fast-reasoning'
+
+
 def test_retry_after_seconds_prefers_ms_header():
     response = Mock()
     response.headers = {'retry-after-ms': '7000', 'retry-after': '1'}

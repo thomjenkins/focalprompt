@@ -127,7 +127,9 @@ class AIGatewayProvider(LLMProvider):
         """
         # Vercel AI Gateway uses 'provider/model' format for model names
         # Format: 'openai/gpt-4o', 'anthropic/claude-3-5-sonnet-20241022', etc.
-        gateway_model = f"{provider}/{model}"
+        # xAI models must use the "xai" slug — "grok/..." 404s even when listed in UI.
+        gateway_provider = 'xai' if provider in ('grok', 'xai') else provider
+        gateway_model = f"{gateway_provider}/{model}"
         
         # Build request payload (OpenAI-compatible format)
         payload = {

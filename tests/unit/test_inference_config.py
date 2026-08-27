@@ -17,6 +17,40 @@ def test_gateway_is_default_when_key_present(monkeypatch):
     assert cfg['api_key'] == 'gw-test'
 
 
+def test_gateway_maps_grok_provider_to_xai_slug(monkeypatch):
+    monkeypatch.setenv('AI_GATEWAY_API_KEY', 'gw-test')
+    monkeypatch.delenv('FOCALPROMPT_BACKEND', raising=False)
+    cfg = resolve_inference({
+        'provider': 'grok',
+        'model': 'grok-4.1-fast-reasoning',
+    })
+    assert cfg['backend'] == 'vercel_gateway'
+    assert cfg['provider'] == 'xai'
+
+
+def test_gateway_keeps_xai_provider(monkeypatch):
+    monkeypatch.setenv('AI_GATEWAY_API_KEY', 'gw-test')
+    monkeypatch.delenv('FOCALPROMPT_BACKEND', raising=False)
+    cfg = resolve_inference({
+        'provider': 'xai',
+        'model': 'grok-4.1-fast-reasoning',
+    })
+    assert cfg['backend'] == 'vercel_gateway'
+    assert cfg['provider'] == 'xai'
+
+
+def test_direct_xai_maps_to_grok_sdk(monkeypatch):
+    monkeypatch.setenv('XAI_API_KEY', 'xai-test')
+    monkeypatch.setenv('AI_GATEWAY_API_KEY', 'gw-test')
+    cfg = resolve_inference({
+        'backend': 'direct',
+        'provider': 'xai',
+        'model': 'grok-2',
+    })
+    assert cfg['backend'] == 'direct'
+    assert cfg['provider'] == 'grok'
+
+
 def test_direct_openai_when_forced(monkeypatch):
     monkeypatch.setenv('OPENAI_API_KEY', 'sk-test')
     monkeypatch.setenv('AI_GATEWAY_API_KEY', 'gw-test')

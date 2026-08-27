@@ -56,8 +56,8 @@ def resolve_inference(
     data = data or {}
     provider = _strip(provider) or _strip(data.get('provider')) or 'openai'
     provider = provider.lower()
-    if provider == 'xai':
-        provider = 'grok'
+    # Keep xai for Vercel AI Gateway (slug is xai/*, not grok/*).
+    # Direct GrokProvider still uses 'grok' — remapped only on that path below.
     model = _strip(model) or _strip(data.get('model'))
 
     explicit_backend = _strip(data.get('backend')) or _strip(os.getenv('FOCALPROMPT_BACKEND'))
@@ -99,6 +99,9 @@ def resolve_inference(
             pass
         elif explicit_backend in PROVIDER_ENV_KEYS or explicit_backend == 'grok':
             provider = 'grok' if explicit_backend == 'xai' else explicit_backend
+        # Direct SDK path uses GrokProvider registered as 'grok'.
+        if provider == 'xai':
+            provider = 'grok'
         key = api_key or _strip(os.getenv(PROVIDER_ENV_KEYS.get(provider, '')))
         if not key:
             raise ValueError(
@@ -125,6 +128,9 @@ def resolve_inference(
                 'AI_GATEWAY_API_KEY is not set. Provide your Vercel AI Gateway key in the environment, '
                 'or set FOCALPROMPT_BACKEND=direct|openai_compatible with the appropriate credentials.'
             )
+        # Gateway model ids are provider/model with xAI's slug = "xai".
+        if provider == 'grok':
+            provider = 'xai'
         return {
             'backend': 'vercel_gateway',
             'provider': provider,
