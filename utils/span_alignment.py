@@ -9,7 +9,7 @@ must recover the experimental span before a focus is verified.
 from __future__ import annotations
 
 import re
-from typing import Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 # Fold curly / typographic quotes to ASCII so a straight-quote quote can match.
 _QUOTE_FOLD = {
@@ -605,6 +605,81 @@ def delete_span(prompt: str, start: int, end: int) -> Tuple[str, bool, bool]:
     return ablated, (not ablated.strip()), collapsed
 
 
+def _merged_attributable_spans(
+    classified: Sequence[Mapping[str, Any]],
+) -> List[Tuple[int, int]]:
+    """Merged [start, end) intervals for all attributable focus spans."""
+    spans: List[List[int]] = []
+    for focus in classified:
+        if not focus.get('attributable'):
+            continue
+        start = focus.get('char_start')
+        end = focus.get('char_end')
+        if start is None or end is None:
+            continue
+        s, e = int(start), int(end)
+        if s < 0 or e < s:
+            continue
+        if not spans or s > spans[-1][1]:
+            spans.append([s, e])
+        else:
+            spans[-1][1] = max(spans[-1][1], e)
+    # Sort then re-merge in case attributable order wasn't document order
+    spans.sort(key=lambda se: se[0])
+    merged: List[List[int]] = []
+    for s, e in spans:
+        if not merged or s > merged[-1][1]:
+            merged.append([s, e])
+        else:
+            merged[-1][1] = max(merged[-1][1], e)
+    return [(s, e) for s, e in merged]
+
+
+def residual_outside_attributable(
+    prompt: str,
+    classified: Sequence[Mapping[str, Any]],
+) -> str:
+    """
+    Prompt text that is not part of any attributable focus span.
+
+    Keeps glue between foci, dynamic-slot text, and trailing chat / injected
+    inputs so shuffle reassembly matches subtractive ablation's content set
+    (minus the removed focus, which is attributable and excluded here).
+    """
+    merged = _merged_attributable_spans(classified)
+    if not merged:
+        return (prompt or '').strip()
+    parts: List[str] = []
+    cursor = 0
+    for start, end in merged:
+        if cursor < start:
+            parts.append(prompt[cursor:start])
+        cursor = max(cursor, end)
+    if cursor < len(prompt):
+        parts.append(prompt[cursor:])
+    residual = ''.join(parts)
+    residual = re.sub(r'\n{3,}', '\n\n', residual).strip()
+    return residual
+
+
+def append_dynamic_inputs(prompt: str, inputs: Optional[Mapping[str, Any]] = None) -> str:
+    """Append chat/RAG/tools from inputs when not already present in the prompt."""
+    if not inputs:
+        return prompt or ''
+    out = prompt or ''
+    for key in ('chat_content', 'rag_context', 'tool_results', 'other_input'):
+        value = inputs.get(key)
+        if value is None:
+            continue
+        text = str(value)
+        if not text.strip():
+            continue
+        if text in out:
+            continue
+        out = (out.rstrip() + '\n\n' + text).strip() if out.strip() else text.strip()
+    return out
+
+
 def build_shuffled_remaining_prompt(
     prompt: str,
     classified: Sequence[Mapping[str, Any]],
@@ -612,12 +687,14 @@ def build_shuffled_remaining_prompt(
     *,
     shuffle_seed: Optional[int] = None,
     separator: str = '\n\n',
+    inputs: Optional[Mapping[str, Any]] = None,
 ) -> Tuple[str, bool, List[str], List[str]]:
     """
     Remove one focus and reassemble the remaining attributable spans in shuffled order.
 
-    Tests whether ablation significance is robust to structural hierarchy (section
-    ordering) rather than only to strict subtractive deletion in document order.
+    Non-attributable residual text (glue, dynamic slots, trailing chat already in
+    the prompt) is preserved after the shuffled foci. Optional ``inputs`` append
+    chat/RAG/tools when those strings are not already present.
 
     Returns (ablated_prompt, prompt_empty, document_order_names, shuffled_order_names).
     """
@@ -651,6 +728,12 @@ def build_shuffled_remaining_prompt(
         rng.shuffle(shuffled_pairs)
     shuffled_order = [name for name, _ in shuffled_pairs]
     ablated = separator.join(text for _, text in shuffled_pairs).strip()
+
+    residual = residual_outside_attributable(prompt, classified)
+    if residual and residual not in ablated:
+        ablated = (ablated + separator + residual).strip() if ablated else residual
+
+    ablated = append_dynamic_inputs(ablated, inputs)
     return ablated, (not ablated), document_order, shuffled_order
 
 

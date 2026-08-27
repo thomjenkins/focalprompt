@@ -3073,6 +3073,14 @@ async function runShuffleRobustnessForFocus(focusIndex, data, focusNameHint) {
         alpha: data.alpha || 0.05
     };
 
+    const inputs = Object.assign({}, data.inputs || {});
+    if (!inputs.chat_content) {
+        const chatEl = document.getElementById('chat-input') || document.getElementById('manual-pair-input');
+        if (chatEl && chatEl.value && chatEl.value.trim()) {
+            inputs.chat_content = chatEl.value.trim();
+        }
+    }
+
     function setShuffleState(state) {
         const scores = data.influence_scores;
         const apply = function (item) {
@@ -3105,7 +3113,8 @@ async function runShuffleRobustnessForFocus(focusIndex, data, focusNameHint) {
                 n_permutations: cfg.n_permutations || data.n_permutations || 10000,
                 alpha: cfg.alpha || data.alpha || 0.05,
                 permutation_seed: data.permutation_seed,
-                temperature: cfg.temperature
+                temperature: cfg.temperature,
+                inputs: inputs
             }))
         });
         const result = await response.json();

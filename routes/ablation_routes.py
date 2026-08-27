@@ -198,6 +198,10 @@ def ablation_shuffle_robustness():
         alpha = data.get('alpha', 0.05)
         permutation_seed = data.get('permutation_seed')
         temperature = data.get('temperature', 0.7)
+        inputs = data.get('inputs') or {}
+        if not inputs.get('chat_content') and data.get('chat_content'):
+            inputs = dict(inputs)
+            inputs['chat_content'] = data.get('chat_content')
 
         if not prompt:
             return jsonify({'error': 'Prompt is required'}), 400
@@ -220,6 +224,7 @@ def ablation_shuffle_robustness():
             alpha=float(alpha),
             permutation_seed=permutation_seed,
             temperature=float(temperature),
+            inputs=inputs or None,
         )
         return jsonify(result)
     except RateLimitError as e:

@@ -107,8 +107,9 @@ REVIEW_BEHAVIORAL_DIFFERENCE = "Review behavioral difference"
 SHUFFLE_ROBUSTNESS_TITLE = "Shuffle-order robustness check"
 SHUFFLE_ROBUSTNESS_EXPLAINER = (
     "Re-run ablation for this focus only, reassembling the remaining focus spans "
-    "in a shuffled order. Tests whether significance survives a different structural "
-    "hierarchy. Reuses your original baseline samples; p-value is uncorrected."
+    "in a shuffled order while keeping residual prompt text (including dynamic chat). "
+    "Tests whether significance survives a different structural hierarchy. "
+    "Reuses your original baseline samples; p-value is uncorrected."
 )
 SHUFFLE_ROBUSTNESS_BUTTON = "Re-test with shuffled remaining order"
 SHUFFLE_ROBUSTNESS_ORDER_UNCHANGED = (

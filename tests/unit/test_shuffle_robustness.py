@@ -64,6 +64,72 @@ def test_build_shuffled_single_remaining_is_noop_order():
     assert doc_order == shuffled_order
 
 
+def test_build_shuffled_preserves_trailing_chat():
+    prompt = PROMPT + "\n\nOwner: my dog is panting hard after a short walk."
+    classified = classify_foci_for_ablation(prompt, _static_foci())
+    shuffled, empty, _, _ = build_shuffled_remaining_prompt(
+        prompt, classified, removed_index=1, shuffle_seed=42
+    )
+    assert not empty
+    assert 'panting hard' in shuffled
+    assert 'veterinary triage' in shuffled
+    assert 'Respond in JSON' in shuffled
+    assert 'Always cite' not in shuffled  # removed focus
+
+
+def test_build_shuffled_preserves_dynamic_slot_span():
+    prompt = (
+        "You are a veterinary triage assistant.\n\n"
+        "{{CHAT}}\n\n"
+        "Respond in JSON with keys: urgency, differentials, next_steps.\n\n"
+        "Owner: cough overnight."
+    )
+    foci = [
+        {'focus': 'Role', 'prompt_section': 'You are a veterinary triage assistant.', 'is_dynamic': False},
+        {
+            'focus': 'Chat slot',
+            'prompt_section': '{{CHAT}}',
+            'is_dynamic': True,
+            'dynamic_type': 'chat',
+        },
+        {
+            'focus': 'JSON',
+            'prompt_section': 'Respond in JSON with keys: urgency, differentials, next_steps.',
+            'is_dynamic': False,
+        },
+    ]
+    classified = classify_foci_for_ablation(prompt, foci)
+    shuffled, _, _, _ = build_shuffled_remaining_prompt(
+        prompt, classified, removed_index=0, shuffle_seed=3
+    )
+    assert '{{CHAT}}' in shuffled
+    assert 'cough overnight' in shuffled
+    assert 'Respond in JSON' in shuffled
+    assert 'veterinary triage' not in shuffled
+
+
+def test_build_shuffled_appends_inputs_chat_when_missing():
+    classified = classify_foci_for_ablation(PROMPT, _static_foci())
+    chat = 'User message: kitten will not eat.'
+    shuffled, _, _, _ = build_shuffled_remaining_prompt(
+        PROMPT,
+        classified,
+        removed_index=0,
+        shuffle_seed=1,
+        inputs={'chat_content': chat},
+    )
+    assert chat in shuffled
+    # Do not double-append
+    shuffled2, _, _, _ = build_shuffled_remaining_prompt(
+        PROMPT + '\n\n' + chat,
+        classify_foci_for_ablation(PROMPT + '\n\n' + chat, _static_foci()),
+        removed_index=0,
+        shuffle_seed=1,
+        inputs={'chat_content': chat},
+    )
+    assert shuffled2.count(chat) == 1
+
+
 @pytest.fixture
 def mock_provider():
     provider = Mock()

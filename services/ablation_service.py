@@ -90,6 +90,7 @@ class AblationService:
         focus_index: Optional[int] = None,
         shuffle_remaining: bool = False,
         shuffle_seed: Optional[int] = None,
+        inputs: Optional[Dict] = None,
     ) -> Dict:
         """One model completion for client-paced ablation (survives gateway RPM limits)."""
         require_stochastic_temperature(temperature)
@@ -116,6 +117,7 @@ class AblationService:
                 classified,
                 idx,
                 shuffle_seed=seed,
+                inputs=inputs,
             )
             shuffle_meta = {
                 'ablation_mode': 'shuffled_remaining',
@@ -149,12 +151,15 @@ class AblationService:
         alpha: float = DEFAULT_ALPHA,
         permutation_seed: Optional[int] = None,
         temperature: float = 0.7,
+        inputs: Optional[Dict] = None,
     ) -> Dict:
         """
         Re-test one focus after shuffling the order of remaining focus spans.
 
         Reuses the original baseline samples. Reports an uncorrected p-value —
         a sensitivity check, not part of the main BH family across foci.
+        Preserves non-attributable residual text (including dynamic chat already
+        in the prompt) and appends ``inputs`` chat/RAG/tools when provided.
         """
         require_stochastic_temperature(temperature)
         baseline_outputs = [
@@ -179,6 +184,7 @@ class AblationService:
             classified,
             idx,
             shuffle_seed=seed,
+            inputs=inputs,
         )
 
         n_ablated = int(n_ablated)
@@ -243,8 +249,8 @@ class AblationService:
             'note': (
                 'Sensitivity check: remaining focus spans were reordered before sampling. '
                 'p-value is uncorrected (not part of the main BH correction across foci). '
-                'Glue text between spans is omitted in shuffle mode — only verified focus '
-                'sections are reassembled.'
+                'Non-attributable residual text (glue, dynamic chat already in the prompt) '
+                'is preserved; optional inputs append chat/RAG/tools when missing.'
             ),
         }
 
