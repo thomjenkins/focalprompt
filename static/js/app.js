@@ -169,9 +169,8 @@ function initModelSearch() {
     // Update when provider changes
     const providerSelect = document.getElementById('provider-select');
     if (providerSelect) {
-        providerSelect.addEventListener('change', () => {
+        providerSelect.addEventListener('change', function () {
             updateModelSearchValue();
-            modelSearchInput.value = '';
         });
     }
 }
@@ -252,40 +251,65 @@ function hideModelDropdown() {
     selectedModelIndex = -1;
 }
 
-function selectModel(modelValue, modelProvider) {
-    userModel = modelValue;
-    userProvider = modelProvider;
-    
-    // Update search input
-    const selectedModel = allModelsFlat.find(m => m.value === modelValue && m.provider === modelProvider);
-    if (modelSearchInput && selectedModel) {
-        modelSearchInput.value = selectedModel.label;
+function resolveModelFromSearchText(text) {
+    const q = (text || '').trim();
+    if (!q) return null;
+    const exact = allModelsFlat.find(function (m) {
+        return m.label.toLowerCase() === q.toLowerCase();
+    });
+    if (exact) {
+        return { provider: exact.provider, model: exact.value };
     }
-    
-    // Update hidden select
+    const slash = q.match(/^([^/]+)\/(.+)$/);
+    if (slash) {
+        const p = slash[1].trim().toLowerCase();
+        const m = slash[2].trim();
+        const hit = allModelsFlat.find(function (x) {
+            return x.provider === p && x.value === m;
+        });
+        if (hit) {
+            return { provider: hit.provider, model: hit.value };
+        }
+    }
+    return null;
+}
+
+function getCurrentModelSelection() {
+    const fromSearch = modelSearchInput
+        ? resolveModelFromSearchText(modelSearchInput.value)
+        : null;
+    if (fromSearch) {
+        return fromSearch;
+    }
+    return { provider: userProvider, model: userModel };
+}
+
+function persistModelSelection(provider, model) {
+    userProvider = provider;
+    userModel = model;
+    localStorage.setItem('focalprompt_provider', provider);
+    localStorage.setItem('focalprompt_model', model);
+    const providerSelect = document.getElementById('provider-select');
+    if (providerSelect && providerSelect.value !== provider) {
+        providerSelect.value = provider;
+    }
     if (modelSelectHidden) {
-        modelSelectHidden.value = modelValue;
+        modelSelectHidden.value = model;
     }
+    updateModelSearchValue();
+    if (typeof updateModelChipLabel === 'function') {
+        updateModelChipLabel();
+    }
+}
+
+function selectModel(modelValue, modelProvider) {
+    persistModelSelection(modelProvider, modelValue);
     
     // Update model select dropdown (if it exists)
     const modelSelect = document.getElementById('model-select');
     if (modelSelect) {
-        // Check if the model exists in the dropdown options
-        const option = Array.from(modelSelect.options).find(opt => opt.value === modelValue);
-        if (option) {
-            modelSelect.value = modelValue;
-        }
+        modelSelect.value = modelValue;
     }
-    
-    // Update provider select (this may trigger change event, but model is already set correctly)
-    const providerSelect = document.getElementById('provider-select');
-    if (providerSelect && providerSelect.value !== modelProvider) {
-        providerSelect.value = modelProvider;
-    }
-    
-    // Save to localStorage
-    localStorage.setItem('focalprompt_model', modelValue);
-    localStorage.setItem('focalprompt_provider', modelProvider);
     
     hideModelDropdown();
     updateCostEstimate();
@@ -368,8 +392,9 @@ function getApiHeaders() {
 // Helper: request body with selected model/provider (BYO credentials live server-side via env)
 function getApiBody(additionalData = {}) {
     const body = { ...additionalData };
-    body.model = userModel;
-    body.provider = userProvider;
+    const sel = getCurrentModelSelection();
+    body.model = sel.model;
+    body.provider = sel.provider;
     return body;
 }
 
@@ -680,22 +705,20 @@ async function loadModelPricing() {
 
 // Update cost display based on selected model
 function updateCostDisplay() {
-    const providerSelect = document.getElementById('provider-select');
-    const modelSelect = document.getElementById('model-select');
     const costEstimate = document.getElementById('cost-estimate');
-    
-    if (!providerSelect || !modelSelect || !costEstimate || !modelPricingCache) return;
-    
-    const provider = providerSelect.value;
-    const model = modelSelect.value;
-    
+    if (!costEstimate || !modelPricingCache) return;
+
+    const sel = getCurrentModelSelection();
+    const provider = sel.provider;
+    const model = sel.model;
+
     const providerData = modelPricingCache[provider];
     if (!providerData) {
         costEstimate.textContent = '-';
         return;
     }
-    
-    const modelData = providerData.models.find(m => m.id === model);
+
+    const modelData = providerData.models.find(function (m) { return m.id === model; });
     if (!modelData || !modelData.pricing) {
         costEstimate.textContent = '-';
         return;
@@ -815,21 +838,10 @@ window.addEventListener('DOMContentLoaded', async () => {
                 const currentModelValid = allModelsFlat.some(m => m.value === userModel && m.provider === newProvider);
                 
                 if (!currentModelValid) {
-                    // Model not valid for new provider, use default
                     const defaultModel = defaultModels[newProvider] || (allModelsData[newProvider] && allModelsData[newProvider][0]) || 'gpt-4o-mini';
-                    userModel = defaultModel;
-                    
-                    // Update model select dropdown if it exists
-                    if (modelSelect) {
-                        modelSelect.value = defaultModel;
-                    }
-                    
-                    // Update search input
-                    updateModelSearchValue();
-                    
-                    // Save to localStorage
-                    localStorage.setItem('focalprompt_model', defaultModel);
-                    localStorage.setItem('focalprompt_provider', newProvider);
+                    persistModelSelection(newProvider, defaultModel);
+                } else {
+                    persistModelSelection(newProvider, userModel);
                 }
             }
             
@@ -876,17 +888,19 @@ window.addEventListener('DOMContentLoaded', async () => {
     };
     updateModelChipLabel();
     
-    // Save settings
+    // Save settings — use searchable picker state, not stale hidden <select>
     if (saveSettingsBtn) {
         saveSettingsBtn.addEventListener('click', () => {
-            const provider = providerSelect.value;
-            const model = modelSelect.value;
-            
-            localStorage.setItem('focalprompt_provider', provider);
-            userProvider = provider;
-            localStorage.setItem('focalprompt_model', model);
-            userModel = model;
-            updateModelChipLabel();
+            const sel = getCurrentModelSelection();
+            const valid = allModelsFlat.some(function (m) {
+                return m.provider === sel.provider && m.value === sel.model;
+            });
+            if (!valid) {
+                apiKeyStatus.textContent = '⚠ Pick a model from the search list';
+                apiKeyStatus.style.color = '#ffc107';
+                return;
+            }
+            persistModelSelection(sel.provider, sel.model);
             
             apiKeyStatus.textContent = '✓ Model selection saved';
             apiKeyStatus.style.color = '#28a745';
@@ -894,7 +908,6 @@ window.addEventListener('DOMContentLoaded', async () => {
                 apiKeyStatus.textContent = '';
             }, 3000);
             
-            // Update cost display
             updateCostDisplay();
         });
     }
