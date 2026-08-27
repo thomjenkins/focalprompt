@@ -138,6 +138,28 @@ def build_app():
 
         _ensure_evaluation_bp_registered()
 
+        def _ensure_behavioral_difference_bp_registered():
+            compare_routes = [
+                r for r in flask_app.url_map.iter_rules()
+                if 'compare-reported-vs-revealed' in str(r)
+            ]
+            if len(compare_routes) == 0:
+                try:
+                    print("🔄 FORCE REGISTERING behavioral_difference_bp...", file=sys.stderr)
+                    import routes.behavioral_difference_routes
+                    flask_app.register_blueprint(
+                        routes.behavioral_difference_routes.behavioral_difference_bp
+                    )
+                    print("✅ behavioral_difference_bp force-registered successfully", file=sys.stderr)
+                except Exception as e:
+                    print(
+                        f"❌ Failed to force-register behavioral_difference_bp: {type(e).__name__}: {e}",
+                        file=sys.stderr,
+                    )
+                    traceback.print_exc(file=sys.stderr)
+
+        _ensure_behavioral_difference_bp_registered()
+
         from flask import jsonify as flask_jsonify
 
         @flask_app.route('/api/diagnostic', methods=['GET'])

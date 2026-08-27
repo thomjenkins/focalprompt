@@ -2890,7 +2890,167 @@ function renderAblationResults(data) {
 
     bindBehavioralDifferenceReviewHandlers(data);
     bindShuffleRobustnessHandlers(data);
-    refreshExperimentCComparison();
+    ensureExperimentCInlineMount();
+    refreshExperimentCComparison({ scroll: true });
+}
+
+function ensureExperimentCInlineMount() {
+    if (!ablationResults) return null;
+    let mount = document.getElementById('experiment-c-inline-results');
+    if (mount) return mount;
+    ablationResults.insertAdjacentHTML('beforeend',
+        '<section class="experiment-c-inline" id="experiment-c-inline">' +
+        '<h3>Experiment C — Reported vs revealed</h3>' +
+        '<p class="info-text">Per-focus comparison of Experiment A (reported focus level) vs ' +
+        'Experiment B (perturbation signal). Run <strong>Assess Focus Distribution</strong> for A scores.</p>' +
+        '<div id="experiment-c-inline-results" class="experiment-c-results"></div>' +
+        '<p class="info-text" style="margin:10px 0 0"><a href="#experiment-c-section">Open full panel (section 7) ↓</a></p>' +
+        '</section>');
+    return document.getElementById('experiment-c-inline-results');
+}
+
+function setExperimentCMessage(html) {
+    if (experimentCResults) {
+        experimentCResults.innerHTML = html;
+    }
+    const inline = document.getElementById('experiment-c-inline-results');
+    if (inline) {
+        inline.innerHTML = html;
+    }
+}
+
+function buildExperimentCComparisonHtml(data) {
+    const summary = data.summary || {};
+    const rows = data.rows || [];
+    const rho = summary.spearman_reported_vs_normalized_influence;
+    const rhoTxt = (rho === null || rho === undefined || Number.isNaN(Number(rho)))
+        ? 'n/a'
+        : Number(rho).toFixed(2);
+
+    let html = '<div class="experiment-c-summary">';
+    html += '<p><strong>Experiment C — per-focus comparison</strong></p>';
+    html += '<p>Compared ' + (summary.n_foci_compared || rows.length) + ' foci';
+    if (summary.n_tagged_foci) {
+        html += ' (' + summary.n_tagged_foci + ' tagged)';
+    }
+    html += '. Agree (high): ' + (summary.n_concordant_high || 0) + '. ';
+    html += 'Agree (quiet): ' + (summary.n_concordant_quiet || 0) + '. ';
+    html += 'Disagreements: ' + (summary.n_disagreements || 0);
+    if (summary.disagreement_foci && summary.disagreement_foci.length) {
+        html += ' (' + summary.disagreement_foci.map(escapeHtml).join(', ') + ')';
+    }
+    if (summary.n_incomplete) {
+        html += '. Incomplete: ' + summary.n_incomplete;
+    }
+    html += '.</p>';
+    html += '<p>Rank correlation (A reported score vs B normalized T<sub>obs</sub> share): ρ = ' +
+        escapeHtml(rhoTxt) + '. ' + escapeHtml(summary.interpretation || '') + '</p>';
+    html += '<p style="font-size:0.9em;color:#64748b;margin:0">High reported (A) uses threshold ≥ ' +
+        escapeHtml(String(summary.reported_high_threshold != null ? summary.reported_high_threshold : 15)) +
+        ' points. B significance uses BH q &lt; α. Bars show relative level within each experiment.</p>';
+    html += '</div>';
+
+    html += '<table class="experiment-c-table"><thead><tr>';
+    html += '<th>Focus</th><th>A vs B levels</th>';
+    html += '<th>A score</th><th>B signal</th><th>Ranks (A / B)</th><th>Concordance</th>';
+    html += '</tr></thead><tbody>';
+
+    const sorted = rows.slice().sort(function (a, b) {
+        const sa = Number(a.reported_score);
+        const sb = Number(b.reported_score);
+        if (Number.isFinite(sb) && Number.isFinite(sa) && sb !== sa) return sb - sa;
+        const na = Number(a.normalized_influence);
+        const nb = Number(b.normalized_influence);
+        if (Number.isFinite(nb) && Number.isFinite(na) && nb !== na) return nb - na;
+        return String(a.focus || '').localeCompare(String(b.focus || ''));
+    });
+
+    sorted.forEach(function (row) {
+        const conc = row.concordance || {};
+        const key = conc.key || 'incomplete';
+        const faith = row.faithfulness || {};
+        const sig = row.is_significant;
+        const scoreNum = Number(row.reported_score);
+        const shareNum = Number(row.normalized_influence);
+        const score = row.reported_score != null && Number.isFinite(scoreNum)
+            ? scoreNum.toFixed(1)
+            : '—';
+        const share = row.normalized_influence != null && Number.isFinite(shareNum)
+            ? shareNum.toFixed(1) + '%'
+            : '—';
+        const tObs = row.t_obs != null ? Number(row.t_obs).toFixed(4) : '—';
+        const effect = row.standardized_effect != null
+            ? Number(row.standardized_effect).toFixed(2)
+            : '—';
+        let sigTxt = 'n/a';
+        if (sig === true) sigTxt = 'significant (q=' + formatExperimentCQ(row.q_value) + ')';
+        else if (sig === false) sigTxt = 'not significant (q=' + formatExperimentCQ(row.q_value) + ')';
+
+        const scoreBarW = Number.isFinite(scoreNum) ? Math.min(100, Math.max(0, scoreNum)) : 0;
+        const shareBarW = Number.isFinite(shareNum) ? Math.min(100, Math.max(0, shareNum)) : 0;
+
+        html += '<tr class="experiment-c-row-' + escapeHtml(key) + '">';
+        html += '<td><strong>' + escapeHtml(row.focus || '') + '</strong>';
+        if (row.prompt_section) {
+            html += '<div class="experiment-c-span">' + escapeHtml(
+                row.prompt_section.length > 80
+                    ? row.prompt_section.slice(0, 77) + '...'
+                    : row.prompt_section
+            ) + '</div>';
+        }
+        html += '</td>';
+        html += '<td class="experiment-c-bars-cell">';
+        html += '<div class="experiment-c-bar-row"><span class="experiment-c-bar-label">A</span>';
+        html += '<div class="experiment-c-bar-track"><div class="experiment-c-bar-fill experiment-c-bar-a" style="width:' +
+            scoreBarW + '%"></div></div></div>';
+        html += '<div class="experiment-c-bar-row"><span class="experiment-c-bar-label">B</span>';
+        html += '<div class="experiment-c-bar-track"><div class="experiment-c-bar-fill experiment-c-bar-b" style="width:' +
+            shareBarW + '%"></div></div></div>';
+        html += '</td>';
+        html += '<td>' + escapeHtml(score);
+        if (!row.has_experiment_a) {
+            html += '<div class="experiment-c-missing">No A score — run Assess Focus</div>';
+        }
+        html += '</td>';
+        html += '<td><div>' + escapeHtml(sigTxt) + '</div>';
+        html += '<div class="experiment-c-metrics">T<sub>obs</sub>=' + escapeHtml(tObs) +
+            ', share=' + escapeHtml(share) + ', z=' + escapeHtml(effect) + '</div>';
+        if (!row.has_experiment_b) {
+            html += '<div class="experiment-c-missing">No B result</div>';
+        }
+        html += '</td>';
+        html += '<td>' + escapeHtml(
+            (row.reported_rank != null ? row.reported_rank : '—') + ' / ' +
+            (row.revealed_rank != null ? row.revealed_rank : '—')
+        );
+        if (row.rank_delta != null) {
+            html += '<div class="experiment-c-metrics">Δrank=' + escapeHtml(String(row.rank_delta)) + '</div>';
+        }
+        html += '</td>';
+        html += '<td>' + escapeHtml(conc.label || key);
+        if (faith.primary_label && faith.primary_label !== 'inconclusive') {
+            html += '<div class="experiment-c-metrics">' + escapeHtml(faith.primary_label) + '</div>';
+        }
+        html += '</td>';
+        html += '</tr>';
+    });
+    html += '</tbody></table>';
+    return html;
+}
+
+function paintExperimentCComparison(data, includeExplanation) {
+    if (!data) return;
+    const html = buildExperimentCComparisonHtml(data);
+    const fullHtml = includeExplanation && window.experimentCExplanationHtml
+        ? html + window.experimentCExplanationHtml
+        : html;
+    if (experimentCResults) {
+        experimentCResults.innerHTML = fullHtml;
+    }
+    const inline = document.getElementById('experiment-c-inline-results');
+    if (inline) {
+        inline.innerHTML = html;
+    }
 }
 
 function bindShuffleRobustnessHandlers(data) {
@@ -3098,7 +3258,19 @@ window.experimentCComparison = null;
 function getExperimentAReportedPayload() {
     const tagged = (foci && foci.length) ? foci : [];
     const assessed = (assessmentFoci && assessmentFoci.length) ? assessmentFoci : [];
-    const source = tagged.length ? tagged : assessed;
+    let source = tagged.length ? tagged : assessed;
+    if (!source.length && window.singleAblationResults) {
+        const perturbation = buildExperimentCPerturbationPayload(window.singleAblationResults);
+        const records = (perturbation && perturbation.influence_scores) || [];
+        source = records.map(function (r) {
+            return {
+                focus: r.focus || r.focus_name || 'Focus',
+                prompt_section: r.prompt_section || '',
+                score: null,
+                explanation: ''
+            };
+        });
+    }
     return {
         foci: source.map(function (f) {
             const matched = assessed.length ? matchFocus(f, assessed) : null;
@@ -3126,23 +3298,31 @@ function buildExperimentCPerturbationPayload(ablation) {
     };
 }
 
-async function refreshExperimentCComparison() {
-    if (!experimentCResults) return;
+async function refreshExperimentCComparison(options) {
+    const scroll = options && options.scroll;
     const reported = getExperimentAReportedPayload();
     const ablation = window.singleAblationResults;
     const perturbation = buildExperimentCPerturbationPayload(ablation);
     const explainBtn = explainExperimentCBtn;
-    const hasTagged = (foci && foci.length) || reported.foci.length;
+    const hasFoci = reported.foci.length > 0;
     const hasB = perturbation && (
         (perturbation.influence_scores && perturbation.influence_scores.length) ||
         (perturbation.ablation_results && perturbation.ablation_results.length)
     );
 
-    if (!hasTagged || !hasB) {
-        experimentCResults.innerHTML =
-            '<p class="empty-state">Tag foci, run <strong>Assess Focus Distribution</strong> (Experiment A) and ' +
-            '<strong>Ablation Analysis</strong> (Experiment B). Experiment C compares each tagged focus: ' +
-            'A assigned level vs B measured signal strength and significance.</p>';
+    if (!hasB) {
+        setExperimentCMessage(
+            '<p class="empty-state">Run <strong>Ablation Analysis</strong> (Experiment B) first. ' +
+            'Experiment C compares each focus: A assigned level vs B measured signal strength. ' +
+            'Run <strong>Assess Focus Distribution</strong> (Experiment A) for reported scores.</p>'
+        );
+        if (explainBtn) explainBtn.disabled = true;
+        window.experimentCComparison = null;
+        return;
+    }
+
+    if (!hasFoci) {
+        setExperimentCMessage('<p class="empty-state">No foci found to compare. Tag foci or re-run ablation.</p>');
         if (explainBtn) explainBtn.disabled = true;
         window.experimentCComparison = null;
         return;
@@ -3164,7 +3344,7 @@ async function refreshExperimentCComparison() {
             throw new Error(data.error || 'Comparison failed');
         }
         window.experimentCComparison = data;
-        renderExperimentCComparison(data);
+        paintExperimentCComparison(data, true);
         if (explainBtn) {
             const nDis = (data.summary && data.summary.n_disagreements) || 0;
             explainBtn.disabled = nDis === 0;
@@ -3172,137 +3352,25 @@ async function refreshExperimentCComparison() {
                 ? 'Ask the LLM for hypotheses about A↔B disagreements'
                 : 'No disagreements to explain at the current thresholds';
         }
+        if (scroll) {
+            const target = document.getElementById('experiment-c-inline')
+                || document.getElementById('experiment-c-section');
+            if (target && target.scrollIntoView) {
+                target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        }
     } catch (err) {
         console.error('Experiment C comparison error:', err);
-        experimentCResults.innerHTML =
+        setExperimentCMessage(
             '<p class="error-message">Could not compare Experiment A and B: ' +
-            escapeHtml(err.message || String(err)) + '</p>';
+            escapeHtml(err.message || String(err)) + '</p>'
+        );
         if (explainBtn) explainBtn.disabled = true;
     }
 }
 
 function renderExperimentCComparison(data) {
-    if (!experimentCResults || !data) return;
-    const summary = data.summary || {};
-    const rows = data.rows || [];
-    const rho = summary.spearman_reported_vs_normalized_influence;
-    const rhoTxt = (rho === null || rho === undefined || Number.isNaN(Number(rho)))
-        ? 'n/a'
-        : Number(rho).toFixed(2);
-
-    let html = '<div class="experiment-c-summary">';
-    html += '<p><strong>Experiment C — per-focus comparison</strong></p>';
-    html += '<p>Compared ' + (summary.n_foci_compared || rows.length) + ' foci';
-    if (summary.n_tagged_foci) {
-        html += ' (' + summary.n_tagged_foci + ' tagged)';
-    }
-    html += '. Agree (high): ' + (summary.n_concordant_high || 0) + '. ';
-    html += 'Agree (quiet): ' + (summary.n_concordant_quiet || 0) + '. ';
-    html += 'Disagreements: ' + (summary.n_disagreements || 0);
-    if (summary.disagreement_foci && summary.disagreement_foci.length) {
-        html += ' (' + summary.disagreement_foci.map(escapeHtml).join(', ') + ')';
-    }
-    if (summary.n_incomplete) {
-        html += '. Incomplete: ' + summary.n_incomplete;
-    }
-    html += '.</p>';
-    html += '<p>Rank correlation (A reported score vs B normalized T<sub>obs</sub> share): ρ = ' +
-        escapeHtml(rhoTxt) + '. ' + escapeHtml(summary.interpretation || '') + '</p>';
-    html += '<p style="font-size:0.9em;color:#64748b;margin:0">High reported (A) uses threshold ≥ ' +
-        escapeHtml(String(summary.reported_high_threshold != null ? summary.reported_high_threshold : 15)) +
-        ' points. B significance uses BH q &lt; α. Bars show relative level within each experiment.</p>';
-    html += '</div>';
-
-    html += '<table class="experiment-c-table"><thead><tr>';
-    html += '<th>Focus</th><th>A vs B levels</th>';
-    html += '<th>A score</th><th>B signal</th><th>Ranks (A / B)</th><th>Concordance</th>';
-    html += '</tr></thead><tbody>';
-
-    const sorted = rows.slice().sort(function (a, b) {
-        const sa = Number(a.reported_score);
-        const sb = Number(b.reported_score);
-        if (Number.isFinite(sb) && Number.isFinite(sa) && sb !== sa) return sb - sa;
-        const na = Number(a.normalized_influence);
-        const nb = Number(b.normalized_influence);
-        if (Number.isFinite(nb) && Number.isFinite(na) && nb !== na) return nb - na;
-        return String(a.focus || '').localeCompare(String(b.focus || ''));
-    });
-
-    sorted.forEach(function (row) {
-        const conc = row.concordance || {};
-        const key = conc.key || 'incomplete';
-        const faith = row.faithfulness || {};
-        const sig = row.is_significant;
-        const scoreNum = Number(row.reported_score);
-        const shareNum = Number(row.normalized_influence);
-        const score = row.reported_score != null && Number.isFinite(scoreNum)
-            ? scoreNum.toFixed(1)
-            : '—';
-        const share = row.normalized_influence != null && Number.isFinite(shareNum)
-            ? shareNum.toFixed(1) + '%'
-            : '—';
-        const tObs = row.t_obs != null ? Number(row.t_obs).toFixed(4) : '—';
-        const effect = row.standardized_effect != null
-            ? Number(row.standardized_effect).toFixed(2)
-            : '—';
-        let sigTxt = 'n/a';
-        if (sig === true) sigTxt = 'significant (q=' + formatExperimentCQ(row.q_value) + ')';
-        else if (sig === false) sigTxt = 'not significant (q=' + formatExperimentCQ(row.q_value) + ')';
-
-        const scoreBarW = Number.isFinite(scoreNum) ? Math.min(100, Math.max(0, scoreNum)) : 0;
-        const shareBarW = Number.isFinite(shareNum) ? Math.min(100, Math.max(0, shareNum)) : 0;
-
-        html += '<tr class="experiment-c-row-' + escapeHtml(key) + '">';
-        html += '<td><strong>' + escapeHtml(row.focus || '') + '</strong>';
-        if (row.prompt_section) {
-            html += '<div class="experiment-c-span">' + escapeHtml(
-                row.prompt_section.length > 80
-                    ? row.prompt_section.slice(0, 77) + '...'
-                    : row.prompt_section
-            ) + '</div>';
-        }
-        html += '</td>';
-        html += '<td class="experiment-c-bars-cell">';
-        html += '<div class="experiment-c-bar-row"><span class="experiment-c-bar-label">A</span>';
-        html += '<div class="experiment-c-bar-track"><div class="experiment-c-bar-fill experiment-c-bar-a" style="width:' +
-            scoreBarW + '%"></div></div></div>';
-        html += '<div class="experiment-c-bar-row"><span class="experiment-c-bar-label">B</span>';
-        html += '<div class="experiment-c-bar-track"><div class="experiment-c-bar-fill experiment-c-bar-b" style="width:' +
-            shareBarW + '%"></div></div></div>';
-        html += '</td>';
-        html += '<td>' + escapeHtml(score);
-        if (!row.has_experiment_a) {
-            html += '<div class="experiment-c-missing">No A score</div>';
-        }
-        html += '</td>';
-        html += '<td><div>' + escapeHtml(sigTxt) + '</div>';
-        html += '<div class="experiment-c-metrics">T<sub>obs</sub>=' + escapeHtml(tObs) +
-            ', share=' + escapeHtml(share) + ', z=' + escapeHtml(effect) + '</div>';
-        if (!row.has_experiment_b) {
-            html += '<div class="experiment-c-missing">No B result</div>';
-        }
-        html += '</td>';
-        html += '<td>' + escapeHtml(
-            (row.reported_rank != null ? row.reported_rank : '—') + ' / ' +
-            (row.revealed_rank != null ? row.revealed_rank : '—')
-        );
-        if (row.rank_delta != null) {
-            html += '<div class="experiment-c-metrics">Δrank=' + escapeHtml(String(row.rank_delta)) + '</div>';
-        }
-        html += '</td>';
-        html += '<td>' + escapeHtml(conc.label || key);
-        if (faith.primary_label && faith.primary_label !== 'inconclusive') {
-            html += '<div class="experiment-c-metrics">' + escapeHtml(faith.primary_label) + '</div>';
-        }
-        html += '</td>';
-        html += '</tr>';
-    });
-    html += '</tbody></table>';
-
-    experimentCResults.innerHTML = html;
-    if (window.experimentCExplanationHtml) {
-        experimentCResults.innerHTML += window.experimentCExplanationHtml;
-    }
+    paintExperimentCComparison(data, true);
 }
 
 function formatExperimentCQ(q) {
