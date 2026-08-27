@@ -107,7 +107,8 @@ class AIGatewayProvider(LLMProvider):
         model: str,
         temperature: float = 0.7,
         response_format: Optional[Dict] = None,
-        provider: str = 'openai'
+        provider: str = 'openai',
+        max_tokens: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Generate a chat completion via Vercel AI Gateway.
@@ -121,6 +122,7 @@ class AIGatewayProvider(LLMProvider):
             temperature: Sampling temperature
             response_format: Optional response format specification
             provider: Provider name ('openai', 'anthropic', 'google', 'grok')
+            max_tokens: Optional completion token limit (OpenAI-compatible)
             
         Returns:
             Dict with 'content' (str) and 'usage' (dict with token counts)
@@ -137,6 +139,8 @@ class AIGatewayProvider(LLMProvider):
             'messages': messages,
             'temperature': temperature
         }
+        if max_tokens is not None:
+            payload['max_tokens'] = max_tokens
         
         # Only include response_format for models that support it
         # gpt-4o-mini doesn't support response_format via AI Gateway
