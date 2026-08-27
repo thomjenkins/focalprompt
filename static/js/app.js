@@ -2890,32 +2890,12 @@ function renderAblationResults(data) {
 
     bindBehavioralDifferenceReviewHandlers(data);
     bindShuffleRobustnessHandlers(data);
-    ensureExperimentCInlineMount();
     refreshExperimentCComparison({ scroll: true });
-}
-
-function ensureExperimentCInlineMount() {
-    if (!ablationResults) return null;
-    let mount = document.getElementById('experiment-c-inline-results');
-    if (mount) return mount;
-    ablationResults.insertAdjacentHTML('beforeend',
-        '<section class="experiment-c-inline" id="experiment-c-inline">' +
-        '<h3>Experiment C — Reported vs revealed</h3>' +
-        '<p class="info-text">Per-focus comparison of Experiment A (reported focus level) vs ' +
-        'Experiment B (perturbation signal). Run <strong>Assess Focus Distribution</strong> for A scores.</p>' +
-        '<div id="experiment-c-inline-results" class="experiment-c-results"></div>' +
-        '<p class="info-text" style="margin:10px 0 0"><a href="#experiment-c-section">Open full panel (section 7) ↓</a></p>' +
-        '</section>');
-    return document.getElementById('experiment-c-inline-results');
 }
 
 function setExperimentCMessage(html) {
     if (experimentCResults) {
         experimentCResults.innerHTML = html;
-    }
-    const inline = document.getElementById('experiment-c-inline-results');
-    if (inline) {
-        inline.innerHTML = html;
     }
 }
 
@@ -3046,10 +3026,6 @@ function paintExperimentCComparison(data, includeExplanation) {
         : html;
     if (experimentCResults) {
         experimentCResults.innerHTML = fullHtml;
-    }
-    const inline = document.getElementById('experiment-c-inline-results');
-    if (inline) {
-        inline.innerHTML = html;
     }
 }
 
@@ -3372,8 +3348,7 @@ async function refreshExperimentCComparison(options) {
                 : 'No disagreements to explain at the current thresholds';
         }
         if (scroll) {
-            const target = document.getElementById('experiment-c-inline')
-                || document.getElementById('experiment-c-section');
+            const target = document.getElementById('experiment-c-section');
             if (target && target.scrollIntoView) {
                 target.scrollIntoView({ behavior: 'smooth', block: 'start' });
             }

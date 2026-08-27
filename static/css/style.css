@@ -777,19 +777,6 @@ header img {
     margin-top: 12px;
 }
 
-.experiment-c-inline {
-    margin-top: 24px;
-    padding: 16px 18px;
-    border: 2px solid #bae6fd;
-    border-radius: 10px;
-    background: #f0f9ff;
-}
-
-.experiment-c-inline h3 {
-    margin: 0 0 8px;
-    color: var(--primary-color);
-}
-
 .experiment-c-pointer a {
     font-weight: 600;
 }
