@@ -2876,7 +2876,82 @@ function renderAblationResults(data) {
     }
 
     bindBehavioralDifferenceReviewHandlers(data);
+    bindShuffleRobustnessHandlers(data);
     refreshExperimentCComparison();
+}
+
+function bindShuffleRobustnessHandlers(data) {
+    if (!ablationResults) return;
+    ablationResults.querySelectorAll('.btn-shuffle-robustness').forEach(function (btn) {
+        btn.addEventListener('click', async function () {
+            const focusIndex = parseInt(btn.getAttribute('data-focus-index'), 10);
+            if (Number.isNaN(focusIndex)) return;
+            await runShuffleRobustnessForFocus(focusIndex, data);
+        });
+    });
+}
+
+async function runShuffleRobustnessForFocus(focusIndex, data) {
+    const prompt = (data && data.prompt) || (promptInput ? promptInput.value.trim() : '');
+    const fociList = (data && data.foci_list) || foci;
+    const baselines = (data && data.baseline_outputs && data.baseline_outputs.length)
+        ? data.baseline_outputs
+        : (data && data.baseline_output ? [data.baseline_output] : []);
+    if (!prompt || !fociList || !fociList.length || !baselines.length) {
+        showErrorModal('Need prompt, foci, and baseline samples from the original ablation run.');
+        return;
+    }
+
+    const cfg = window.FocalPromptExperiment ? window.FocalPromptExperiment.getState() : {
+        temperature: data.temperature || 0.7,
+        n_ablated: data.n_ablated || 5,
+        n_permutations: data.n_permutations || 10000,
+        alpha: data.alpha || 0.05
+    };
+
+    function setShuffleState(state) {
+        const scores = data.influence_scores;
+        const apply = function (item) {
+            if (Number(item.focus_index) === focusIndex) {
+                item.shuffle_robustness = state;
+            }
+        };
+        if (Array.isArray(scores)) scores.forEach(apply);
+        if (data.ablation_results) data.ablation_results.forEach(apply);
+        window.singleAblationResults = data;
+        renderAblationResults(data);
+    }
+
+    setShuffleState({ status: 'running' });
+    showLoading('Re-testing focus with shuffled remaining order…');
+    try {
+        const response = await fetch('/api/ablation-shuffle-robustness', {
+            method: 'POST',
+            headers: getApiHeaders(),
+            body: JSON.stringify(getApiBody({
+                prompt: prompt,
+                foci: fociList,
+                focus_index: focusIndex,
+                baseline_outputs: baselines,
+                n_ablated: cfg.n_ablated,
+                n_permutations: cfg.n_permutations || data.n_permutations || 10000,
+                alpha: cfg.alpha || data.alpha || 0.05,
+                permutation_seed: data.permutation_seed,
+                temperature: cfg.temperature
+            }))
+        });
+        const result = await response.json();
+        if (!response.ok) {
+            throw new Error(result.error || 'Shuffle robustness check failed');
+        }
+        setShuffleState(Object.assign({ status: 'complete' }, result));
+    } catch (err) {
+        setShuffleState({ status: 'failed', error: err.message || String(err) });
+        showError('Shuffle robustness check: ' + (err.message || String(err)));
+        console.error(err);
+    } finally {
+        hideLoading();
+    }
 }
 
 function bindBehavioralDifferenceReviewHandlers(data) {
@@ -3002,21 +3077,39 @@ function bindBehavioralDifferenceReviewHandlers(data) {
 const experimentCResults = document.getElementById('experiment-c-results');
 const refreshExperimentCBtn = document.getElementById('refresh-experiment-c-btn');
 const explainExperimentCBtn = document.getElementById('explain-experiment-c-btn');
+const evalCriteriaInput = document.getElementById('eval-criteria-input');
+const runQualityEvalBtn = document.getElementById('run-quality-eval-btn');
+const qualityEvalResults = document.getElementById('quality-eval-results');
 window.experimentCComparison = null;
 
 function getExperimentAReportedPayload() {
-    const fociList = (assessmentFoci && assessmentFoci.length)
-        ? assessmentFoci
-        : [];
+    const tagged = (foci && foci.length) ? foci : [];
+    const assessed = (assessmentFoci && assessmentFoci.length) ? assessmentFoci : [];
+    const source = tagged.length ? tagged : assessed;
     return {
-        foci: fociList.map(function (f) {
+        foci: source.map(function (f) {
+            const matched = assessed.length ? matchFocus(f, assessed) : null;
+            const score = matched
+                ? (typeof matched.score === 'number' ? matched.score : (matched.reported_focus_score || 0))
+                : (typeof f.score === 'number' ? f.score : (f.reported_focus_score || null));
             return {
                 focus: f.focus,
-                score: typeof f.score === 'number' ? f.score : (f.reported_focus_score || 0),
-                explanation: f.explanation || '',
-                prompt_section: f.prompt_section || ''
+                score: score,
+                explanation: (matched && matched.explanation) || f.explanation || '',
+                prompt_section: f.prompt_section || (matched && matched.prompt_section) || ''
             };
         })
+    };
+}
+
+function buildExperimentCPerturbationPayload(ablation) {
+    if (!ablation) return null;
+    const records = (window.FocalPromptResults && window.FocalPromptResults.collectFocusRecords)
+        ? window.FocalPromptResults.collectFocusRecords(ablation)
+        : (ablation.influence_scores || ablation.ablation_results || []);
+    return {
+        influence_scores: ablation.influence_scores || records,
+        ablation_results: ablation.ablation_results || []
     };
 }
 
@@ -3024,12 +3117,19 @@ async function refreshExperimentCComparison() {
     if (!experimentCResults) return;
     const reported = getExperimentAReportedPayload();
     const ablation = window.singleAblationResults;
+    const perturbation = buildExperimentCPerturbationPayload(ablation);
     const explainBtn = explainExperimentCBtn;
+    const hasTagged = (foci && foci.length) || reported.foci.length;
+    const hasB = perturbation && (
+        (perturbation.influence_scores && perturbation.influence_scores.length) ||
+        (perturbation.ablation_results && perturbation.ablation_results.length)
+    );
 
-    if (!reported.foci.length || !ablation || !(ablation.influence_scores || ablation.ablation_results)) {
+    if (!hasTagged || !hasB) {
         experimentCResults.innerHTML =
-            '<p class="empty-state">Run <strong>Assess Focus Distribution</strong> (Experiment A) and ' +
-            '<strong>Ablation Analysis</strong> (Experiment B) to compare reported focus with perturbation sensitivity.</p>';
+            '<p class="empty-state">Tag foci, run <strong>Assess Focus Distribution</strong> (Experiment A) and ' +
+            '<strong>Ablation Analysis</strong> (Experiment B). Experiment C compares each tagged focus: ' +
+            'A assigned level vs B measured signal strength and significance.</p>';
         if (explainBtn) explainBtn.disabled = true;
         window.experimentCComparison = null;
         return;
@@ -3041,8 +3141,9 @@ async function refreshExperimentCComparison() {
             headers: getApiHeaders(),
             body: JSON.stringify(getApiBody({
                 reported: reported,
-                perturbation: ablation,
-                influence_scores: ablation.influence_scores
+                perturbation: perturbation,
+                tagged_foci: foci || [],
+                influence_scores: perturbation.influence_scores
             }))
         });
         const data = await response.json();
@@ -3077,58 +3178,114 @@ function renderExperimentCComparison(data) {
         : Number(rho).toFixed(2);
 
     let html = '<div class="experiment-c-summary">';
-    html += '<p><strong>Concordance summary</strong></p>';
-    html += '<p>Compared ' + (summary.n_foci_compared || rows.length) + ' foci. ';
-    html += 'Agree (high): ' + (summary.n_concordant_high || 0) + '. ';
+    html += '<p><strong>Experiment C — per-focus comparison</strong></p>';
+    html += '<p>Compared ' + (summary.n_foci_compared || rows.length) + ' foci';
+    if (summary.n_tagged_foci) {
+        html += ' (' + summary.n_tagged_foci + ' tagged)';
+    }
+    html += '. Agree (high): ' + (summary.n_concordant_high || 0) + '. ';
     html += 'Agree (quiet): ' + (summary.n_concordant_quiet || 0) + '. ';
     html += 'Disagreements: ' + (summary.n_disagreements || 0);
     if (summary.disagreement_foci && summary.disagreement_foci.length) {
         html += ' (' + summary.disagreement_foci.map(escapeHtml).join(', ') + ')';
     }
+    if (summary.n_incomplete) {
+        html += '. Incomplete: ' + summary.n_incomplete;
+    }
     html += '.</p>';
-    html += '<p>Rank correlation (reported score vs normalized T_obs share): ρ = ' +
+    html += '<p>Rank correlation (A reported score vs B normalized T<sub>obs</sub> share): ρ = ' +
         escapeHtml(rhoTxt) + '. ' + escapeHtml(summary.interpretation || '') + '</p>';
-    html += '<p style="font-size:0.9em;color:#64748b;margin:0">High reported focus uses threshold ≥ ' +
+    html += '<p style="font-size:0.9em;color:#64748b;margin:0">High reported (A) uses threshold ≥ ' +
         escapeHtml(String(summary.reported_high_threshold != null ? summary.reported_high_threshold : 15)) +
-        ' points. Significance is Experiment B BH q &lt; α.</p>';
+        ' points. B significance uses BH q &lt; α. Bars show relative level within each experiment.</p>';
     html += '</div>';
 
     html += '<table class="experiment-c-table"><thead><tr>';
-    html += '<th>Focus</th><th>Reported (A)</th><th>Perturbation (B)</th><th>Share %</th><th>Concordance</th>';
+    html += '<th>Focus</th><th>A vs B levels</th>';
+    html += '<th>A score</th><th>B signal</th><th>Ranks (A / B)</th><th>Concordance</th>';
     html += '</tr></thead><tbody>';
 
     const sorted = rows.slice().sort(function (a, b) {
         const sa = Number(a.reported_score);
         const sb = Number(b.reported_score);
         if (Number.isFinite(sb) && Number.isFinite(sa) && sb !== sa) return sb - sa;
+        const na = Number(a.normalized_influence);
+        const nb = Number(b.normalized_influence);
+        if (Number.isFinite(nb) && Number.isFinite(na) && nb !== na) return nb - na;
         return String(a.focus || '').localeCompare(String(b.focus || ''));
     });
 
     sorted.forEach(function (row) {
         const conc = row.concordance || {};
         const key = conc.key || 'incomplete';
+        const faith = row.faithfulness || {};
         const sig = row.is_significant;
+        const scoreNum = Number(row.reported_score);
+        const shareNum = Number(row.normalized_influence);
+        const score = row.reported_score != null && Number.isFinite(scoreNum)
+            ? scoreNum.toFixed(1)
+            : '—';
+        const share = row.normalized_influence != null && Number.isFinite(shareNum)
+            ? shareNum.toFixed(1) + '%'
+            : '—';
+        const tObs = row.t_obs != null ? Number(row.t_obs).toFixed(4) : '—';
+        const effect = row.standardized_effect != null
+            ? Number(row.standardized_effect).toFixed(2)
+            : '—';
         let sigTxt = 'n/a';
         if (sig === true) sigTxt = 'significant (q=' + formatExperimentCQ(row.q_value) + ')';
         else if (sig === false) sigTxt = 'not significant (q=' + formatExperimentCQ(row.q_value) + ')';
-        const share = row.normalized_influence != null
-            ? Number(row.normalized_influence).toFixed(1)
-            : '—';
-        const score = row.reported_score != null ? Number(row.reported_score).toFixed(1) : '—';
+
+        const scoreBarW = Number.isFinite(scoreNum) ? Math.min(100, Math.max(0, scoreNum)) : 0;
+        const shareBarW = Number.isFinite(shareNum) ? Math.min(100, Math.max(0, shareNum)) : 0;
+
         html += '<tr class="experiment-c-row-' + escapeHtml(key) + '">';
-        html += '<td><strong>' + escapeHtml(row.focus || '') + '</strong></td>';
-        html += '<td>' + escapeHtml(score) + '</td>';
-        html += '<td>' + escapeHtml(sigTxt) + '</td>';
-        html += '<td>' + escapeHtml(share) + '</td>';
-        html += '<td>' + escapeHtml(conc.label || key) + '</td>';
+        html += '<td><strong>' + escapeHtml(row.focus || '') + '</strong>';
+        if (row.prompt_section) {
+            html += '<div class="experiment-c-span">' + escapeHtml(
+                row.prompt_section.length > 80
+                    ? row.prompt_section.slice(0, 77) + '...'
+                    : row.prompt_section
+            ) + '</div>';
+        }
+        html += '</td>';
+        html += '<td class="experiment-c-bars-cell">';
+        html += '<div class="experiment-c-bar-row"><span class="experiment-c-bar-label">A</span>';
+        html += '<div class="experiment-c-bar-track"><div class="experiment-c-bar-fill experiment-c-bar-a" style="width:' +
+            scoreBarW + '%"></div></div></div>';
+        html += '<div class="experiment-c-bar-row"><span class="experiment-c-bar-label">B</span>';
+        html += '<div class="experiment-c-bar-track"><div class="experiment-c-bar-fill experiment-c-bar-b" style="width:' +
+            shareBarW + '%"></div></div></div>';
+        html += '</td>';
+        html += '<td>' + escapeHtml(score);
+        if (!row.has_experiment_a) {
+            html += '<div class="experiment-c-missing">No A score</div>';
+        }
+        html += '</td>';
+        html += '<td><div>' + escapeHtml(sigTxt) + '</div>';
+        html += '<div class="experiment-c-metrics">T<sub>obs</sub>=' + escapeHtml(tObs) +
+            ', share=' + escapeHtml(share) + ', z=' + escapeHtml(effect) + '</div>';
+        if (!row.has_experiment_b) {
+            html += '<div class="experiment-c-missing">No B result</div>';
+        }
+        html += '</td>';
+        html += '<td>' + escapeHtml(
+            (row.reported_rank != null ? row.reported_rank : '—') + ' / ' +
+            (row.revealed_rank != null ? row.revealed_rank : '—')
+        );
+        if (row.rank_delta != null) {
+            html += '<div class="experiment-c-metrics">Δrank=' + escapeHtml(String(row.rank_delta)) + '</div>';
+        }
+        html += '</td>';
+        html += '<td>' + escapeHtml(conc.label || key);
+        if (faith.primary_label && faith.primary_label !== 'inconclusive') {
+            html += '<div class="experiment-c-metrics">' + escapeHtml(faith.primary_label) + '</div>';
+        }
+        html += '</td>';
         html += '</tr>';
     });
     html += '</tbody></table>';
 
-    const explainBox = document.getElementById('experiment-c-explanation');
-    if (explainBox) {
-        // keep prior explanation if present below
-    }
     experimentCResults.innerHTML = html;
     if (window.experimentCExplanationHtml) {
         experimentCResults.innerHTML += window.experimentCExplanationHtml;
@@ -3232,6 +3389,156 @@ if (explainExperimentCBtn) {
             const n = (window.experimentCComparison && window.experimentCComparison.summary
                 && window.experimentCComparison.summary.n_disagreements) || 0;
             explainExperimentCBtn.disabled = n === 0;
+        }
+    });
+}
+
+function collectOutputsForQualityEval() {
+    const outputs = [];
+    const seen = new Set();
+    function add(label, text) {
+        const t = (text || '').trim();
+        if (!t) return;
+        const dedupeKey = label + '::' + t.length + '::' + t.slice(0, 120);
+        if (seen.has(dedupeKey)) return;
+        seen.add(dedupeKey);
+        outputs.push({ label: label, text: t });
+    }
+
+    if (outputInput && outputInput.value) {
+        add('Current output', outputInput.value);
+    }
+    if (adjustedOutput && adjustedOutput.textContent) {
+        add('Output from rewritten prompt', adjustedOutput.textContent);
+    }
+
+    const ab = window.singleAblationResults;
+    if (ab) {
+        const baselines = (ab.baseline_outputs && ab.baseline_outputs.length)
+            ? ab.baseline_outputs
+            : (ab.baseline_output ? [ab.baseline_output] : []);
+        baselines.forEach(function (t, i) {
+            add('Baseline sample ' + (i + 1), t);
+        });
+        const records = (window.FocalPromptResults && window.FocalPromptResults.collectFocusRecords)
+            ? window.FocalPromptResults.collectFocusRecords(ab)
+            : (ab.ablation_results || []);
+        records.forEach(function (rec) {
+            const name = rec.focus || rec.focus_name || 'Focus';
+            const ablated = rec.ablated_outputs || (rec.ablated_output ? [rec.ablated_output] : []);
+            ablated.forEach(function (t, i) {
+                add('Ablated: ' + name + ' (sample ' + (i + 1) + ')', t);
+            });
+        });
+    }
+    return outputs.slice(0, 12);
+}
+
+function renderQualityEvalResults(data) {
+    if (!qualityEvalResults) return;
+    const evals = data.evaluations || [];
+    if (!evals.length) {
+        qualityEvalResults.innerHTML = '<p class="empty-state">No evaluations returned.</p>';
+        return;
+    }
+
+    let html = '';
+    if (data.cost_breakdown && data.cost_breakdown.total_cost != null) {
+        html += '<p class="info-text">Evaluation cost: $' +
+            Number(data.cost_breakdown.total_cost).toFixed(4) + '</p>';
+    }
+
+    evals.forEach(function (row) {
+        const score = row.overall_score;
+        const scoreTxt = (score == null || Number.isNaN(Number(score)))
+            ? 'n/a'
+            : Number(score).toFixed(0) + '/100';
+        html += '<div class="quality-eval-card">';
+        html += '<h4><span>' + escapeHtml(row.label || 'Output') + '</span>';
+        html += '<span class="quality-eval-score">' + escapeHtml(scoreTxt) + '</span></h4>';
+        if (row.summary) {
+            html += '<p>' + escapeHtml(row.summary) + '</p>';
+        }
+        if (row.meets_primary_criterion != null) {
+            html += '<p style="font-size:0.9em;margin:4px 0"><strong>Meets primary criterion:</strong> ' +
+                (row.meets_primary_criterion ? 'Yes' : 'No') + '</p>';
+        }
+        const breakdown = row.criterion_breakdown || [];
+        if (breakdown.length) {
+            html += '<ul style="margin:8px 0 0 18px;font-size:0.92em">';
+            breakdown.forEach(function (c) {
+                html += '<li><strong>' + escapeHtml(c.name || 'Criterion') + '</strong>: ' +
+                    escapeHtml(String(c.score != null ? c.score : '')) + '/5' +
+                    (c.met === true ? ' ✓' : (c.met === false ? ' ✗' : '')) +
+                    (c.notes ? ' — ' + escapeHtml(c.notes) : '') + '</li>';
+            });
+            html += '</ul>';
+        }
+        if (row.strengths && row.strengths.length) {
+            html += '<p style="font-size:0.9em;margin-top:8px"><strong>Strengths:</strong> ' +
+                escapeHtml(row.strengths.join('; ')) + '</p>';
+        }
+        if (row.weaknesses && row.weaknesses.length) {
+            html += '<p style="font-size:0.9em"><strong>Weaknesses:</strong> ' +
+                escapeHtml(row.weaknesses.join('; ')) + '</p>';
+        }
+        html += '</div>';
+    });
+
+    if (data.comparative_notes) {
+        html += '<div class="quality-eval-comparative"><strong>Comparative notes</strong><p>' +
+            escapeHtml(data.comparative_notes) + '</p></div>';
+    }
+
+    html += '<p style="font-size:0.85em;color:#64748b;margin-top:12px">' +
+        'Task quality evaluation — not behavioral difference or reported focus.</p>';
+    qualityEvalResults.innerHTML = html;
+    window.lastQualityEvalResults = data;
+}
+
+if (runQualityEvalBtn) {
+    runQualityEvalBtn.addEventListener('click', async function () {
+        const criteria = evalCriteriaInput ? evalCriteriaInput.value.trim() : '';
+        if (!criteria) {
+            showErrorModal('Enter evaluation criteria describing what a good output should do.');
+            return;
+        }
+        const outputs = collectOutputsForQualityEval();
+        if (!outputs.length) {
+            showErrorModal(
+                'No outputs to evaluate. Generate an output (section 3) and/or run ablation (Experiment B).'
+            );
+            return;
+        }
+
+        showLoading('Evaluating ' + outputs.length + ' output(s) against your criteria…');
+        runQualityEvalBtn.disabled = true;
+        try {
+            const response = await fetch('/api/evaluate-outputs-quality', {
+                method: 'POST',
+                headers: getApiHeaders(),
+                body: JSON.stringify(getApiBody({
+                    eval_criteria: criteria,
+                    outputs: outputs,
+                    prompt: promptInput ? promptInput.value : '',
+                    task_context: '',
+                    temperature: 0.2
+                }))
+            });
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.error || 'Evaluation failed');
+            }
+            renderQualityEvalResults(data);
+            if (qualityEvalResults && qualityEvalResults.scrollIntoView) {
+                qualityEvalResults.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }
+        } catch (err) {
+            showError('Error running quality evaluation: ' + err.message);
+            console.error(err);
+        } finally {
+            hideLoading();
+            runQualityEvalBtn.disabled = false;
         }
     });
 }

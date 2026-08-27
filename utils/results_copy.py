@@ -104,6 +104,17 @@ LENS_LLM_TITLE = "LLM behavioral difference"
 LENS_HUMAN_TITLE = "Human-observed difference"
 REVIEW_BEHAVIORAL_DIFFERENCE = "Review behavioral difference"
 
+SHUFFLE_ROBUSTNESS_TITLE = "Shuffle-order robustness check"
+SHUFFLE_ROBUSTNESS_EXPLAINER = (
+    "Re-run ablation for this focus only, reassembling the remaining focus spans "
+    "in a shuffled order. Tests whether significance survives a different structural "
+    "hierarchy. Reuses your original baseline samples; p-value is uncorrected."
+)
+SHUFFLE_ROBUSTNESS_BUTTON = "Re-test with shuffled remaining order"
+SHUFFLE_ROBUSTNESS_ORDER_UNCHANGED = (
+    "Only one remaining focus — order unchanged (same as subtractive content)."
+)
+
 COPY = {
     'DEFINITION': DEFINITION,
     'MULTI_LENS_EXPLAINER': MULTI_LENS_EXPLAINER,
@@ -111,6 +122,10 @@ COPY = {
     'LENS_LLM_TITLE': LENS_LLM_TITLE,
     'LENS_HUMAN_TITLE': LENS_HUMAN_TITLE,
     'REVIEW_BEHAVIORAL_DIFFERENCE': REVIEW_BEHAVIORAL_DIFFERENCE,
+    'SHUFFLE_ROBUSTNESS_TITLE': SHUFFLE_ROBUSTNESS_TITLE,
+    'SHUFFLE_ROBUSTNESS_EXPLAINER': SHUFFLE_ROBUSTNESS_EXPLAINER,
+    'SHUFFLE_ROBUSTNESS_BUTTON': SHUFFLE_ROBUSTNESS_BUTTON,
+    'SHUFFLE_ROBUSTNESS_ORDER_UNCHANGED': SHUFFLE_ROBUSTNESS_ORDER_UNCHANGED,
     'VERDICT_SIGNIFICANT': VERDICT_SIGNIFICANT,
     'VERDICT_NOT_SIGNIFICANT': VERDICT_NOT_SIGNIFICANT,
     'NON_SIGNIFICANT_CAUTION': NON_SIGNIFICANT_CAUTION,

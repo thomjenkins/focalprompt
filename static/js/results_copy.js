@@ -247,6 +247,57 @@
         return 'Strong';
     }
 
+    function renderShuffleRobustness(focus) {
+        var C = getCopy();
+        var idx = focus.focus_index;
+        if (idx === undefined || idx === null) return '';
+        var sr = focus.shuffle_robustness;
+        var html = (
+            '<div class="shuffle-robustness" data-focus-index="' + escapeHtml(String(idx)) + '">' +
+            '<p class="shuffle-robustness-title"><strong>' +
+            escapeHtml(C.SHUFFLE_ROBUSTNESS_TITLE || 'Shuffle-order robustness') + '</strong></p>' +
+            '<p class="shuffle-robustness-explainer">' +
+            escapeHtml(C.SHUFFLE_ROBUSTNESS_EXPLAINER || '') + '</p>'
+        );
+        if (sr && sr.status === 'running') {
+            html += '<p class="shuffle-robustness-status">Running shuffle re-test…</p>';
+        } else if (sr && sr.status === 'failed') {
+            html += '<p class="shuffle-robustness-error">' + escapeHtml(sr.error || 'Failed') + '</p>';
+        } else if (sr && sr.t_obs != null) {
+            var sigOrig = focus.is_significant === true ? 'significant' : (
+                focus.is_significant === false ? 'not significant' : 'n/a'
+            );
+            var sigShuf = sr.is_significant_uncorrected ? 'significant (uncorrected)' : 'not significant (uncorrected)';
+            var robust = (focus.is_significant === sr.is_significant_uncorrected);
+            html += '<div class="shuffle-robustness-compare">';
+            html += '<p><strong>Original (subtractive):</strong> ' + escapeHtml(sigOrig) +
+                ' (q=' + formatQValue(focus.q_value) + ', T<sub>obs</sub>=' + formatP(focus.t_obs) + ')</p>';
+            html += '<p><strong>Shuffled remaining order:</strong> ' + escapeHtml(sigShuf) +
+                ' (p=' + formatP(sr.p_value) + ', T<sub>obs</sub>=' + formatP(sr.t_obs) + ')</p>';
+            html += '<p class="shuffle-robustness-verdict' + (robust ? ' robust-yes' : ' robust-no') + '">' +
+                (robust
+                    ? 'Significance verdict matches under shuffled hierarchy.'
+                    : 'Significance verdict differs under shuffled hierarchy — review both runs.') +
+                '</p>';
+            if (sr.remaining_foci_shuffled_order && sr.remaining_foci_shuffled_order.length) {
+                html += '<p class="shuffle-robustness-order"><em>Remaining order used:</em> ' +
+                    escapeHtml(sr.remaining_foci_shuffled_order.join(' → ')) + '</p>';
+            }
+            if (sr.order_changed === false) {
+                html += '<p class="shuffle-robustness-note">' +
+                    escapeHtml(C.SHUFFLE_ROBUSTNESS_ORDER_UNCHANGED || '') + '</p>';
+            }
+            html += '</div>';
+        }
+        html += (
+            '<button type="button" class="btn btn-outline btn-shuffle-robustness" ' +
+            'data-focus-index="' + escapeHtml(String(idx)) + '">' +
+            escapeHtml(C.SHUFFLE_ROBUSTNESS_BUTTON || 'Re-test with shuffled order') +
+            '</button></div>'
+        );
+        return html;
+    }
+
     function renderEvidenceLenses(focus) {
         var C = getCopy();
         var sem = focus.semantic_perturbation || {};
@@ -361,6 +412,7 @@
 
         if (!excluded) {
             body.push(renderEvidenceLenses(focus));
+            body.push(renderShuffleRobustness(focus));
         }
 
         return '<article class="' + classes.join(' ') + '">' + body.join('') + '</article>';

@@ -166,6 +166,9 @@ def compare_reported_vs_revealed_route():
         perturbation['influence_scores'] = data.get('influence_scores')
     if not reported.get('foci'):
         return jsonify({'error': 'reported.foci (Experiment A) is required'}), 400
+    if not perturbation.get('influence_scores') and perturbation.get('ablation_results'):
+        perturbation = dict(perturbation)
+        perturbation['influence_scores'] = perturbation['ablation_results']
     if not perturbation.get('influence_scores'):
         return jsonify({'error': 'perturbation.influence_scores (Experiment B) is required'}), 400
     threshold = data.get('reported_high_threshold', 15.0)
@@ -173,10 +176,12 @@ def compare_reported_vs_revealed_route():
         threshold = float(threshold)
     except (TypeError, ValueError):
         threshold = 15.0
+    tagged = data.get('tagged_foci') or []
     return jsonify(
         compare_reported_vs_revealed(
             reported,
             perturbation,
+            tagged_foci=tagged or None,
             reported_high_threshold=threshold,
         )
     )
@@ -196,10 +201,19 @@ def explain_reported_vs_revealed_route():
             perturbation = dict(perturbation)
             perturbation['influence_scores'] = data.get('influence_scores')
         if not reported.get('foci') or not perturbation.get('influence_scores'):
+            if not perturbation.get('influence_scores') and perturbation.get('ablation_results'):
+                perturbation = dict(perturbation)
+                perturbation['influence_scores'] = perturbation['ablation_results']
+        if not reported.get('foci') or not perturbation.get('influence_scores'):
             return jsonify({
                 'error': 'Provide comparison, or reported.foci + perturbation.influence_scores',
             }), 400
-        comparison = compare_reported_vs_revealed(reported, perturbation)
+        tagged = data.get('tagged_foci') or []
+        comparison = compare_reported_vs_revealed(
+            reported,
+            perturbation,
+            tagged_foci=tagged or None,
+        )
 
     fields = request_inference_fields(data)
     assessor = get_assessor(data=fields)

@@ -103,6 +103,12 @@ except Exception as e:
     print(f"Error registering agent_bp: {e}", file=sys.stderr)
 
 try:
+    from routes.evaluation_routes import evaluation_bp
+    app.register_blueprint(evaluation_bp)
+except Exception as e:
+    print(f"Error registering evaluation_bp: {e}", file=sys.stderr)
+
+try:
     from routes.optimization_routes import optimization_bp
     app.register_blueprint(optimization_bp)
 except Exception as e:

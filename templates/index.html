@@ -444,14 +444,49 @@
                 </div>
                 <div class="card-body">
                     <p class="info-text">
-                        After you run <strong>Experiment A</strong> (Assess Focus Distribution) and
-                        <strong>Experiment B</strong> (Ablation), this view asks whether the foci with
-                        the strongest detected perturbation are also those with the highest reported
-                        focus — and where they disagree. Disagreement is informative; neither lens
-                        is ground truth.
+                        For <strong>each tagged focus</strong>, compare Experiment A’s assigned focus level
+                        (model self-assessment of the completion) with Experiment B’s measured signal
+                        strength (<em>T</em><sub>obs</sub>, normalized share, standardized effect, BH
+                        q-value). Highlights where reported and revealed sensitivity agree or disagree.
+                        Neither lens is ground truth.
                     </p>
                     <div id="experiment-c-results" class="experiment-c-results">
-                        <p class="empty-state">Run Assess Focus Distribution and Ablation Analysis to compare reported focus with perturbation sensitivity.</p>
+                        <p class="empty-state">Tag foci, run Assess Focus Distribution and Ablation Analysis to compare A vs B per focus.</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Task quality evaluation (LLM judge) -->
+            <section class="card" id="quality-eval-section">
+                <div class="card-header">
+                    <h2>8. Task quality evaluation (LLM)</h2>
+                    <div class="button-group">
+                        <button id="run-quality-eval-btn" class="btn btn-primary" type="button">
+                            🎯 Evaluate outputs on criteria
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <p class="info-text">
+                        Score how well each output meets your task criteria (quality / instruction-following).
+                        This is separate from <strong>behavioral difference</strong> (baseline vs ablated change)
+                        and from <strong>reported focus</strong> (Experiment A).
+                    </p>
+                    <label for="eval-criteria-input" style="display:block;font-weight:600;margin-bottom:6px;">
+                        Evaluation criteria
+                    </label>
+                    <textarea
+                        id="eval-criteria-input"
+                        class="textarea-large"
+                        rows="4"
+                        placeholder="Describe what a good output must do (e.g. answer the client question, follow JSON schema, include clinic hours, professional tone, schedule next steps)..."
+                    ></textarea>
+                    <p class="info-text" style="margin-top: 10px;">
+                        Outputs evaluated: current output (section 3), output from rewritten prompt (if any),
+                        and ablation baseline/ablated samples (if Experiment B was run). Max 12 outputs per run.
+                    </p>
+                    <div id="quality-eval-results" class="quality-eval-results">
+                        <p class="empty-state">Enter criteria above, then click Evaluate.</p>
                     </div>
                 </div>
             </section>

@@ -8,10 +8,11 @@ Significance: permutation test of centroid cosine distance.
 
 import numpy as np
 import time
+import random
 from typing import List, Dict, Optional
 from services.embedding_service import EmbeddingService
 from services.cost_calculator import CostCalculator
-from utils.span_alignment import classify_foci_for_ablation, delete_span
+from utils.span_alignment import classify_foci_for_ablation, delete_span, build_shuffled_remaining_prompt
 from utils.gateway_chat import chat_completion as gateway_chat_completion
 from utils.permutation_test import (
     DEFAULT_ALPHA,
@@ -87,6 +88,8 @@ class AblationService:
         kind: str,
         temperature: float,
         focus_index: Optional[int] = None,
+        shuffle_remaining: bool = False,
+        shuffle_seed: Optional[int] = None,
     ) -> Dict:
         """One model completion for client-paced ablation (survives gateway RPM limits)."""
         require_stochastic_temperature(temperature)
@@ -106,15 +109,144 @@ class AblationService:
             raise ValueError(
                 f"Focus '{focus.get('focus')}' cannot be ablated ({focus.get('reason')})"
             )
-        ablated_prompt, prompt_empty, _collapsed = delete_span(
-            prompt, focus['char_start'], focus['char_end']
-        )
+        if shuffle_remaining:
+            seed = shuffle_seed if shuffle_seed is not None else random.randint(0, 2**31 - 1)
+            ablated_prompt, prompt_empty, doc_order, shuffled_order = build_shuffled_remaining_prompt(
+                prompt,
+                classified,
+                idx,
+                shuffle_seed=seed,
+            )
+            shuffle_meta = {
+                'ablation_mode': 'shuffled_remaining',
+                'shuffle_seed': seed,
+                'remaining_foci_document_order': doc_order,
+                'remaining_foci_shuffled_order': shuffled_order,
+            }
+        else:
+            ablated_prompt, prompt_empty, _collapsed = delete_span(
+                prompt, focus['char_start'], focus['char_end']
+            )
+            shuffle_meta = {'ablation_mode': 'subtractive'}
         result = dict(self._complete(ablated_prompt, temperature))
         result['ablated_prompt'] = ablated_prompt
         result['prompt_empty'] = prompt_empty
         result['focus'] = focus.get('focus')
         result['focus_index'] = idx
+        result.update(shuffle_meta)
         return result
+
+    def run_shuffle_robustness(
+        self,
+        prompt: str,
+        foci_list: List[Dict],
+        focus_index: int,
+        baseline_outputs: List[str],
+        *,
+        n_ablated: int = 5,
+        shuffle_seed: Optional[int] = None,
+        n_permutations: int = DEFAULT_N_PERMUTATIONS,
+        alpha: float = DEFAULT_ALPHA,
+        permutation_seed: Optional[int] = None,
+        temperature: float = 0.7,
+    ) -> Dict:
+        """
+        Re-test one focus after shuffling the order of remaining focus spans.
+
+        Reuses the original baseline samples. Reports an uncorrected p-value —
+        a sensitivity check, not part of the main BH family across foci.
+        """
+        require_stochastic_temperature(temperature)
+        baseline_outputs = [
+            str(t) for t in (baseline_outputs or []) if t is not None and str(t).strip()
+        ]
+        if len(baseline_outputs) < 1:
+            raise ValueError('baseline_outputs must contain at least one sample')
+
+        classified = classify_foci_for_ablation(prompt, foci_list)
+        idx = int(focus_index)
+        if idx < 0 or idx >= len(classified):
+            raise ValueError('focus_index out of range')
+        focus = classified[idx]
+        if not focus.get('attributable'):
+            raise ValueError(
+                f"Focus '{focus.get('focus')}' cannot be ablated ({focus.get('reason')})"
+            )
+
+        seed = shuffle_seed if shuffle_seed is not None else random.randint(0, 2**31 - 1)
+        ablated_prompt, prompt_empty, doc_order, shuffled_order = build_shuffled_remaining_prompt(
+            prompt,
+            classified,
+            idx,
+            shuffle_seed=seed,
+        )
+
+        n_ablated = int(n_ablated)
+        if n_ablated < 1:
+            raise ValueError('n_ablated must be at least 1')
+
+        texts, input_tokens, output_tokens = self._sample_outputs(
+            ablated_prompt, n_ablated, temperature
+        )
+
+        baseline_embeddings, emb_in = self.embedding_service.batch_embeddings_with_usage(
+            baseline_outputs
+        )
+        ablated_embeddings, emb_out = self.embedding_service.batch_embeddings_with_usage(texts)
+        total_embedding_tokens = emb_in + emb_out
+        baseline_embeddings = np.asarray(baseline_embeddings, dtype=float)
+        ablated_embeddings = np.asarray(ablated_embeddings, dtype=float)
+
+        rng = np.random.default_rng(permutation_seed)
+        perm = permutation_test(
+            baseline_embeddings,
+            ablated_embeddings,
+            n_permutations=n_permutations,
+            rng=rng,
+        )
+        p_value = float(perm['p_value'])
+        cost_breakdown = self.cost_calculator.calculate_cost(
+            int(input_tokens),
+            int(output_tokens),
+            int(total_embedding_tokens),
+            self.model,
+            self.provider_name,
+        )
+
+        order_changed = doc_order != shuffled_order
+        return {
+            'ablation_mode': 'shuffled_remaining',
+            'focus': focus.get('focus'),
+            'focus_index': idx,
+            'shuffle_seed': seed,
+            'remaining_foci_document_order': doc_order,
+            'remaining_foci_shuffled_order': shuffled_order,
+            'order_changed': order_changed,
+            'ablated_prompt': ablated_prompt,
+            'prompt_empty': prompt_empty,
+            'ablated_outputs': texts,
+            'n_ablated': n_ablated,
+            'n_baseline': len(baseline_outputs),
+            't_obs': float(perm['t_obs']),
+            'p_value': p_value,
+            'is_significant_uncorrected': p_value < float(alpha),
+            'q_value': None,
+            'alpha': float(alpha),
+            'standardized_effect': perm['standardized_effect'],
+            'null_mean': perm['null_mean'],
+            'null_p95': perm['null_p95'],
+            'null_deciles': perm['null_deciles'],
+            'n_permutations': perm['n_permutations'],
+            'exact': perm['exact'],
+            'test_type': design_test_type(len(baseline_outputs), n_ablated, n_permutations),
+            'cost_breakdown': cost_breakdown,
+            'note': (
+                'Sensitivity check: remaining focus spans were reordered before sampling. '
+                'p-value is uncorrected (not part of the main BH correction across foci). '
+                'Glue text between spans is omitted in shuffle mode — only verified focus '
+                'sections are reassembled.'
+            ),
+        }
 
     def score_from_samples(
         self,
@@ -221,6 +353,7 @@ class AblationService:
             influence_scores.append({
                 'focus': ablation['focus'],
                 'focus_name': ablation['focus'],
+                'focus_index': ablation.get('focus_index'),
                 'prompt_section': ablation['prompt_section'],
                 'verified': True,
                 'attributable': True,

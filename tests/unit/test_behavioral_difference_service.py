@@ -20,6 +20,7 @@ from services.behavioral_difference_service import (
     compare_reported_vs_revealed,
     enrich_influence_item_for_review,
     estimate_judge_cost_units,
+    match_focus_record,
     multi_lens_faithfulness_label,
     parse_difference_judgment,
     recommend_behavioral_review,
@@ -449,3 +450,65 @@ def test_compare_reported_vs_revealed_summary_and_ranks():
     assert cmp['summary']['n_disagreements'] == 2
     assert set(cmp['summary']['disagreement_foci']) == {'OverReport', 'UnderReport'}
     assert cmp['summary']['spearman_reported_vs_normalized_influence'] is not None
+
+
+def test_match_focus_record_by_section_when_names_differ():
+    tagged = {'focus': 'Role', 'prompt_section': 'You are a veterinary triage assistant.'}
+    candidates = [
+        {
+            'focus': 'System role',
+            'prompt_section': 'You are a veterinary triage assistant.',
+            'score': 22,
+        }
+    ]
+    matched = match_focus_record(tagged, candidates)
+    assert matched is not None
+    assert matched['score'] == 22
+
+
+def test_experiment_c_uses_tagged_foci_order_and_includes_all():
+    tagged = [
+        {'focus': 'Role', 'prompt_section': 'You are helpful.'},
+        {'focus': 'Safety', 'prompt_section': 'Never diagnose.'},
+        {'focus': 'Format', 'prompt_section': 'Reply in JSON.'},
+    ]
+    reported = {
+        'foci': [
+            {'focus': 'Role', 'score': 30},
+            {'focus': 'Safety', 'score': 5},
+        ]
+    }
+    perturbation = {
+        'influence_scores': [
+            {
+                'focus': 'Role',
+                'normalized_influence': 50,
+                'is_significant': True,
+                'q_value': 0.01,
+                't_obs': 0.2,
+            },
+            {
+                'focus': 'Format',
+                'normalized_influence': 35,
+                'is_significant': True,
+                'q_value': 0.02,
+                't_obs': 0.15,
+            },
+        ]
+    }
+    cmp = compare_reported_vs_revealed(
+        reported,
+        perturbation,
+        tagged_foci=tagged,
+    )
+    assert [r['focus'] for r in cmp['rows'][:3]] == ['Role', 'Safety', 'Format']
+    by = {r['focus']: r for r in cmp['rows']}
+    assert by['Role']['reported_rank'] == 1
+    assert by['Role']['revealed_rank'] == 1
+    assert by['Safety']['concordance']['key'] == 'incomplete'
+    assert by['Safety']['has_experiment_a'] is True
+    assert by['Safety']['has_experiment_b'] is False
+    assert by['Format']['concordance']['key'] == 'incomplete'
+    assert by['Format']['has_experiment_a'] is False
+    assert by['Format']['has_experiment_b'] is True
+    assert cmp['summary']['n_tagged_foci'] == 3

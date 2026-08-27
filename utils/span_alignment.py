@@ -9,7 +9,7 @@ must recover the experimental span before a focus is verified.
 from __future__ import annotations
 
 import re
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
 # Fold curly / typographic quotes to ASCII so a straight-quote quote can match.
 _QUOTE_FOLD = {
@@ -603,6 +603,55 @@ def delete_span(prompt: str, start: int, end: int) -> Tuple[str, bool, bool]:
     right = prompt[end:]
     ablated, collapsed = collapse_deletion_boundary(left, right)
     return ablated, (not ablated.strip()), collapsed
+
+
+def build_shuffled_remaining_prompt(
+    prompt: str,
+    classified: Sequence[Mapping[str, Any]],
+    removed_index: int,
+    *,
+    shuffle_seed: Optional[int] = None,
+    separator: str = '\n\n',
+) -> Tuple[str, bool, List[str], List[str]]:
+    """
+    Remove one focus and reassemble the remaining attributable spans in shuffled order.
+
+    Tests whether ablation significance is robust to structural hierarchy (section
+    ordering) rather than only to strict subtractive deletion in document order.
+
+    Returns (ablated_prompt, prompt_empty, document_order_names, shuffled_order_names).
+    """
+    import random
+
+    if removed_index < 0 or removed_index >= len(classified):
+        raise ValueError('removed_index out of range')
+    removed = classified[removed_index]
+    if not removed.get('attributable'):
+        raise ValueError(
+            f"Focus '{removed.get('focus')}' cannot be ablated ({removed.get('reason')})"
+        )
+
+    remaining: List[Tuple[str, str]] = []
+    for i, focus in enumerate(classified):
+        if i == removed_index or not focus.get('attributable'):
+            continue
+        start = int(focus['char_start'])
+        end = int(focus['char_end'])
+        text = prompt[start:end].strip()
+        name = (focus.get('focus') or focus.get('focus_name') or f'Focus {i + 1}').strip()
+        if text:
+            remaining.append((name, text))
+
+    document_order = [name for name, _ in remaining]
+    if len(remaining) <= 1:
+        shuffled_pairs = list(remaining)
+    else:
+        shuffled_pairs = list(remaining)
+        rng = random.Random(shuffle_seed)
+        rng.shuffle(shuffled_pairs)
+    shuffled_order = [name for name, _ in shuffled_pairs]
+    ablated = separator.join(text for _, text in shuffled_pairs).strip()
+    return ablated, (not ablated), document_order, shuffled_order
 
 
 def classify_foci_for_ablation(prompt: str, foci: List[Dict]) -> List[Dict]:

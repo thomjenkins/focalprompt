@@ -124,6 +124,20 @@ def build_app():
 
         _ensure_batch_bp_registered()
 
+        def _ensure_evaluation_bp_registered():
+            eval_routes = [r for r in flask_app.url_map.iter_rules() if 'evaluate-outputs-quality' in str(r)]
+            if len(eval_routes) == 0:
+                try:
+                    print("🔄 FORCE REGISTERING evaluation_bp...", file=sys.stderr)
+                    import routes.evaluation_routes
+                    flask_app.register_blueprint(routes.evaluation_routes.evaluation_bp)
+                    print("✅ evaluation_bp force-registered successfully", file=sys.stderr)
+                except Exception as e:
+                    print(f"❌ Failed to force-register evaluation_bp: {type(e).__name__}: {e}", file=sys.stderr)
+                    traceback.print_exc(file=sys.stderr)
+
+        _ensure_evaluation_bp_registered()
+
         from flask import jsonify as flask_jsonify
 
         @flask_app.route('/api/diagnostic', methods=['GET'])

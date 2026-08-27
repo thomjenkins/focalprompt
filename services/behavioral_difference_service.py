@@ -801,101 +801,305 @@ def _spearman_rho(xs: Sequence[float], ys: Sequence[float]) -> Optional[float]:
     return num / (denx * deny)
 
 
+def _norm_focus_text(text: Any) -> str:
+    return str(text or '').strip().lower()
+
+
+def _focus_identity(item: Mapping[str, Any]) -> str:
+    return (item.get('focus') or item.get('focus_name') or '').strip()
+
+
+def match_focus_record(
+    target: Mapping[str, Any],
+    candidates: Sequence[Mapping[str, Any]],
+) -> Optional[Mapping[str, Any]]:
+    """
+    Match a tagged focus to a reported or perturbation record.
+
+    Mirrors the UI's matchFocus: exact name, prompt_section overlap, fuzzy name.
+    """
+    if not candidates:
+        return None
+    name = _norm_focus_text(target.get('focus'))
+    section = _norm_focus_text(target.get('prompt_section'))
+
+    for candidate in candidates:
+        if name and _norm_focus_text(_focus_identity(candidate)) == name:
+            return candidate
+
+    for candidate in candidates:
+        cand_section = _norm_focus_text(candidate.get('prompt_section'))
+        if section and cand_section and (
+            section in cand_section or cand_section in section
+        ):
+            return candidate
+
+    for candidate in candidates:
+        cand_name = _norm_focus_text(_focus_identity(candidate))
+        if name and cand_name and (name in cand_name or cand_name in name):
+            return candidate
+    return None
+
+
+def _perturbation_score_items(perturbation: Mapping[str, Any]) -> List[Mapping[str, Any]]:
+    scores = perturbation.get('influence_scores') or []
+    if isinstance(scores, dict):
+        scores = list(scores.values())
+    if scores:
+        return list(scores)
+    return list(perturbation.get('ablation_results') or [])
+
+
+def _canonical_tagged_foci(
+    tagged_foci: Optional[Sequence[Mapping[str, Any]]],
+    reported_list: Sequence[Mapping[str, Any]],
+    perturbation_items: Sequence[Mapping[str, Any]],
+) -> List[Dict[str, Any]]:
+    if tagged_foci:
+        return [
+            {
+                'focus': _focus_identity(f) or f'Focus {i + 1}',
+                'prompt_section': f.get('prompt_section') or '',
+            }
+            for i, f in enumerate(tagged_foci)
+            if _focus_identity(f) or f.get('prompt_section')
+        ]
+    if reported_list:
+        return [
+            {
+                'focus': _focus_identity(f),
+                'prompt_section': f.get('prompt_section') or '',
+            }
+            for f in reported_list
+            if _focus_identity(f)
+        ]
+    return [
+        {
+            'focus': _focus_identity(item),
+            'prompt_section': item.get('prompt_section') or '',
+        }
+        for item in perturbation_items
+        if _focus_identity(item)
+    ]
+
+
+def _assign_descending_ranks(
+    rows: List[Dict[str, Any]],
+    value_key: str,
+    rank_key: str,
+) -> None:
+    indexed: List[tuple[int, float]] = []
+    for i, row in enumerate(rows):
+        val = row.get(value_key)
+        if val is None:
+            continue
+        try:
+            indexed.append((i, float(val)))
+        except (TypeError, ValueError):
+            continue
+    indexed.sort(key=lambda pair: pair[1], reverse=True)
+    for rank, (i, _) in enumerate(indexed, start=1):
+        rows[i][rank_key] = rank
+    for row in rows:
+        row.setdefault(rank_key, None)
+
+
+def _build_experiment_c_row(
+    *,
+    tag: Mapping[str, Any],
+    rep: Mapping[str, Any],
+    item: Mapping[str, Any],
+    reported_high_threshold: float,
+) -> Dict[str, Any]:
+    name = _focus_identity(tag) or _focus_identity(rep) or _focus_identity(item)
+    sem = item.get('semantic_perturbation') or {}
+    llm = item.get('llm_behavioral_difference') or {}
+    hum = item.get('human_behavioral_difference') or {}
+
+    semantic_sig = sem.get('is_significant', item.get('is_significant'))
+    llm_material = None
+    if llm.get('status') == 'complete':
+        llm_material = bool(llm.get('material_behavioral_difference'))
+    human_material = None
+    if hum.get('status') == 'complete':
+        hm = hum.get('material_behavioral_difference')
+        human_material = True if hm is True else (False if hm is False else None)
+
+    reported_score = rep.get('score')
+    if reported_score is None:
+        reported_score = rep.get('reported_focus_score')
+    if reported_score is None:
+        reported_score = tag.get('score')
+
+    t_obs = item.get('t_obs', sem.get('t_obs'))
+    normalized_influence = item.get(
+        'normalized_influence', sem.get('normalized_influence')
+    )
+    standardized_effect = item.get(
+        'standardized_effect', sem.get('standardized_effect')
+    )
+    p_value = item.get('p_value', sem.get('p_value'))
+    q_value = item.get('q_value', sem.get('q_value'))
+
+    has_b = bool(item) and (
+        t_obs is not None
+        or normalized_influence is not None
+        or semantic_sig is not None
+    )
+    has_a = reported_score is not None
+
+    concordance = ab_concordance_label(
+        reported_score if has_a else None,
+        semantic_sig if has_b else None,
+        reported_high_threshold=reported_high_threshold,
+    )
+    faithfulness = multi_lens_faithfulness_label(
+        reported_score=reported_score if has_a else None,
+        semantic_significant=semantic_sig if has_b else None,
+        llm_material=llm_material,
+        human_material=human_material,
+        reported_high_threshold=reported_high_threshold,
+    )
+
+    return {
+        'focus': name,
+        'prompt_section': (
+            tag.get('prompt_section')
+            or rep.get('prompt_section')
+            or item.get('prompt_section')
+            or ''
+        ),
+        'reported_score': reported_score if has_a else None,
+        'reported_explanation': rep.get('explanation') or tag.get('explanation'),
+        'has_experiment_a': has_a,
+        'has_experiment_b': has_b,
+        't_obs': t_obs,
+        'influence': item.get('influence', t_obs),
+        'normalized_influence': normalized_influence,
+        'standardized_effect': standardized_effect,
+        'p_value': p_value,
+        'q_value': q_value,
+        'is_significant': semantic_sig if has_b else None,
+        'signal_strength': {
+            't_obs': t_obs,
+            'normalized_influence': normalized_influence,
+            'standardized_effect': standardized_effect,
+            'p_value': p_value,
+            'q_value': q_value,
+            'is_significant': semantic_sig if has_b else None,
+        },
+        'semantic_perturbation': sem or ({
+            't_obs': t_obs,
+            'normalized_influence': normalized_influence,
+            'standardized_effect': standardized_effect,
+            'p_value': p_value,
+            'q_value': q_value,
+            'is_significant': semantic_sig,
+        } if has_b else {}),
+        'llm_behavioral_difference': llm,
+        'human_behavioral_difference': hum,
+        'concordance': concordance,
+        'faithfulness': faithfulness,
+        'note': (
+            'Reported focus is model self-assessment of a completion '
+            '(Experiment A), not transformer attention. Semantic '
+            'perturbation is leave-one-out embedding-space shift '
+            '(Experiment B). Disagreement is informative, not a verdict '
+            'on which lens is “correct.”'
+        ),
+    }
+
+
 def compare_reported_vs_revealed(
     reported: Mapping[str, Any],
     perturbation: Mapping[str, Any],
     *,
+    tagged_foci: Optional[Sequence[Mapping[str, Any]]] = None,
     reported_high_threshold: float = 15.0,
 ) -> Dict[str, Any]:
     """
-    Experiment C: side-by-side reported focus (A) vs perturbation sensitivity (B).
+    Experiment C: for each tagged focus, compare reported focus (A) vs
+    perturbation signal strength / significance (B).
 
     Does not invent ground truth. Disagreement rows are candidates for review /
     LLM explanation.
     """
-    report_by = {
-        (f.get('focus') or '').strip(): f
-        for f in (reported.get('foci') or [])
-    }
-    scores = perturbation.get('influence_scores') or []
-    if isinstance(scores, dict):
-        scores = list(scores.values())
+    reported_list = list(reported.get('foci') or [])
+    perturbation_items = _perturbation_score_items(perturbation)
+    canonical = _canonical_tagged_foci(tagged_foci, reported_list, perturbation_items)
 
     rows: List[Dict[str, Any]] = []
-    for item in scores:
-        name = (item.get('focus') or item.get('focus_name') or '').strip()
+    matched_reported: set[int] = set()
+    matched_perturbation: set[int] = set()
+
+    for tag in canonical:
+        rep = match_focus_record(tag, reported_list)
+        item = match_focus_record(tag, perturbation_items)
+        if rep is not None:
+            for i, candidate in enumerate(reported_list):
+                if candidate is rep:
+                    matched_reported.add(i)
+                    break
+        if item is not None:
+            for i, candidate in enumerate(perturbation_items):
+                if candidate is item:
+                    matched_perturbation.add(i)
+                    break
+        rows.append(
+            _build_experiment_c_row(
+                tag=tag,
+                rep=rep or {},
+                item=item or {},
+                reported_high_threshold=reported_high_threshold,
+            )
+        )
+
+    for i, rep in enumerate(reported_list):
+        if i in matched_reported:
+            continue
+        name = _focus_identity(rep)
         if not name:
             continue
-        rep = report_by.get(name) or {}
-        sem = item.get('semantic_perturbation') or {}
-        llm = item.get('llm_behavioral_difference') or {}
-        hum = item.get('human_behavioral_difference') or {}
-
-        semantic_sig = sem.get('is_significant', item.get('is_significant'))
-        llm_material = None
-        if llm.get('status') == 'complete':
-            llm_material = bool(llm.get('material_behavioral_difference'))
-        human_material = None
-        if hum.get('status') == 'complete':
-            hm = hum.get('material_behavioral_difference')
-            human_material = True if hm is True else (False if hm is False else None)
-
-        reported_score = rep.get('score')
-        if reported_score is None:
-            reported_score = rep.get('reported_focus_score')
-
-        concordance = ab_concordance_label(
-            reported_score,
-            semantic_sig,
-            reported_high_threshold=reported_high_threshold,
+        item = match_focus_record(rep, perturbation_items)
+        if item is not None:
+            for j, candidate in enumerate(perturbation_items):
+                if candidate is item:
+                    matched_perturbation.add(j)
+                    break
+        rows.append(
+            _build_experiment_c_row(
+                tag=rep,
+                rep=rep,
+                item=item or {},
+                reported_high_threshold=reported_high_threshold,
+            )
         )
-        faithfulness = multi_lens_faithfulness_label(
-            reported_score=reported_score,
-            semantic_significant=semantic_sig,
-            llm_material=llm_material,
-            human_material=human_material,
-            reported_high_threshold=reported_high_threshold,
+
+    for i, item in enumerate(perturbation_items):
+        if i in matched_perturbation:
+            continue
+        name = _focus_identity(item)
+        if not name:
+            continue
+        rep = match_focus_record(item, reported_list)
+        rows.append(
+            _build_experiment_c_row(
+                tag=item,
+                rep=rep or {},
+                item=item,
+                reported_high_threshold=reported_high_threshold,
+            )
         )
-        rows.append({
-            'focus': name,
-            'prompt_section': (
-                rep.get('prompt_section')
-                or item.get('prompt_section')
-                or ''
-            ),
-            'reported_score': reported_score,
-            'reported_explanation': rep.get('explanation'),
-            't_obs': item.get('t_obs', sem.get('t_obs')),
-            'influence': item.get('influence'),
-            'normalized_influence': item.get(
-                'normalized_influence', sem.get('normalized_influence')
-            ),
-            'standardized_effect': item.get(
-                'standardized_effect', sem.get('standardized_effect')
-            ),
-            'p_value': item.get('p_value', sem.get('p_value')),
-            'q_value': item.get('q_value', sem.get('q_value')),
-            'is_significant': semantic_sig,
-            'semantic_perturbation': sem or {
-                't_obs': item.get('t_obs'),
-                'normalized_influence': item.get('normalized_influence'),
-                'standardized_effect': item.get('standardized_effect'),
-                'p_value': item.get('p_value'),
-                'q_value': item.get('q_value'),
-                'is_significant': item.get('is_significant'),
-            },
-            'llm_behavioral_difference': llm,
-            'human_behavioral_difference': hum,
-            'concordance': concordance,
-            'faithfulness': faithfulness,
-            'note': (
-                'Reported focus is model self-assessment of a completion '
-                '(Experiment A), not transformer attention. Semantic '
-                'perturbation is leave-one-out embedding-space shift '
-                '(Experiment B). Disagreement is informative, not a verdict '
-                'on which lens is “correct.”'
-            ),
-        })
+
+    _assign_descending_ranks(rows, 'reported_score', 'reported_rank')
+    _assign_descending_ranks(rows, 'normalized_influence', 'revealed_rank')
+    for row in rows:
+        rr = row.get('reported_rank')
+        rv = row.get('revealed_rank')
+        if rr is not None and rv is not None:
+            row['rank_delta'] = abs(int(rr) - int(rv))
+        else:
+            row['rank_delta'] = None
 
     # Rank concordance: reported score vs normalized influence (descriptive).
     paired_r: List[float] = []
@@ -921,14 +1125,20 @@ def compare_reported_vs_revealed(
         1 for r in rows
         if (r.get('concordance') or {}).get('key') == 'concordant_quiet'
     )
+    n_incomplete = sum(
+        1 for r in rows
+        if (r.get('concordance') or {}).get('key') == 'incomplete'
+    )
 
     return {
         'rows': rows,
         'summary': {
             'n_foci_compared': len(rows),
+            'n_tagged_foci': len(canonical),
             'n_concordant_high': n_high_sig,
             'n_concordant_quiet': n_quiet,
             'n_disagreements': len(disagreements),
+            'n_incomplete': n_incomplete,
             'disagreement_foci': [r['focus'] for r in disagreements],
             'spearman_reported_vs_normalized_influence': rho,
             'reported_high_threshold': float(reported_high_threshold),
@@ -943,13 +1153,14 @@ def compare_reported_vs_revealed(
         'framing': {
             'experiment_a': 'model-assessed / reported focus distribution',
             'experiment_b': (
-                'semantic perturbation sensitivity (cheap first pass); optional '
-                'LLM and human behavioral-difference review'
+                'semantic perturbation sensitivity (cheap first pass): T_obs, '
+                'normalized share, standardized effect, BH q-value'
             ),
             'experiment_c': (
-                'comparison of reported focus vs revealed sensitivity: which '
-                'foci agree, which disagree, and (optionally) an LLM hypothesis '
-                'for disagreements'
+                'For each tagged focus: compare Experiment A assigned '
+                'focus level with Experiment B measured signal strength and '
+                'significance — which agree, which disagree, and (optionally) '
+                'an LLM hypothesis for disagreements'
             ),
         },
     }

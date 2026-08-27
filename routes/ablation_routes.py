@@ -181,3 +181,51 @@ def ablation_score():
         return jsonify(result_data)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@ablation_bp.route('/api/ablation-shuffle-robustness', methods=['POST'])
+def ablation_shuffle_robustness():
+    """Re-test one focus with remaining spans in shuffled order (sensitivity check)."""
+    try:
+        data = request.json or {}
+        prompt = data.get('prompt', '')
+        foci_list = data.get('foci', [])
+        focus_index = data.get('focus_index')
+        baseline_outputs = data.get('baseline_outputs') or []
+        n_ablated = data.get('n_ablated', 5)
+        shuffle_seed = data.get('shuffle_seed')
+        n_permutations = data.get('n_permutations', 10000)
+        alpha = data.get('alpha', 0.05)
+        permutation_seed = data.get('permutation_seed')
+        temperature = data.get('temperature', 0.7)
+
+        if not prompt:
+            return jsonify({'error': 'Prompt is required'}), 400
+        if not foci_list:
+            return jsonify({'error': 'Foci are required'}), 400
+        if focus_index is None:
+            return jsonify({'error': 'focus_index is required'}), 400
+        if not baseline_outputs:
+            return jsonify({'error': 'baseline_outputs is required (reuse original run)'}), 400
+
+        service = _ablation_service(data)
+        result = service.run_shuffle_robustness(
+            prompt,
+            foci_list,
+            int(focus_index),
+            baseline_outputs,
+            n_ablated=int(n_ablated),
+            shuffle_seed=shuffle_seed,
+            n_permutations=int(n_permutations),
+            alpha=float(alpha),
+            permutation_seed=permutation_seed,
+            temperature=float(temperature),
+        )
+        return jsonify(result)
+    except RateLimitError as e:
+        return _rate_limit_response(e)
+    except Exception as e:
+        msg = str(e)
+        if 'rate limit' in msg.lower() or '429' in msg:
+            return _rate_limit_response(e)
+        return jsonify({'error': msg}), 500
