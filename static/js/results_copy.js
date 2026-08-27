@@ -169,6 +169,25 @@
         return rows;
     }
 
+    function enrichFocusRecords(records, data) {
+        var list = (data && data.foci_list) || [];
+        return records.map(function (rec, i) {
+            var copy = Object.assign({}, rec);
+            if (copy.focus_index != null && copy.focus_index !== undefined) {
+                return copy;
+            }
+            var name = focusName(rec);
+            for (var j = 0; j < list.length; j++) {
+                if (focusName(list[j], 'Focus ' + (j + 1)) === name) {
+                    copy.focus_index = j;
+                    return copy;
+                }
+            }
+            copy.focus_index = i;
+            return copy;
+        });
+    }
+
     function collectFocusRecords(data) {
         var ablation = data.ablation_results || [];
         var scores = asScoreList(data.influence_scores);
@@ -181,17 +200,24 @@
         ablation.forEach(function (row, i) {
             var name = focusName(row, 'Focus ' + (i + 1));
             var merged = Object.assign({}, row, scoresByName[name] || {}, { focus: name });
+            if (merged.focus_index == null || merged.focus_index === undefined) {
+                merged.focus_index = row.focus_index != null ? row.focus_index : i;
+            }
             records.push(merged);
             seen[name] = true;
         });
         scores.forEach(function (score, i) {
             var name = focusName(score, 'Focus ' + (i + 1));
             if (!seen[name]) {
-                records.push(Object.assign({}, score));
+                var row = Object.assign({}, score);
+                if (row.focus_index == null || row.focus_index === undefined) {
+                    row.focus_index = i;
+                }
+                records.push(row);
                 seen[name] = true;
             }
         });
-        return records;
+        return enrichFocusRecords(records, data);
     }
 
     function nFociTested(data) {
@@ -247,15 +273,22 @@
         return 'Strong';
     }
 
-    function renderShuffleRobustness(focus) {
+    function renderShuffleRobustness(focus, data) {
+        if (excludedExplanation(focus)) return '';
+        if (focus.attributable === false) return '';
         var C = getCopy();
         var idx = focus.focus_index;
-        if (idx === undefined || idx === null) return '';
+        if (idx == null && data) {
+            var enriched = enrichFocusRecords([focus], data)[0];
+            idx = enriched.focus_index;
+        }
+        if (idx == null) idx = 0;
+        var focusKey = focusName(focus);
         var sr = focus.shuffle_robustness;
         var html = (
             '<div class="shuffle-robustness" data-focus-index="' + escapeHtml(String(idx)) + '">' +
             '<p class="shuffle-robustness-title"><strong>' +
-            escapeHtml(C.SHUFFLE_ROBUSTNESS_TITLE || 'Shuffle-order robustness') + '</strong></p>' +
+            escapeHtml(C.SHUFFLE_ROBUSTNESS_TITLE || 'Shuffle-order robustness check') + '</strong></p>' +
             '<p class="shuffle-robustness-explainer">' +
             escapeHtml(C.SHUFFLE_ROBUSTNESS_EXPLAINER || '') + '</p>'
         );
@@ -290,9 +323,10 @@
             html += '</div>';
         }
         html += (
-            '<button type="button" class="btn btn-outline btn-shuffle-robustness" ' +
-            'data-focus-index="' + escapeHtml(String(idx)) + '">' +
-            escapeHtml(C.SHUFFLE_ROBUSTNESS_BUTTON || 'Re-test with shuffled order') +
+            '<button type="button" class="btn btn-primary btn-shuffle-robustness" ' +
+            'data-focus-index="' + escapeHtml(String(idx)) + '" ' +
+            'data-focus="' + escapeHtml(focusKey) + '">' +
+            '🔀 ' + escapeHtml(C.SHUFFLE_ROBUSTNESS_BUTTON || 'Re-test with shuffled remaining order') +
             '</button></div>'
         );
         return html;
@@ -371,7 +405,7 @@
         );
     }
 
-    function renderFocusCard(focus, alpha) {
+    function renderFocusCard(focus, alpha, data) {
         var C = getCopy();
         alpha = alpha == null ? DEFAULT_ALPHA : alpha;
         var name = focusName(focus);
@@ -411,8 +445,8 @@
         }
 
         if (!excluded) {
+            body.push(renderShuffleRobustness(focus, data));
             body.push(renderEvidenceLenses(focus));
-            body.push(renderShuffleRobustness(focus));
         }
 
         return '<article class="' + classes.join(' ') + '">' + body.join('') + '</article>';
@@ -471,10 +505,12 @@
             '</div>',
             renderPowerBannerHtml(data)
         ];
-        var records = collectFocusRecords(data);
+        var records = enrichFocusRecords(collectFocusRecords(data), data);
+        parts.push('<p class="info-text shuffle-robustness-hint">Each tested focus below includes a ' +
+            '<strong>shuffle-order robustness</strong> check — re-run ablation with remaining spans in shuffled order.</p>');
         parts.push('<div class="focus-verdict-list">');
         records.forEach(function (rec) {
-            parts.push(renderFocusCard(rec, alpha));
+            parts.push(renderFocusCard(rec, alpha, data));
         });
         parts.push('</div>');
         parts.push(renderMethodsPanel());

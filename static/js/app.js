@@ -3053,18 +3053,33 @@ function paintExperimentCComparison(data, includeExplanation) {
     }
 }
 
+function resolveShuffleFocusIndex(btn, data) {
+    let idx = parseInt(btn.getAttribute('data-focus-index'), 10);
+    if (!Number.isNaN(idx)) return idx;
+    const name = btn.getAttribute('data-focus');
+    const list = (data && data.foci_list) || foci || [];
+    for (let i = 0; i < list.length; i++) {
+        const itemName = list[i].focus || list[i].name || '';
+        if (itemName && name && itemName === name) return i;
+    }
+    return null;
+}
+
 function bindShuffleRobustnessHandlers(data) {
     if (!ablationResults) return;
     ablationResults.querySelectorAll('.btn-shuffle-robustness').forEach(function (btn) {
         btn.addEventListener('click', async function () {
-            const focusIndex = parseInt(btn.getAttribute('data-focus-index'), 10);
-            if (Number.isNaN(focusIndex)) return;
-            await runShuffleRobustnessForFocus(focusIndex, data);
+            const focusIndex = resolveShuffleFocusIndex(btn, data);
+            if (focusIndex == null) {
+                showErrorModal('Could not determine which focus to re-test. Re-run ablation and try again.');
+                return;
+            }
+            await runShuffleRobustnessForFocus(focusIndex, data, btn.getAttribute('data-focus'));
         });
     });
 }
 
-async function runShuffleRobustnessForFocus(focusIndex, data) {
+async function runShuffleRobustnessForFocus(focusIndex, data, focusNameHint) {
     const prompt = (data && data.prompt) || (promptInput ? promptInput.value.trim() : '');
     const fociList = (data && data.foci_list) || foci;
     const baselines = (data && data.baseline_outputs && data.baseline_outputs.length)
@@ -3086,6 +3101,10 @@ async function runShuffleRobustnessForFocus(focusIndex, data) {
         const scores = data.influence_scores;
         const apply = function (item) {
             if (Number(item.focus_index) === focusIndex) {
+                item.shuffle_robustness = state;
+                return;
+            }
+            if (focusNameHint && (item.focus || item.name) === focusNameHint) {
                 item.shuffle_robustness = state;
             }
         };

@@ -894,8 +894,18 @@ header img {
 
 .shuffle-robustness {
     margin-top: 14px;
-    padding-top: 14px;
-    border-top: 1px solid var(--border-color);
+    padding: 12px 14px;
+    border: 1px solid #bfdbfe;
+    border-radius: 8px;
+    background: #eff6ff;
+}
+
+.shuffle-robustness-hint {
+    margin: 12px 0 8px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: #f0f9ff;
+    border: 1px solid #bae6fd;
 }
 
 .shuffle-robustness-title {
