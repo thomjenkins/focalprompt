@@ -134,6 +134,98 @@ def ablation_sample():
         return jsonify({'error': msg}), 500
 
 
+@ablation_bp.route('/api/ablation-refine-stability', methods=['POST'])
+def ablation_refine_stability():
+    """Generate additional ablated samples for one focus; refresh stability metrics."""
+    try:
+        data = request.json or {}
+        prompt = data.get('prompt', '')
+        foci_list = data.get('foci', [])
+        focus_index = data.get('focus_index')
+        baseline_outputs = data.get('baseline_outputs') or []
+        existing = data.get('ablated_outputs') or []
+        n_additional = int(data.get('n_additional') or 5)
+        n_permutations = int(data.get('n_permutations') or 10000)
+        alpha = float(data.get('alpha') or 0.05)
+        permutation_seed = data.get('permutation_seed')
+        temperature = float(data.get('temperature') or 0.7)
+        behavioral_criterion = data.get('behavioral_criterion') or data.get('eval_criteria')
+        run_behavioral_judge = bool(data.get('run_behavioral_judge'))
+
+        if not prompt:
+            return jsonify({'error': 'Prompt is required'}), 400
+        if not foci_list:
+            return jsonify({'error': 'Foci are required'}), 400
+        if focus_index is None:
+            return jsonify({'error': 'focus_index is required'}), 400
+        if not baseline_outputs:
+            return jsonify({'error': 'baseline_outputs is required'}), 400
+        if not existing:
+            return jsonify({'error': 'ablated_outputs for this focus is required'}), 400
+
+        service = _ablation_service(data)
+        result = service.refine_focus_stability_samples(
+            prompt,
+            foci_list,
+            int(focus_index),
+            baseline_outputs,
+            list(existing),
+            n_additional,
+            n_permutations=n_permutations,
+            alpha=alpha,
+            permutation_seed=permutation_seed,
+            temperature=temperature,
+            behavioral_criterion=behavioral_criterion,
+            task_context=data.get('task_context') or '',
+            run_behavioral_judge=run_behavioral_judge,
+        )
+        return jsonify(result)
+    except RateLimitError as e:
+        return _rate_limit_response(e)
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@ablation_bp.route('/api/ablation-behavioral-outcome-dispersion', methods=['POST'])
+def ablation_behavioral_outcome_dispersion():
+    """Compare criterion-judge outcome distributions baseline vs each ablated arm."""
+    try:
+        data = request.json or {}
+        baseline_outputs = data.get('baseline_outputs') or []
+        ablated_outputs = data.get('ablated_outputs') or {}
+        criterion = data.get('behavioral_criterion') or data.get('eval_criteria') or ''
+
+        if not baseline_outputs:
+            return jsonify({'error': 'baseline_outputs is required'}), 400
+        if not ablated_outputs:
+            return jsonify({'error': 'ablated_outputs is required'}), 400
+        if not criterion.strip():
+            return jsonify({'error': 'behavioral_criterion is required'}), 400
+
+        ablated_map = {int(k): list(v or []) for k, v in ablated_outputs.items()}
+        service = _ablation_service(data)
+        by_focus = service.attach_behavioral_outcome_dispersion(
+            baseline_outputs=baseline_outputs,
+            ablated_outputs=ablated_map,
+            behavioral_criterion=criterion,
+            task_context=data.get('task_context') or '',
+            temperature=float(data.get('temperature') or 0.2),
+        )
+        return jsonify({
+            'by_focus_index': by_focus,
+            'disclaimer': (
+                'Task-specific behavioural outcome distributions — complementary to '
+                'embedding dispersion, not a replacement.'
+            ),
+        })
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @ablation_bp.route('/api/ablation-score', methods=['POST'])
 def ablation_score():
     """Permutation test on samples collected by /api/ablation-sample."""

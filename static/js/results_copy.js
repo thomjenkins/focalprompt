@@ -445,6 +445,7 @@
         }
 
         if (!excluded) {
+            body.push(renderFocusAblationStability(focus, data));
             body.push(renderShuffleRobustness(focus, data));
             body.push(renderEvidenceLenses(focus));
         }
@@ -533,6 +534,163 @@
         html += '(observed shift / baseline dispersion) is attached to each influence row in the JSON. ';
         html += 'It is not a significance test.</p>';
         html += '</section>';
+        return html;
+    }
+
+    function fmtRatio(v) {
+        if (v == null || Number.isNaN(Number(v))) return '—';
+        return Number(v).toFixed(2) + '× baseline';
+    }
+
+    function semanticShiftLabel(focus) {
+        var m = (focus.ablation_stability && focus.ablation_stability.mean_vs_variance_effect) || {};
+        var level = m.semantic_shift_level || 'low';
+        if (level === 'high') return 'high';
+        if (level === 'moderate') return 'moderate';
+        return 'low';
+    }
+
+    function renderStabilityScatterPlot(points) {
+        if (!points || !points.length) return '';
+        var width = 520;
+        var height = 320;
+        var padL = 48;
+        var padR = 16;
+        var padT = 16;
+        var padB = 40;
+        var plotW = width - padL - padR;
+        var plotH = height - padT - padB;
+        var xs = points.map(function (p) {
+            var x = p.x_standardized_effect != null ? Number(p.x_standardized_effect) : Number(p.x_semantic_shift || 0);
+            return Number.isFinite(x) ? x : 0;
+        });
+        var ys = points.map(function (p) {
+            var y = p.y_dispersion_ratio;
+            return y != null && Number.isFinite(Number(y)) ? Number(y) : null;
+        }).filter(function (y) { return y != null; });
+        if (!ys.length) return '';
+        var xMin = Math.min.apply(null, xs);
+        var xMax = Math.max.apply(null, xs);
+        var yMin = Math.min.apply(null, ys.concat([0.5, 1.0]));
+        var yMax = Math.max.apply(null, ys.concat([1.0, 1.5]));
+        if (Math.abs(xMax - xMin) < 1e-6) { xMin -= 0.5; xMax += 0.5; }
+        if (Math.abs(yMax - yMin) < 1e-6) { yMin -= 0.2; yMax += 0.2; }
+        function sx(x) { return padL + ((x - xMin) / (xMax - xMin)) * plotW; }
+        function sy(y) { return padT + plotH - ((y - yMin) / (yMax - yMin)) * plotH; }
+        var refY = sy(1.0);
+        var svg = '<svg class="ablation-stability-scatter" viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="Semantic shift vs dispersion ratio">';
+        svg += '<line x1="' + padL + '" y1="' + refY + '" x2="' + (width - padR) + '" y2="' + refY + '" stroke="#94a3b8" stroke-dasharray="4 3"/>';
+        svg += '<text x="' + (width - padR) + '" y="' + (refY - 4) + '" text-anchor="end" font-size="10" fill="#64748b">y=1 unchanged</text>';
+        points.forEach(function (p) {
+            var y = p.y_dispersion_ratio;
+            if (y == null || !Number.isFinite(Number(y))) return;
+            var x = p.x_standardized_effect != null ? Number(p.x_standardized_effect) : Number(p.x_semantic_shift || 0);
+            if (!Number.isFinite(x)) x = 0;
+            var title = (p.focus || '') + ' | z=' + fmtDist(x) + ' | ratio=' + fmtDist(y) +
+                ' | q=' + fmtDist(p.q_value) + ' | n=' + (p.n_ablated_samples || '');
+            svg += '<circle cx="' + sx(x) + '" cy="' + sy(Number(y)) + '" r="6" fill="#2563eb" opacity="0.85">';
+            svg += '<title>' + escapeHtml(title) + '</title></circle>';
+            svg += '<text x="' + sx(x) + '" y="' + (sy(Number(y)) - 10) + '" text-anchor="middle" font-size="9" fill="#334155">' +
+                escapeHtml(String(p.focus || '').slice(0, 12)) + '</text>';
+        });
+        svg += '<text x="' + (padL + plotW / 2) + '" y="' + (height - 8) + '" text-anchor="middle" font-size="11" fill="#475569">Semantic perturbation (standardized effect / centroid shift)</text>';
+        svg += '<text transform="translate(12 ' + (padT + plotH / 2) + ') rotate(-90)" text-anchor="middle" font-size="11" fill="#475569">Ablation/baseline dispersion ratio</text>';
+        svg += '</svg>';
+        return svg;
+    }
+
+    function renderAblationStabilitySection(data) {
+        var records = enrichFocusRecords(collectFocusRecords(data), data).filter(function (r) {
+            return r.attributable !== false && r.ablation_stability;
+        });
+        if (!records.length) return '';
+        var C = getCopy();
+        var html = '<section class="ablation-stability-panel">';
+        html += '<h3>' + escapeHtml(C.ABLATION_STABILITY_TITLE || 'Ablation stability (per focus)') + '</h3>';
+        html += '<p class="info-text">' + escapeHtml(C.ABLATION_STABILITY_DISCLAIMER || '') + '</p>';
+        html += '<p class="info-text" style="font-size:0.9em">' + escapeHtml(
+            C.ABLATION_STABILITY_INTERPRETATION || ''
+        ) + '</p>';
+        var scatter = data.stability_scatter || [];
+        if (scatter.length) {
+            html += '<h4 style="margin-top:16px">' + escapeHtml(
+                C.ABLATION_STABILITY_SCATTER_TITLE || 'Semantic shift vs dispersion ratio'
+            ) + '</h4>';
+            html += renderStabilityScatterPlot(scatter);
+            html += '<p class="info-text" style="font-size:0.85em">Vertical distance from y=1 is descriptive only — not a significance test of variance change.</p>';
+        }
+        var summary = data.stability_summary || {};
+        if (summary.most_stabilizing_after_ablation && summary.most_stabilizing_after_ablation.length) {
+            html += '<p class="info-text"><strong>Most stabilizing after ablation (descriptive):</strong> ';
+            html += escapeHtml(summary.most_stabilizing_after_ablation.map(function (r) {
+                return r.focus + ' (' + fmtDist(r.value) + '×)';
+            }).join(', ')) + '</p>';
+        }
+        if (summary.most_destabilizing_after_ablation && summary.most_destabilizing_after_ablation.length) {
+            html += '<p class="info-text"><strong>Most destabilizing after ablation (descriptive):</strong> ';
+            html += escapeHtml(summary.most_destabilizing_after_ablation.map(function (r) {
+                return r.focus + ' (' + fmtDist(r.value) + '×)';
+            }).join(', ')) + '</p>';
+        }
+        html += '<div class="ablation-stability-actions" style="margin-top:12px">';
+        html += '<button type="button" class="btn btn-outline btn-ablation-outcome-dispersion" id="run-ablation-outcome-dispersion-btn">' +
+            escapeHtml(C.ABLATION_STABILITY_JUDGE_BUTTON || 'Run task-specific outcome dispersion') + '</button>';
+        html += '</div>';
+        html += '<div id="ablation-outcome-dispersion-results"></div>';
+        html += '</section>';
+        return html;
+    }
+
+    function renderFocusAblationStability(focus, data) {
+        var stab = focus.ablation_stability;
+        if (!stab || focus.attributable === false) return '';
+        var C = getCopy();
+        var ratio = stab.mean_pairwise_noise_ratio;
+        var html = '<div class="focus-ablation-stability">';
+        html += '<h5 class="focus-ablation-stability-title">Ablation stability</h5>';
+        html += '<ul class="baseline-stability-metrics" style="margin:8px 0">';
+        html += '<li>Semantic shift: <strong>' + escapeHtml(semanticShiftLabel(focus)) + '</strong></li>';
+        html += '<li>Ablated dispersion (mean pairwise): ' + escapeHtml(fmtDist(stab.mean_pairwise_distance)) + '</li>';
+        html += '<li>Baseline dispersion (mean pairwise): ' + escapeHtml(fmtDist(stab.baseline_mean_pairwise_distance)) + '</li>';
+        html += '<li>Dispersion ratio: <strong>' + escapeHtml(fmtRatio(ratio)) + '</strong></li>';
+        html += '<li>Sample count: n=' + escapeHtml(String(stab.n_samples || '')) + '</li>';
+        html += '</ul>';
+        if (stab.dispersion_ratio_interpretation) {
+            html += '<p class="info-text">"' + escapeHtml(stab.dispersion_ratio_interpretation) + '"</p>';
+        }
+        var mv = stab.mean_vs_variance_effect || {};
+        if (mv.summary) {
+            html += '<p class="info-text" style="font-size:0.9em">' + escapeHtml(mv.summary) + '</p>';
+        }
+        if (stab.sample_size_warning && stab.sample_size_note) {
+            html += '<p class="baseline-stability-warning" role="status">' + escapeHtml(stab.sample_size_note) + '</p>';
+        }
+        (stab.dispersion_ratio_warnings || []).forEach(function (w) {
+            html += '<p class="info-text" style="color:#b45309">' + escapeHtml(w) + '</p>';
+        });
+        var multi = stab.multimodality || {};
+        if (multi.status === 'insufficient_samples') {
+            html += '<p class="info-text" style="font-size:0.85em">' + escapeHtml(multi.note || 'Multimodality: insufficient samples.') + '</p>';
+        } else if (multi.potentially_multimodal) {
+            html += '<p class="baseline-stability-multimodal"><em>Advisory:</em> ablated condition potentially multimodal. ' +
+                escapeHtml(multi.note || '') + '</p>';
+        }
+        var bo = stab.behavioral_outcome || focus.behavioral_outcome;
+        if (bo && bo.ablated && bo.baseline) {
+            html += '<p class="info-text"><strong>Task-specific outcomes</strong> (criterion judge)</p>';
+            html += '<p style="font-size:0.9em">Baseline entropy: ' + escapeHtml(fmtDist(bo.baseline.outcome_entropy_bits)) +
+                ' bits · Ablated: ' + escapeHtml(fmtDist(bo.ablated.outcome_entropy_bits)) +
+                ' · Δ: ' + escapeHtml(fmtDist(bo.outcome_entropy_delta_bits)) + '</p>';
+        }
+        if (stab.sample_size_warning || (ratio != null && (ratio < 0.7 || ratio > 1.3))) {
+            var idx = focus.focus_index != null ? focus.focus_index : '';
+            html += '<button type="button" class="btn btn-outline btn-small btn-refine-ablation-stability" data-focus-index="' +
+                escapeHtml(String(idx)) + '">' +
+                escapeHtml(C.ABLATION_STABILITY_REFINE_BUTTON || 'Increase samples for stability estimate') +
+                '</button>';
+        }
+        html += '<div class="refine-stability-result" data-focus-index="' + escapeHtml(String(focus.focus_index != null ? focus.focus_index : '')) + '"></div>';
+        html += '</div>';
         return html;
     }
 
@@ -711,7 +869,8 @@
             renderRunHeader(data),
             '</div>',
             renderPowerBannerHtml(data),
-            renderBaselineStabilityHtml(data)
+            renderBaselineStabilityHtml(data),
+            renderAblationStabilitySection(data)
         ];
         var records = enrichFocusRecords(collectFocusRecords(data), data);
         parts.push('<p class="info-text shuffle-robustness-hint">Each tested focus below includes a ' +
@@ -805,6 +964,9 @@
         renderMethodsPanel: renderMethodsPanel,
         renderPowerBannerHtml: renderPowerBannerHtml,
         renderBaselineStabilityHtml: renderBaselineStabilityHtml,
+        renderAblationStabilitySection: renderAblationStabilitySection,
+        renderFocusAblationStability: renderFocusAblationStability,
+        renderStabilityScatterPlot: renderStabilityScatterPlot,
         renderFocusOrderSensitivityHtml: renderFocusOrderSensitivityHtml,
         renderReportedFocusDynamicsHtml: renderReportedFocusDynamicsHtml,
         renderAblationResultsHtml: renderAblationResultsHtml

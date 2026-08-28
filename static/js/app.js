@@ -2918,6 +2918,7 @@ function renderAblationResults(data, options) {
 
     bindBehavioralDifferenceReviewHandlers(data);
     bindShuffleRobustnessHandlers(data);
+    bindAblationStabilityHandlers(data);
     if (!options || !options.skipExperimentCRefresh) {
         refreshExperimentCComparison({ scroll: true });
     }
@@ -3239,6 +3240,210 @@ async function runShuffleRobustnessForFocus(focusIndex, data, focusNameHint) {
         setShuffleState({ status: 'failed', error: err.message || String(err) });
         showError('Shuffle robustness check: ' + (err.message || String(err)));
         console.error(err);
+    } finally {
+        hideLoading();
+    }
+}
+
+function buildAblatedOutputsMap(data) {
+    const map = {};
+    const records = (window.FocalPromptResults && window.FocalPromptResults.collectFocusRecords)
+        ? window.FocalPromptResults.collectFocusRecords(data)
+        : (data.ablation_results || []);
+    records.forEach(function (rec) {
+        if (rec.attributable === false) return;
+        const idx = rec.focus_index;
+        if (idx == null) return;
+        const outs = rec.ablated_outputs || (rec.ablated_output ? [rec.ablated_output] : []);
+        if (outs.length) map[String(idx)] = outs;
+    });
+    return map;
+}
+
+function recomputeStabilityExperimentFields(data) {
+    const records = (window.FocalPromptResults && window.FocalPromptResults.collectFocusRecords)
+        ? window.FocalPromptResults.collectFocusRecords(data)
+        : [];
+    const points = [];
+    records.forEach(function (item) {
+        if (item.attributable === false) return;
+        const stab = item.ablation_stability;
+        if (!stab) return;
+        points.push({
+            focus: item.focus || item.focus_name,
+            focus_index: item.focus_index,
+            x_semantic_shift: item.t_obs,
+            x_standardized_effect: item.standardized_effect,
+            x_normalized_influence: item.normalized_influence,
+            y_dispersion_ratio: stab.mean_pairwise_noise_ratio != null
+                ? stab.mean_pairwise_noise_ratio
+                : stab.centroid_noise_ratio,
+            q_value: item.q_value,
+            p_value: item.p_value,
+            n_ablated_samples: stab.n_samples,
+        });
+    });
+    data.stability_scatter = points;
+}
+
+function mergeAblationStabilityIntoData(data, focusIndex, patch, options) {
+    const skipRender = options && options.skipRender;
+    function apply(item) {
+        if (Number(item.focus_index) !== Number(focusIndex)) return;
+        if (patch.ablated_outputs) {
+            item.ablated_outputs = patch.ablated_outputs;
+            item.ablated_output = patch.ablated_outputs[0];
+        }
+        if (patch.ablation_stability) item.ablation_stability = patch.ablation_stability;
+        if (patch.behavioral_outcome) {
+            item.behavioral_outcome = patch.behavioral_outcome;
+            if (item.ablation_stability) {
+                item.ablation_stability.behavioral_outcome = patch.behavioral_outcome;
+            }
+        }
+        if (patch.permutation) {
+            Object.assign(item, patch.permutation);
+            item.t_obs = patch.permutation.t_obs;
+            item.influence = patch.permutation.t_obs;
+        }
+    }
+    if (Array.isArray(data.influence_scores)) data.influence_scores.forEach(apply);
+    if (data.ablation_results) data.ablation_results.forEach(apply);
+    recomputeStabilityExperimentFields(data);
+    window.singleAblationResults = data;
+    if (!skipRender) {
+        renderAblationResults(data);
+    }
+}
+
+function bindAblationStabilityHandlers(data) {
+    if (!ablationResults) return;
+
+    ablationResults.querySelectorAll('.btn-refine-ablation-stability').forEach(function (btn) {
+        btn.addEventListener('click', async function () {
+            const focusIndex = parseInt(btn.getAttribute('data-focus-index'), 10);
+            if (Number.isNaN(focusIndex)) {
+                showErrorModal('Could not determine focus for refinement.');
+                return;
+            }
+            await runRefineAblationStability(focusIndex, data);
+        });
+    });
+
+    const outcomeBtn = document.getElementById('run-ablation-outcome-dispersion-btn');
+    if (outcomeBtn) {
+        outcomeBtn.addEventListener('click', async function () {
+            await runAblationOutcomeDispersion(data);
+        });
+    }
+}
+
+async function runRefineAblationStability(focusIndex, data) {
+    const prompt = (data && data.prompt) || (promptInput ? promptInput.value.trim() : '');
+    const fociList = (data && data.foci_list) || foci;
+    const baselines = (data && data.baseline_outputs && data.baseline_outputs.length)
+        ? data.baseline_outputs
+        : (data && data.baseline_output ? [data.baseline_output] : []);
+    const records = (window.FocalPromptResults && window.FocalPromptResults.collectFocusRecords)
+        ? window.FocalPromptResults.collectFocusRecords(data)
+        : [];
+    const rec = records.find(function (r) { return Number(r.focus_index) === Number(focusIndex); });
+    const existing = (rec && rec.ablated_outputs) || [];
+    if (!prompt || !fociList.length || !baselines.length || !existing.length) {
+        showErrorModal('Need prompt, foci, baseline samples, and existing ablated outputs.');
+        return;
+    }
+    const nAdditional = parseInt(
+        window.prompt('How many additional ablated samples to generate?', '5') || '0',
+        10
+    );
+    if (!nAdditional || nAdditional < 1) return;
+
+    const criterion = evalCriteriaInput ? evalCriteriaInput.value.trim() : '';
+    const runJudge = criterion
+        ? window.confirm('Also run task-specific criterion judge on baseline vs ablated outputs?')
+        : false;
+
+    showLoading('Generating additional ablated samples for stability estimate…');
+    try {
+        const response = await fetch('/api/ablation-refine-stability', {
+            method: 'POST',
+            headers: getApiHeaders(),
+            body: JSON.stringify(getApiBody({
+                prompt: prompt,
+                foci: fociList,
+                focus_index: focusIndex,
+                baseline_outputs: baselines,
+                ablated_outputs: existing,
+                n_additional: nAdditional,
+                temperature: data.temperature || 0.7,
+                n_permutations: data.n_permutations || 10000,
+                alpha: data.alpha || 0.05,
+                permutation_seed: data.permutation_seed,
+                behavioral_criterion: criterion,
+                run_behavioral_judge: runJudge,
+            })),
+        });
+        const result = await response.json();
+        if (!response.ok) {
+            throw new Error(result.error || 'Refinement failed');
+        }
+        mergeAblationStabilityIntoData(data, focusIndex, {
+            ablated_outputs: result.ablated_outputs,
+            ablation_stability: result.ablation_stability,
+            behavioral_outcome: result.behavioral_outcome,
+            permutation: result.permutation,
+        });
+        alert('Stability estimate updated with ' + nAdditional + ' additional sample(s).');
+    } catch (err) {
+        showError('Refine stability: ' + (err.message || String(err)));
+    } finally {
+        hideLoading();
+    }
+}
+
+async function runAblationOutcomeDispersion(data) {
+    const criterion = evalCriteriaInput ? evalCriteriaInput.value.trim() : '';
+    if (!criterion) {
+        showErrorModal('Enter evaluation criteria in section 9 first, or provide a behavioural criterion.');
+        return;
+    }
+    const baselines = (data && data.baseline_outputs && data.baseline_outputs.length)
+        ? data.baseline_outputs
+        : (data && data.baseline_output ? [data.baseline_output] : []);
+    const ablatedMap = buildAblatedOutputsMap(data);
+    if (!baselines.length || !Object.keys(ablatedMap).length) {
+        showErrorModal('Need baseline and ablated outputs from Experiment B.');
+        return;
+    }
+    showLoading('Running task-specific outcome dispersion analysis…');
+    try {
+        const response = await fetch('/api/ablation-behavioral-outcome-dispersion', {
+            method: 'POST',
+            headers: getApiHeaders(),
+            body: JSON.stringify(getApiBody({
+                baseline_outputs: baselines,
+                ablated_outputs: ablatedMap,
+                behavioral_criterion: criterion,
+            })),
+        });
+        const result = await response.json();
+        if (!response.ok) {
+            throw new Error(result.error || 'Outcome dispersion failed');
+        }
+        const byFocus = result.by_focus_index || {};
+        Object.keys(byFocus).forEach(function (key) {
+            mergeAblationStabilityIntoData(data, parseInt(key, 10), {
+                behavioral_outcome: byFocus[key],
+            }, { skipRender: true });
+        });
+        renderAblationResults(data);
+        const mount = document.getElementById('ablation-outcome-dispersion-results');
+        if (mount) {
+            mount.innerHTML = '<p class="info-text">Task-specific outcome dispersion attached to each focus card.</p>';
+        }
+    } catch (err) {
+        showError('Outcome dispersion: ' + (err.message || String(err)));
     } finally {
         hideLoading();
     }
@@ -3695,14 +3900,31 @@ if (qualityEvalSamplePct) {
     qualityEvalSamplePct.addEventListener('change', refreshQualityEvalPreview);
 }
 
-function renderQualityEvalCard(row) {
+function buildQualityEvalOutputLookup() {
+    const map = {};
+    collectOutputsForQualityEval().forEach(function (o) {
+        if (o.label && o.text) {
+            map[o.label] = o.text;
+        }
+    });
+    return map;
+}
+
+function renderQualityEvalCard(row, outputLookup) {
     const score = row.overall_score;
     const scoreTxt = (score == null || Number.isNaN(Number(score)))
         ? 'n/a'
         : Number(score).toFixed(0) + '/100';
+    const outputText = (row.output_text || (outputLookup && outputLookup[row.label]) || '').trim();
     let html = '<div class="quality-eval-card">';
     html += '<h4><span>' + escapeHtml(row.label || 'Output') + '</span>';
     html += '<span class="quality-eval-score">' + escapeHtml(scoreTxt) + '</span></h4>';
+    if (outputText) {
+        html += '<details class="quality-eval-output-details">';
+        html += '<summary>View evaluated output</summary>';
+        html += '<pre class="quality-eval-output-preview">' + escapeHtml(outputText) + '</pre>';
+        html += '</details>';
+    }
     if (row.summary) {
         html += '<p>' + escapeHtml(row.summary) + '</p>';
     }
@@ -3741,6 +3963,8 @@ function renderQualityEvalResults(data) {
         return;
     }
 
+    const outputLookup = buildQualityEvalOutputLookup();
+
     let html = '';
     html += '<p class="info-text"><strong>Scope:</strong> Experiment B outputs only — baseline samples (full prompt) and ablated samples (focus removed). Not section 3.</p>';
     if (data.n_outputs_total && data.n_outputs_evaluated &&
@@ -3767,19 +3991,19 @@ function renderQualityEvalResults(data) {
     if (baselineEvals.length) {
         html += '<h3 style="margin:16px 0 8px;font-size:1.05em">Baseline (full prompt)</h3>';
         baselineEvals.forEach(function (row) {
-            html += renderQualityEvalCard(row);
+            html += renderQualityEvalCard(row, outputLookup);
         });
     }
     if (ablatedEvals.length) {
         html += '<h3 style="margin:16px 0 8px;font-size:1.05em">Ablated outputs (Experiment B)</h3>';
         ablatedEvals.forEach(function (row) {
-            html += renderQualityEvalCard(row);
+            html += renderQualityEvalCard(row, outputLookup);
         });
     }
     evals.filter(function (row) {
         return baselineEvals.indexOf(row) === -1 && ablatedEvals.indexOf(row) === -1;
     }).forEach(function (row) {
-        html += renderQualityEvalCard(row);
+        html += renderQualityEvalCard(row, outputLookup);
     });
 
     if (data.comparative_notes) {

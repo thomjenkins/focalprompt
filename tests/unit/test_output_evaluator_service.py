@@ -73,6 +73,7 @@ def test_evaluate_outputs_parses_response():
     assert result['evaluation_type'] == 'task_quality'
     assert result['explicitly_not_behavioral_difference'] is True
     assert result['evaluations'][0]['overall_score'] == 82.0
+    assert result['evaluations'][0]['output_text'] == 'Hello! We can help schedule.'
     assert result['evaluations'][0]['criterion_breakdown'][0]['name'] == 'Politeness'
 
 

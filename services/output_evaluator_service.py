@@ -256,8 +256,10 @@ def _normalize_evaluation_rows(
         except (TypeError, ValueError):
             overall = 0.0
         overall = max(0.0, min(100.0, overall))
+        source = by_label.get(label) or {}
         evaluations.append({
             'label': label,
+            'output_text': str(source.get('text') or ''),
             'overall_score': overall,
             'meets_primary_criterion': bool(row.get('meets_primary_criterion')),
             'criterion_breakdown': row.get('criterion_breakdown') or [],
@@ -268,8 +270,10 @@ def _normalize_evaluation_rows(
 
     for label in by_label:
         if label not in seen:
+            source = by_label.get(label) or {}
             evaluations.append({
                 'label': label,
+                'output_text': str(source.get('text') or ''),
                 'overall_score': None,
                 'meets_primary_criterion': None,
                 'criterion_breakdown': [],
@@ -404,11 +408,16 @@ class OutputQualityEvaluator:
                 comparative_notes_parts.append(note)
 
         by_label = {row['label']: row for row in all_evaluations}
-        ordered_evaluations = [
-            by_label[item['label']]
-            for item in items
-            if item['label'] in by_label
-        ]
+        item_by_label = {item['label']: item for item in items}
+        ordered_evaluations = []
+        for item in items:
+            label = item['label']
+            if label not in by_label:
+                continue
+            row = dict(by_label[label])
+            if not row.get('output_text'):
+                row['output_text'] = str(item.get('text') or '')
+            ordered_evaluations.append(row)
 
         return {
             'evaluations': ordered_evaluations,

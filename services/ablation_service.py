@@ -24,6 +24,12 @@ from utils.permutation_test import (
     design_test_type,
 )
 from utils.baseline_stability import compute_baseline_stability, attach_signal_to_noise
+from utils.ablation_stability import (
+    build_stability_scatter_points,
+    build_stability_summary,
+    compare_behavioral_outcomes,
+    compute_ablation_stability,
+)
 from utils.reported_focus_dynamics import build_reported_focus_dynamics
 from services.behavioral_difference_service import enrich_influence_item_for_review
 
@@ -405,6 +411,27 @@ class AblationService:
             enrich_influence_item_for_review(item) for item in influence_scores
         ]
 
+        # Per-focus ablation-condition stability (dispersion after removal vs baseline).
+        influence_by_idx = {
+            int(item['focus_index']): item for item in influence_scores
+            if item.get('focus_index') is not None
+        }
+        for ablation, _perm, ablated_embeddings in scored_payloads:
+            idx = int(ablation['focus_index'])
+            inf = influence_by_idx.get(idx)
+            if inf is None:
+                continue
+            stab = compute_ablation_stability(
+                ablated_embeddings,
+                baseline_stability,
+                n_ablated_configured=n_ablated,
+                t_obs=inf.get('t_obs'),
+                standardized_effect=inf.get('standardized_effect'),
+                behavioral_outcome=inf.get('behavioral_outcome'),
+            )
+            ablation['ablation_stability'] = stab
+            inf['ablation_stability'] = stab
+
         n_attr = len(influence_scores)
         if n_ablated < 1:
             n_ablated = 1
@@ -420,12 +447,35 @@ class AblationService:
             self.provider_name,
         )
         summary = {item['focus']: item['normalized_influence'] for item in influence_scores}
+        stability_summary = build_stability_summary(influence_scores)
+        stability_scatter = build_stability_scatter_points(influence_scores)
         return {
             'baseline_output': baseline_outputs[0],
             'baseline_outputs': baseline_outputs,
             'ablation_results': ablation_results,
             'influence_scores': influence_scores,
             'baseline_stability': baseline_stability,
+            'stability_summary': stability_summary,
+            'stability_scatter': stability_scatter,
+            'interpretation_axes': {
+                'baseline_stability': (
+                    'How much does the model vary when nothing changes?'
+                ),
+                'semantic_perturbation': (
+                    'How far does behaviour move when this focus is removed?'
+                ),
+                'ablation_stability': (
+                    'How variable is behaviour after this focus is removed?'
+                ),
+                'behavioral_outcome': (
+                    'How does removal change the probability of the behaviour the user cares about?'
+                ),
+                'scatter': {
+                    'x': 'Semantic perturbation (centroid distance / standardized effect)',
+                    'y': 'Ablation-to-baseline mean pairwise dispersion ratio',
+                    'y_reference': 1.0,
+                },
+            },
             'n_baseline': n_baseline,
             'n_ablated': n_ablated,
             'n_permutations': n_permutations,
@@ -550,3 +600,179 @@ class AblationService:
             input_tokens=total_input_tokens,
             output_tokens=total_output_tokens,
         )
+
+    def refine_focus_stability_samples(
+        self,
+        prompt: str,
+        foci_list: List[Dict],
+        focus_index: int,
+        baseline_outputs: List[str],
+        existing_ablated_outputs: List[str],
+        n_additional: int,
+        *,
+        n_permutations: int = DEFAULT_N_PERMUTATIONS,
+        alpha: float = DEFAULT_ALPHA,
+        permutation_seed: Optional[int] = None,
+        temperature: float = 0.7,
+        behavioral_criterion: Optional[str] = None,
+        task_context: str = '',
+        run_behavioral_judge: bool = False,
+    ) -> Dict:
+        """
+        Generate extra ablated samples for one focus and refresh stability + permutation.
+
+        Does not re-sample baseline or other foci.
+        """
+        require_stochastic_temperature(temperature)
+        n_additional = int(n_additional)
+        if n_additional < 1:
+            raise ValueError('n_additional must be at least 1')
+        idx = int(focus_index)
+        classified = classify_foci_for_ablation(prompt, foci_list)
+        if idx < 0 or idx >= len(classified):
+            raise ValueError('focus_index out of range')
+        focus = classified[idx]
+        if not focus.get('attributable'):
+            raise ValueError(
+                f"Focus '{focus.get('focus')}' is not attributable ({focus.get('reason')})"
+            )
+
+        ablated_prompt, prompt_empty, _collapsed = delete_span(
+            prompt, focus['char_start'], focus['char_end']
+        )
+        new_texts, tin, tout = self._sample_outputs(
+            ablated_prompt, n_additional, temperature
+        )
+        merged = list(existing_ablated_outputs or []) + list(new_texts)
+        merged = [str(t) for t in merged if str(t).strip()]
+        if len(merged) < 2:
+            raise ValueError('Need at least 2 ablated samples after merge for stability metrics')
+
+        baseline_outputs = [str(t) for t in baseline_outputs if str(t).strip()]
+        baseline_embeddings, base_tokens = (
+            self.embedding_service.batch_embeddings_with_usage(baseline_outputs)
+        )
+        baseline_embeddings = np.asarray(baseline_embeddings, dtype=float)
+        baseline_stability = compute_baseline_stability(baseline_embeddings)
+
+        ablated_embeddings, abl_tokens = (
+            self.embedding_service.batch_embeddings_with_usage(merged)
+        )
+        ablated_embeddings = np.asarray(ablated_embeddings, dtype=float)
+
+        rng = np.random.default_rng(permutation_seed)
+        perm = permutation_test(
+            baseline_embeddings,
+            ablated_embeddings,
+            n_permutations=n_permutations,
+            rng=rng,
+        )
+        t_obs = perm['t_obs']
+        bh = benjamini_hochberg([perm['p_value']], alpha=alpha)[0]
+
+        behavioral_outcome = None
+        if run_behavioral_judge and (behavioral_criterion or '').strip():
+            from services.behavioral_criterion_judge import BehavioralCriterionJudge
+
+            judge = BehavioralCriterionJudge(
+                self.provider, self.model, self.provider_name
+            )
+            base_j = judge.judge_many(
+                criterion=behavioral_criterion,
+                outputs=baseline_outputs,
+                task_context=task_context,
+                temperature=0.2,
+            )
+            abl_j = judge.judge_many(
+                criterion=behavioral_criterion,
+                outputs=merged,
+                task_context=task_context,
+                temperature=0.2,
+            )
+            behavioral_outcome = compare_behavioral_outcomes(base_j, abl_j)
+
+        stab = compute_ablation_stability(
+            ablated_embeddings,
+            baseline_stability,
+            n_ablated_configured=len(merged),
+            t_obs=t_obs,
+            standardized_effect=perm.get('standardized_effect'),
+            behavioral_outcome=behavioral_outcome,
+        )
+
+        influence_row = enrich_influence_item_for_review({
+            'focus': focus.get('focus'),
+            'focus_index': idx,
+            't_obs': float(t_obs),
+            'influence': float(t_obs),
+            'p_value': bh['p_value'],
+            'q_value': bh['q_value'],
+            'is_significant': bh['significant'],
+            'standardized_effect': perm.get('standardized_effect'),
+            'ablation_stability': stab,
+            'behavioral_outcome': behavioral_outcome,
+        })
+
+        cost_breakdown = self.cost_calculator.calculate_cost(
+            tin, tout, base_tokens + abl_tokens, self.model, self.provider_name
+        )
+
+        return {
+            'focus_index': idx,
+            'focus': focus.get('focus'),
+            'ablated_outputs': merged,
+            'n_ablated_samples': len(merged),
+            'n_additional_generated': n_additional,
+            'ablation_stability': stab,
+            'semantic_perturbation': influence_row.get('semantic_perturbation'),
+            'permutation': {
+                't_obs': t_obs,
+                'p_value': bh['p_value'],
+                'q_value': bh['q_value'],
+                'is_significant': bh['significant'],
+                'standardized_effect': perm.get('standardized_effect'),
+                'n_permutations': perm.get('n_permutations'),
+            },
+            'behavioral_outcome': behavioral_outcome,
+            'cost_breakdown': cost_breakdown,
+            'note': (
+                'Refined ablation stability for this focus only. Other foci unchanged. '
+                'BH q-value here is single-focus (not re-corrected across all foci).'
+            ),
+        }
+
+    def attach_behavioral_outcome_dispersion(
+        self,
+        *,
+        baseline_outputs: List[str],
+        ablated_outputs: Dict,
+        behavioral_criterion: str,
+        task_context: str = '',
+        temperature: float = 0.2,
+    ) -> Dict[int, Dict]:
+        """Judge baseline + each focus's ablated outputs against a user criterion."""
+        if not (behavioral_criterion or '').strip():
+            raise ValueError('behavioral_criterion is required')
+        from services.behavioral_criterion_judge import BehavioralCriterionJudge
+
+        judge = BehavioralCriterionJudge(
+            self.provider, self.model, self.provider_name
+        )
+        baseline_j = judge.judge_many(
+            criterion=behavioral_criterion,
+            outputs=baseline_outputs,
+            task_context=task_context,
+            temperature=temperature,
+        )
+        out: Dict[int, Dict] = {}
+        for key, texts in (ablated_outputs or {}).items():
+            idx = int(key)
+            abl_j = judge.judge_many(
+                criterion=behavioral_criterion,
+                outputs=list(texts or []),
+                task_context=task_context,
+                temperature=temperature,
+            )
+            comparison = compare_behavioral_outcomes(baseline_j, abl_j)
+            out[idx] = comparison
+        return out

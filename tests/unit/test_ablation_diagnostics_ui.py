@@ -45,7 +45,21 @@ def test_ablation_route_registers_dynamics_endpoint():
     assert 'AssessmentService' in routes
 
 
-def test_order_sensitivity_route_registered():
-    routes = (REPO / 'routes' / 'order_sensitivity_routes.py').read_text(encoding='utf-8')
-    assert 'focus-order-sensitivity' in routes
-    assert 'OrderSensitivityService' in routes
+def test_ablation_route_registers_stability_endpoints():
+    routes = (REPO / 'routes' / 'ablation_routes.py').read_text(encoding='utf-8')
+    assert 'ablation-refine-stability' in routes
+    assert 'ablation-behavioral-outcome-dispersion' in routes
+
+
+def test_copy_includes_ablation_stability_strings():
+    assert 'ABLATION_STABILITY_TITLE' in COPY
+    assert 'not mechanistic' in COPY['ABLATION_STABILITY_DISCLAIMER'].lower()
+    assert 'causal noise' not in COPY['ABLATION_STABILITY_DISCLAIMER'].lower() or 'not' in COPY['ABLATION_STABILITY_DISCLAIMER'].lower()
+
+
+def test_results_copy_js_renders_ablation_stability():
+    js = (REPO / 'static' / 'js' / 'results_copy.js').read_text(encoding='utf-8')
+    assert 'renderAblationStabilitySection' in js
+    assert 'renderFocusAblationStability' in js
+    assert 'renderStabilityScatterPlot' in js
+    assert 'ablation_stability' in js

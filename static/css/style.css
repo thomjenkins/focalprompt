@@ -992,6 +992,32 @@ header img {
     border-radius: 8px;
 }
 
+.quality-eval-output-details {
+    margin: 10px 0 12px;
+}
+
+.quality-eval-output-details summary {
+    cursor: pointer;
+    font-size: 0.9em;
+    font-weight: 600;
+    color: var(--primary-color);
+    user-select: none;
+}
+
+.quality-eval-output-preview {
+    padding: 12px;
+    background: var(--bg-color);
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    max-height: 220px;
+    overflow-y: auto;
+    margin-top: 8px;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
 .comparison-table {
     width: 100%;
     border-collapse: collapse;
@@ -1877,6 +1903,33 @@ code, .textarea-large, #prompt-input, #batch-prompt-input, #manual-pair-input, #
 }
 .baseline-stability-multimodal {
     color: #1e3a8a;
+}
+.ablation-stability-panel {
+    margin: 16px 0;
+    padding: 14px 16px;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    background: #fff;
+}
+.ablation-stability-scatter {
+    width: 100%;
+    max-width: 520px;
+    height: auto;
+    display: block;
+    margin: 12px 0;
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+}
+.focus-ablation-stability {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px dashed #cbd5e1;
+}
+.focus-ablation-stability-title {
+    margin: 0 0 6px 0;
+    font-size: 0.95em;
+    color: var(--text-secondary);
 }
 .reported-focus-table {
     width: 100%;

@@ -121,6 +121,23 @@ BASELINE_STABILITY_DISCLAIMER = (
     "Describes dispersion among full-prompt samples only. Not a significance test "
     "and does not replace the permutation results below. Classification uses labeled heuristics."
 )
+
+ABLATION_STABILITY_TITLE = "Ablation stability (per focus)"
+ABLATION_STABILITY_DISCLAIMER = (
+    "Measures how variable outputs become when each focus is removed, compared to "
+    "unchanged baseline dispersion. Behavioural and distributional — not mechanistic "
+    "attention, causal noise decomposition, or variance explained."
+)
+ABLATION_STABILITY_INTERPRETATION = (
+    "Baseline stability: how much does the model vary when nothing changes? "
+    "Semantic perturbation: how far does behaviour move when this focus is removed? "
+    "Ablation stability: how variable is behaviour after this focus is removed? "
+    "Task-specific behavioural distribution: how does removal change the probability "
+    "of the behaviour you care about?"
+)
+ABLATION_STABILITY_REFINE_BUTTON = "Increase samples for stability estimate"
+ABLATION_STABILITY_JUDGE_BUTTON = "Run task-specific outcome dispersion"
+ABLATION_STABILITY_SCATTER_TITLE = "Semantic shift vs ablation/baseline dispersion ratio"
 REPORTED_FOCUS_DYNAMICS_TITLE = "Per-sample reported-focus dynamics"
 REPORTED_FOCUS_DYNAMICS_DISCLAIMER = (
     "Self-reported focus weights from an LLM judge on each sample — not model attention "
@@ -147,6 +164,12 @@ COPY = {
     'SHUFFLE_ROBUSTNESS_ORDER_UNCHANGED': SHUFFLE_ROBUSTNESS_ORDER_UNCHANGED,
     'BASELINE_STABILITY_TITLE': BASELINE_STABILITY_TITLE,
     'BASELINE_STABILITY_DISCLAIMER': BASELINE_STABILITY_DISCLAIMER,
+    'ABLATION_STABILITY_TITLE': ABLATION_STABILITY_TITLE,
+    'ABLATION_STABILITY_DISCLAIMER': ABLATION_STABILITY_DISCLAIMER,
+    'ABLATION_STABILITY_INTERPRETATION': ABLATION_STABILITY_INTERPRETATION,
+    'ABLATION_STABILITY_REFINE_BUTTON': ABLATION_STABILITY_REFINE_BUTTON,
+    'ABLATION_STABILITY_JUDGE_BUTTON': ABLATION_STABILITY_JUDGE_BUTTON,
+    'ABLATION_STABILITY_SCATTER_TITLE': ABLATION_STABILITY_SCATTER_TITLE,
     'FOCUS_ORDER_TITLE': FOCUS_ORDER_TITLE,
     'FOCUS_ORDER_DISCLAIMER': FOCUS_ORDER_DISCLAIMER,
     'REPORTED_FOCUS_DYNAMICS_TITLE': REPORTED_FOCUS_DYNAMICS_TITLE,
