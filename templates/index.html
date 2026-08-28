@@ -460,10 +460,63 @@
                 </div>
             </section>
 
+            <!-- Focus order / position sensitivity -->
+            <section class="card" id="focus-order-section">
+                <div class="card-header">
+                    <h2>8. Focus order sensitivity</h2>
+                    <div class="button-group">
+                        <button id="run-focus-order-btn" class="btn btn-primary" type="button" disabled>
+                            🔀 Run order sensitivity
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <p class="info-text">
+                        Measures behavioural sensitivity to <strong>focus ordering</strong> while keeping
+                        semantic content constant (glue, dynamic chat, and fixed sections preserved).
+                        Reuses Experiment B baseline samples. Distinct from LOO ablation (content removal)
+                        and from shuffle-order robustness on each focus card (LOO + remaining reorder).
+                        Not mechanistic attention.
+                    </p>
+                    <div class="experiment-config" data-foci-source="focus-order">
+                        <div class="experiment-field experiment-samples" style="display:flex;gap:16px;flex-wrap:wrap">
+                            <label>K permutations
+                                <input id="focus-order-k" type="number" min="2" max="20" step="1" value="5">
+                            </label>
+                            <label>M samples / permutation
+                                <input id="focus-order-m" type="number" min="1" max="10" step="1" value="3">
+                            </label>
+                            <label>Position sweep focus
+                                <select id="focus-order-sweep-focus" disabled>
+                                    <option value="">— after Experiment B —</option>
+                                </select>
+                            </label>
+                        </div>
+                        <label style="display:flex;align-items:center;gap:8px;margin-top:10px">
+                            <input id="focus-order-run-sweep" type="checkbox">
+                            Run single-focus position sweep
+                        </label>
+                        <label style="display:flex;align-items:center;gap:8px;margin-top:6px">
+                            <input id="focus-order-run-judge" type="checkbox">
+                            Apply behavioural criterion judge (uses criteria from section 9 or below)
+                        </label>
+                        <textarea id="focus-order-criterion" class="textarea-large" rows="2"
+                            placeholder="Optional behavioural criterion (e.g. only offer appointments for cats)…"
+                            style="margin-top:10px"></textarea>
+                        <p class="info-text" id="focus-order-cost-estimate" style="margin-top:10px">
+                            Run Experiment B (section 6) first to reuse baseline samples.
+                        </p>
+                    </div>
+                    <div id="focus-order-results" class="focus-order-results">
+                        <p class="empty-state">Complete Experiment B, then run order sensitivity here.</p>
+                    </div>
+                </div>
+            </section>
+
             <!-- Task quality evaluation (LLM judge) -->
             <section class="card" id="quality-eval-section">
                 <div class="card-header">
-                    <h2>8. Task quality evaluation (LLM)</h2>
+                    <h2>9. Task quality evaluation (LLM)</h2>
                     <div class="button-group">
                         <button id="run-quality-eval-btn" class="btn btn-primary" type="button">
                             🎯 Evaluate outputs on criteria
@@ -488,7 +541,7 @@
                         placeholder="Describe what a good output must do (e.g. answer the client question, follow JSON schema, include clinic hours, professional tone, schedule next steps)..."
                     ></textarea>
                     <p class="info-text" id="quality-eval-output-preview" style="margin-top: 10px;">
-                        Run Experiment B (section 7) first. Baseline and ablated samples from that run will be
+                        Run Experiment B (section 6) first. Baseline and ablated samples from that run will be
                         scored here against your criteria.
                     </p>
                     <div id="quality-eval-results" class="quality-eval-results">

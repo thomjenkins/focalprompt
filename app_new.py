@@ -109,6 +109,12 @@ except Exception as e:
     print(f"Error registering evaluation_bp: {e}", file=sys.stderr)
 
 try:
+    from routes.order_sensitivity_routes import order_sensitivity_bp
+    app.register_blueprint(order_sensitivity_bp)
+except Exception as e:
+    print(f"Error registering order_sensitivity_bp: {e}", file=sys.stderr)
+
+try:
     from routes.optimization_routes import optimization_bp
     app.register_blueprint(optimization_bp)
 except Exception as e:

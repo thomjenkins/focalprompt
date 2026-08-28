@@ -812,6 +812,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     
     updateManualInputFields();
     refreshQualityEvalPreview();
+    refreshFocusOrderControls(window.singleAblationResults);
     
     // Initialize settings UI
     const providerSelect = document.getElementById('provider-select');
@@ -2847,6 +2848,8 @@ function renderAblationResults(data) {
 
     refreshQualityEvalPreview();
 
+    refreshFocusOrderControls(data);
+
     const toggleOutputsBtn = document.getElementById('toggle-all-outputs');
     const allOutputsContainer = document.getElementById('all-outputs-container');
     const downloadBtn = document.getElementById('download-ablation-results');
@@ -3346,6 +3349,15 @@ const evalCriteriaInput = document.getElementById('eval-criteria-input');
 const runQualityEvalBtn = document.getElementById('run-quality-eval-btn');
 const qualityEvalResults = document.getElementById('quality-eval-results');
 const qualityEvalOutputPreview = document.getElementById('quality-eval-output-preview');
+const runFocusOrderBtn = document.getElementById('run-focus-order-btn');
+const focusOrderResults = document.getElementById('focus-order-results');
+const focusOrderKSel = document.getElementById('focus-order-k');
+const focusOrderMSel = document.getElementById('focus-order-m');
+const focusOrderSweepFocus = document.getElementById('focus-order-sweep-focus');
+const focusOrderRunSweep = document.getElementById('focus-order-run-sweep');
+const focusOrderRunJudge = document.getElementById('focus-order-run-judge');
+const focusOrderCriterion = document.getElementById('focus-order-criterion');
+const focusOrderCostEstimate = document.getElementById('focus-order-cost-estimate');
 window.experimentCComparison = null;
 
 function getExperimentAReportedPayload() {
@@ -3608,7 +3620,7 @@ function collectOutputsForQualityEval() {
 
 function summarizeQualityEvalOutputs(outputs) {
     if (!outputs || !outputs.length) {
-        return 'Run Experiment B (section 7) first. Baseline and ablated samples from that run will be scored here against your criteria.';
+        return 'Run Experiment B (section 6) first. Baseline and ablated samples from that run will be scored here against your criteria.';
     }
     const baselineCount = outputs.filter(function (o) { return o.group === 'baseline'; }).length;
     const ablatedRows = outputs.filter(function (o) { return o.group === 'ablated'; });
@@ -3729,6 +3741,144 @@ function renderQualityEvalResults(data) {
     window.lastQualityEvalResults = data;
 }
 
+function refreshFocusOrderControls(abData) {
+    const ab = abData || window.singleAblationResults;
+    if (!runFocusOrderBtn || !focusOrderSweepFocus) return;
+    const baselines = (ab && ab.baseline_outputs && ab.baseline_outputs.length)
+        ? ab.baseline_outputs
+        : (ab && ab.baseline_output ? [ab.baseline_output] : []);
+    runFocusOrderBtn.disabled = !baselines.length;
+    focusOrderSweepFocus.innerHTML = '';
+    if (!ab || !baselines.length) {
+        focusOrderSweepFocus.disabled = true;
+        focusOrderSweepFocus.innerHTML = '<option value="">— run Experiment B first —</option>';
+        if (focusOrderCostEstimate) {
+            focusOrderCostEstimate.textContent = 'Run Experiment B (section 6) first to reuse baseline samples.';
+        }
+        return;
+    }
+    focusOrderSweepFocus.disabled = false;
+    const records = (window.FocalPromptResults && window.FocalPromptResults.collectFocusRecords)
+        ? window.FocalPromptResults.collectFocusRecords(ab)
+        : (ab.ablation_results || []);
+    focusOrderSweepFocus.innerHTML = '<option value="">— select focus —</option>';
+    records.forEach(function (rec) {
+        if (!rec.attributable) return;
+        const idx = rec.focus_index != null ? rec.focus_index : rec.index;
+        const name = rec.focus || rec.focus_name || ('Focus ' + idx);
+        focusOrderSweepFocus.innerHTML += '<option value="' + String(idx) + '">' +
+            escapeHtml(name) + '</option>';
+    });
+    updateFocusOrderCostEstimate();
+}
+
+async function updateFocusOrderCostEstimate() {
+    if (!focusOrderCostEstimate) return;
+    const ab = window.singleAblationResults;
+    const baselines = (ab && ab.baseline_outputs) ? ab.baseline_outputs : [];
+    if (!baselines.length) {
+        focusOrderCostEstimate.textContent = 'Run Experiment B (section 6) first to reuse baseline samples.';
+        return;
+    }
+    const k = focusOrderKSel ? parseInt(focusOrderKSel.value, 10) || 5 : 5;
+    const m = focusOrderMSel ? parseInt(focusOrderMSel.value, 10) || 3 : 3;
+    try {
+        const response = await fetch('/api/focus-order-sensitivity/estimate-cost', {
+            method: 'POST',
+            headers: getApiHeaders(),
+            body: JSON.stringify(getApiBody({
+                k_permutations: k,
+                m_samples: m,
+                run_position_sweep: focusOrderRunSweep && focusOrderRunSweep.checked,
+                run_behavioral_judge: focusOrderRunJudge && focusOrderRunJudge.checked,
+                baseline_outputs: baselines,
+            })),
+        });
+        const est = await response.json();
+        if (response.ok) {
+            focusOrderCostEstimate.textContent =
+                'Estimated model calls: ' + est.total_model_calls +
+                ' (global ' + est.global_order_model_calls +
+                (est.position_sweep_model_calls ? ', sweep ' + est.position_sweep_model_calls : '') +
+                (est.behavioral_judge_calls ? ', judge ' + est.behavioral_judge_calls : '') +
+                '). Baseline outputs reused from Experiment B.';
+        }
+    } catch (_e) {
+        focusOrderCostEstimate.textContent = 'Configure K and M above; baseline samples reused from Experiment B.';
+    }
+}
+
+if (focusOrderKSel) focusOrderKSel.addEventListener('change', updateFocusOrderCostEstimate);
+if (focusOrderMSel) focusOrderMSel.addEventListener('change', updateFocusOrderCostEstimate);
+if (focusOrderRunSweep) focusOrderRunSweep.addEventListener('change', updateFocusOrderCostEstimate);
+if (focusOrderRunJudge) focusOrderRunJudge.addEventListener('change', updateFocusOrderCostEstimate);
+
+if (runFocusOrderBtn) {
+    runFocusOrderBtn.addEventListener('click', async function () {
+        const ab = window.singleAblationResults;
+        const baselines = (ab && ab.baseline_outputs && ab.baseline_outputs.length)
+            ? ab.baseline_outputs
+            : (ab && ab.baseline_output ? [ab.baseline_output] : []);
+        if (!baselines.length || !promptInput || !foci.length) {
+            showErrorModal('Run Experiment B (section 6) with tagged foci first.');
+            return;
+        }
+        const k = focusOrderKSel ? parseInt(focusOrderKSel.value, 10) || 5 : 5;
+        const m = focusOrderMSel ? parseInt(focusOrderMSel.value, 10) || 3 : 3;
+        const runSweep = focusOrderRunSweep && focusOrderRunSweep.checked;
+        const sweepFocus = focusOrderSweepFocus ? focusOrderSweepFocus.value : '';
+        if (runSweep && !sweepFocus) {
+            showErrorModal('Select a focus for the position sweep.');
+            return;
+        }
+        const criterion = (focusOrderCriterion && focusOrderCriterion.value.trim()) ||
+            (evalCriteriaInput ? evalCriteriaInput.value.trim() : '');
+        const runJudge = focusOrderRunJudge && focusOrderRunJudge.checked;
+        if (runJudge && !criterion) {
+            showErrorModal('Enter a behavioural criterion for the judge.');
+            return;
+        }
+        showLoading('Running focus order sensitivity…');
+        runFocusOrderBtn.disabled = true;
+        try {
+            const response = await fetch('/api/focus-order-sensitivity', {
+                method: 'POST',
+                headers: getApiHeaders(),
+                body: JSON.stringify(getApiBody({
+                    prompt: promptInput.value,
+                    foci: foci,
+                    baseline_outputs: baselines,
+                    k_permutations: k,
+                    m_samples: m,
+                    temperature: ab.temperature || 0.7,
+                    run_position_sweep: runSweep,
+                    focus_index_for_sweep: runSweep ? parseInt(sweepFocus, 10) : null,
+                    run_behavioral_judge: runJudge,
+                    behavioral_criterion: criterion,
+                })),
+            });
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.error || data.reason || 'Order sensitivity failed');
+            }
+            window.focusOrderSensitivityResults = data;
+            if (ab) {
+                ab.focus_order_sensitivity = data;
+                window.singleAblationResults = ab;
+            }
+            if (focusOrderResults && window.FocalPromptResults) {
+                focusOrderResults.innerHTML =
+                    window.FocalPromptResults.renderFocusOrderSensitivityHtml(data);
+            }
+        } catch (err) {
+            showError('Focus order sensitivity: ' + err.message);
+        } finally {
+            hideLoading();
+            runFocusOrderBtn.disabled = false;
+        }
+    });
+}
+
 if (runQualityEvalBtn) {
     runQualityEvalBtn.addEventListener('click', async function () {
         const criteria = evalCriteriaInput ? evalCriteriaInput.value.trim() : '';
@@ -3739,7 +3889,7 @@ if (runQualityEvalBtn) {
         const outputs = collectOutputsForQualityEval();
         if (!outputs.length) {
             showErrorModal(
-                'No Experiment B outputs to evaluate. Run ablation analysis in section 7 first.'
+                'No Experiment B outputs to evaluate. Run ablation analysis in section 6 first.'
             );
             return;
         }

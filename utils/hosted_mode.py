@@ -123,6 +123,7 @@ LIVE_INFERENCE_PREFIXES = (
     '/api/build-agent-prompt',
     '/api/ablation',
     '/api/ablation-shuffle-robustness',
+    '/api/focus-order-sensitivity',
     '/api/behavioral-difference/llm-judge',
     '/api/explain-reported-vs-revealed',
     '/api/evaluate-outputs-quality',

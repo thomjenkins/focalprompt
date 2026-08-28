@@ -690,51 +690,24 @@ def build_shuffled_remaining_prompt(
     inputs: Optional[Mapping[str, Any]] = None,
 ) -> Tuple[str, bool, List[str], List[str]]:
     """
-    Remove one focus and reassemble the remaining attributable spans in shuffled order.
+    Remove one focus and reassemble remaining movable spans in shuffled slot order.
 
-    Non-attributable residual text (glue, dynamic slots, trailing chat already in
-    the prompt) is preserved after the shuffled foci. Optional ``inputs`` append
-    chat/RAG/tools when those strings are not already present.
+    Uses slot-preserving reconstruction so glue, dynamic slots, and trailing chat
+    remain present exactly once. Optional ``inputs`` append chat/RAG/tools when missing.
 
     Returns (ablated_prompt, prompt_empty, document_order_names, shuffled_order_names).
     """
-    import random
+    del separator  # slot reassembly preserves original inter-span text
+    from utils.prompt_order import build_loo_shuffle_prompt
 
-    if removed_index < 0 or removed_index >= len(classified):
-        raise ValueError('removed_index out of range')
-    removed = classified[removed_index]
-    if not removed.get('attributable'):
-        raise ValueError(
-            f"Focus '{removed.get('focus')}' cannot be ablated ({removed.get('reason')})"
-        )
-
-    remaining: List[Tuple[str, str]] = []
-    for i, focus in enumerate(classified):
-        if i == removed_index or not focus.get('attributable'):
-            continue
-        start = int(focus['char_start'])
-        end = int(focus['char_end'])
-        text = prompt[start:end].strip()
-        name = (focus.get('focus') or focus.get('focus_name') or f'Focus {i + 1}').strip()
-        if text:
-            remaining.append((name, text))
-
-    document_order = [name for name, _ in remaining]
-    if len(remaining) <= 1:
-        shuffled_pairs = list(remaining)
-    else:
-        shuffled_pairs = list(remaining)
-        rng = random.Random(shuffle_seed)
-        rng.shuffle(shuffled_pairs)
-    shuffled_order = [name for name, _ in shuffled_pairs]
-    ablated = separator.join(text for _, text in shuffled_pairs).strip()
-
-    residual = residual_outside_attributable(prompt, classified)
-    if residual and residual not in ablated:
-        ablated = (ablated + separator + residual).strip() if ablated else residual
-
-    ablated = append_dynamic_inputs(ablated, inputs)
-    return ablated, (not ablated), document_order, shuffled_order
+    ablated, empty, doc_order, shuffled_order, _meta = build_loo_shuffle_prompt(
+        prompt,
+        classified,
+        removed_index,
+        shuffle_seed=shuffle_seed,
+        inputs=inputs,
+    )
+    return ablated, empty, doc_order, shuffled_order
 
 
 def classify_foci_for_ablation(prompt: str, foci: List[Dict]) -> List[Dict]:

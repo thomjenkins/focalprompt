@@ -138,6 +138,28 @@ def build_app():
 
         _ensure_evaluation_bp_registered()
 
+        def _ensure_order_sensitivity_bp_registered():
+            routes_found = [
+                r for r in flask_app.url_map.iter_rules()
+                if 'focus-order-sensitivity' in str(r)
+            ]
+            if len(routes_found) == 0:
+                try:
+                    print("🔄 FORCE REGISTERING order_sensitivity_bp...", file=sys.stderr)
+                    import routes.order_sensitivity_routes
+                    flask_app.register_blueprint(
+                        routes.order_sensitivity_routes.order_sensitivity_bp
+                    )
+                    print("✅ order_sensitivity_bp force-registered successfully", file=sys.stderr)
+                except Exception as e:
+                    print(
+                        f"❌ Failed to force-register order_sensitivity_bp: {type(e).__name__}: {e}",
+                        file=sys.stderr,
+                    )
+                    traceback.print_exc(file=sys.stderr)
+
+        _ensure_order_sensitivity_bp_registered()
+
         def _ensure_behavioral_difference_bp_registered():
             compare_routes = [
                 r for r in flask_app.url_map.iter_rules()

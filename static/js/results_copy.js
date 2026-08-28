@@ -630,6 +630,78 @@
         return html;
     }
 
+    function renderFocusOrderSensitivityHtml(data) {
+        if (!data || !data.ok) {
+            return '<p class="empty-state">' + escapeHtml(data && data.error ? data.error : 'No order sensitivity results.') + '</p>';
+        }
+        var copy = getCopy();
+        var html = '<div class="focus-order-panel">';
+        html += '<h3>' + escapeHtml(copy.FOCUS_ORDER_TITLE || 'Focus order sensitivity') + '</h3>';
+        html += '<p class="info-text">' + escapeHtml(copy.FOCUS_ORDER_DISCLAIMER || '') + '</p>';
+        (data.warnings || []).forEach(function (w) {
+            html += '<p class="warning-text">' + escapeHtml(w) + '</p>';
+        });
+        var global = (data.global_order_experiment && data.global_order_experiment.summary) || {};
+        var disp = global.displacement || {};
+        html += '<h4>Global order sensitivity</h4>';
+        html += '<p>Sampled permutations: ' + escapeHtml(String(global.n_permutations || 0)) + '. ';
+        if (disp.median != null) {
+            html += 'Median semantic displacement vs baseline: ' + escapeHtml(Number(disp.median).toFixed(4)) + '. ';
+        }
+        if (global.advisory_ui) {
+            html += escapeHtml(global.advisory_ui);
+        }
+        html += '</p>';
+        var perms = (data.global_order_experiment && data.global_order_experiment.permutations) || [];
+        html += '<details class="focus-order-permutations"><summary>Inspect individual permutations (' +
+            perms.length + ')</summary>';
+        perms.forEach(function (p) {
+            html += '<div class="focus-order-perm-card">';
+            html += '<h5>Shuffle #' + escapeHtml(String(p.permutation_id)) + '</h5>';
+            html += '<p>Semantic displacement: ' + escapeHtml(fmtDist(p.semantic_displacement)) +
+                '. Relative to baseline noise: ' +
+                escapeHtml(p.relative_to_baseline_noise != null ? Number(p.relative_to_baseline_noise).toFixed(2) + '×' : 'n/a') +
+                ' (descriptive ratio, not a p-value)</p>';
+            if (p.ordered_focus_names && p.ordered_focus_names.length) {
+                html += '<p><strong>Ordering:</strong></p><ol>';
+                p.ordered_focus_names.forEach(function (name) {
+                    html += '<li>' + escapeHtml(name) + '</li>';
+                });
+                html += '</ol>';
+            }
+            html += '<details><summary>Sampled outputs</summary>';
+            (p.outputs || []).forEach(function (t, i) {
+                html += '<pre class="output-text" style="white-space:pre-wrap">' +
+                    escapeHtml(String(t || '')) + '</pre>';
+            });
+            html += '</details></div>';
+        });
+        html += '</details>';
+        (data.position_sweeps || []).forEach(function (sweep) {
+            html += '<h4>Focus position sensitivity: ' + escapeHtml(sweep.focus || '') + '</h4>';
+            var sum = sweep.summary || {};
+            html += '<p>' + escapeHtml(sum.interpretation_note || '') + '</p>';
+            (sweep.positions || []).forEach(function (pos) {
+                html += '<div class="focus-order-sweep-row">';
+                html += '<p><strong>Slot ' + escapeHtml(String(pos.slot_index)) + '</strong> — displacement ' +
+                    escapeHtml(fmtDist(pos.semantic_displacement)) + '</p>';
+                html += '</div>';
+            });
+        });
+        if (data.baseline_behavioral_judgments) {
+            html += '<h4>Task-specific behaviour (baseline)</h4><ul>';
+            data.baseline_behavioral_judgments.forEach(function (j) {
+                html += '<li>' + escapeHtml(j.classification || '') + ': ' + escapeHtml(j.rationale || '') + '</li>';
+            });
+            html += '</ul>';
+        }
+        if (data.cost_breakdown && data.cost_breakdown.total_cost != null) {
+            html += '<p class="info-text">Cost: $' + Number(data.cost_breakdown.total_cost).toFixed(4) + '</p>';
+        }
+        html += '</div>';
+        return html;
+    }
+
     function renderAblationResultsHtml(data) {
         var alpha = data.alpha != null ? Number(data.alpha) : DEFAULT_ALPHA;
         var parts = [
@@ -733,6 +805,7 @@
         renderMethodsPanel: renderMethodsPanel,
         renderPowerBannerHtml: renderPowerBannerHtml,
         renderBaselineStabilityHtml: renderBaselineStabilityHtml,
+        renderFocusOrderSensitivityHtml: renderFocusOrderSensitivityHtml,
         renderReportedFocusDynamicsHtml: renderReportedFocusDynamicsHtml,
         renderAblationResultsHtml: renderAblationResultsHtml
     };
