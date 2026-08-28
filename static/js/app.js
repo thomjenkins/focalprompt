@@ -3349,6 +3349,7 @@ const evalCriteriaInput = document.getElementById('eval-criteria-input');
 const runQualityEvalBtn = document.getElementById('run-quality-eval-btn');
 const qualityEvalResults = document.getElementById('quality-eval-results');
 const qualityEvalOutputPreview = document.getElementById('quality-eval-output-preview');
+const qualityEvalSamplePct = document.getElementById('quality-eval-sample-pct');
 const runFocusOrderBtn = document.getElementById('run-focus-order-btn');
 const focusOrderResults = document.getElementById('focus-order-results');
 const focusOrderKSel = document.getElementById('focus-order-k');
@@ -3618,6 +3619,18 @@ function collectOutputsForQualityEval() {
     return outputs;
 }
 
+function getQualityEvalSampleFraction() {
+    if (!qualityEvalSamplePct) return 1.0;
+    const pct = parseFloat(qualityEvalSamplePct.value);
+    if (!Number.isFinite(pct) || pct >= 100) return 1.0;
+    return Math.max(0.01, pct / 100.0);
+}
+
+function countSampledOutputs(total, fraction) {
+    if (fraction >= 1.0 || total <= 0) return total;
+    return Math.max(1, Math.round(total * fraction));
+}
+
 function summarizeQualityEvalOutputs(outputs) {
     if (!outputs || !outputs.length) {
         return 'Run Experiment B (section 6) first. Baseline and ablated samples from that run will be scored here against your criteria.';
@@ -3630,7 +3643,14 @@ function summarizeQualityEvalOutputs(outputs) {
             focusNames.push(o.focus);
         }
     });
-    let text = 'Will evaluate <strong>' + outputs.length + ' Experiment B output(s)</strong>: ';
+    let text = 'Will evaluate <strong>' + outputs.length + ' Experiment B output(s)</strong>';
+    const fraction = getQualityEvalSampleFraction();
+    if (fraction < 1.0) {
+        const sampled = countSampledOutputs(outputs.length, fraction);
+        text = 'Will evaluate <strong>' + sampled + ' of ' + outputs.length +
+            ' outputs</strong> (' + Math.round(fraction * 100) + '% stratified sample)';
+    }
+    text += ': ';
     text += baselineCount + ' baseline sample' + (baselineCount === 1 ? '' : 's') + ' (full prompt)';
     if (ablatedRows.length) {
         text += ' and ' + ablatedRows.length + ' ablated sample' +
@@ -3647,6 +3667,10 @@ function summarizeQualityEvalOutputs(outputs) {
 function refreshQualityEvalPreview() {
     if (!qualityEvalOutputPreview) return;
     qualityEvalOutputPreview.innerHTML = summarizeQualityEvalOutputs(collectOutputsForQualityEval());
+}
+
+if (qualityEvalSamplePct) {
+    qualityEvalSamplePct.addEventListener('change', refreshQualityEvalPreview);
 }
 
 function renderQualityEvalCard(row) {
@@ -3697,6 +3721,12 @@ function renderQualityEvalResults(data) {
 
     let html = '';
     html += '<p class="info-text"><strong>Scope:</strong> Experiment B outputs only — baseline samples (full prompt) and ablated samples (focus removed). Not section 3.</p>';
+    if (data.n_outputs_total && data.n_outputs_evaluated &&
+        data.n_outputs_evaluated < data.n_outputs_total) {
+        html += '<p class="info-text">Evaluated ' + data.n_outputs_evaluated + ' of ' +
+            data.n_outputs_total + ' outputs (' +
+            Math.round((data.sample_fraction || 0) * 100) + '% stratified sample).</p>';
+    }
     if (data.cost_breakdown && data.cost_breakdown.total_cost != null) {
         html += '<p class="info-text">Evaluation cost: $' +
             Number(data.cost_breakdown.total_cost).toFixed(4) + '</p>';
@@ -3893,8 +3923,9 @@ if (runQualityEvalBtn) {
             );
             return;
         }
+        const samplePct = qualityEvalSamplePct ? parseFloat(qualityEvalSamplePct.value) || 100 : 100;
 
-        showLoading('Evaluating ' + outputs.length + ' Experiment B output(s) against your criteria…');
+        showLoading('Evaluating Experiment B outputs against your criteria…');
         runQualityEvalBtn.disabled = true;
         try {
             const response = await fetch('/api/evaluate-outputs-quality', {
@@ -3907,6 +3938,7 @@ if (runQualityEvalBtn) {
                     task_context: '',
                     temperature: 0.2,
                     evaluation_scope: 'experiment_b',
+                    sample_pct: samplePct,
                 }))
             });
             const data = await response.json();

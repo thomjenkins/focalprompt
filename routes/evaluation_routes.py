@@ -39,12 +39,22 @@ def evaluate_outputs_quality():
             fields['model'],
             provider_name=getattr(assessor, 'provider_name', fields['provider']),
         )
+        raw_sample = data.get('sample_fraction')
+        if raw_sample is None:
+            raw_sample = data.get('sample_pct', 100)
+        sample_fraction = float(raw_sample)
+        if sample_fraction > 1.0:
+            sample_fraction /= 100.0
+        sample_fraction = max(0.01, min(1.0, sample_fraction))
+
         result = evaluator.evaluate_outputs(
             eval_criteria=eval_criteria,
             outputs=outputs,
             task_context=task_context,
             prompt=prompt,
             temperature=float(data.get('temperature') or 0.2),
+            sample_fraction=sample_fraction,
+            sample_seed=int(data.get('sample_seed') or 0),
         )
 
         usage = result.pop('usage', None) or {}

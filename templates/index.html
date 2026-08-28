@@ -540,6 +540,19 @@
                         rows="4"
                         placeholder="Describe what a good output must do (e.g. answer the client question, follow JSON schema, include clinic hours, professional tone, schedule next steps)..."
                     ></textarea>
+                    <div class="experiment-field" style="margin-top:10px">
+                        <label for="quality-eval-sample-pct">Outputs to evaluate</label>
+                        <select id="quality-eval-sample-pct" class="exp-temperature" style="max-width:280px">
+                            <option value="100" selected>All outputs (100%)</option>
+                            <option value="50">Stratified sample — 50%</option>
+                            <option value="25">Stratified sample — 25%</option>
+                            <option value="10">Stratified sample — 10%</option>
+                        </select>
+                        <p class="info-text" style="margin-top:6px">
+                            Sampling keeps at least one baseline and one sample per ablated focus.
+                            Cost scales with the number judged (batched 4 at a time). There is no fixed cap at 60.
+                        </p>
+                    </div>
                     <p class="info-text" id="quality-eval-output-preview" style="margin-top: 10px;">
                         Run Experiment B (section 6) first. Baseline and ablated samples from that run will be
                         scored here against your criteria.

@@ -12,6 +12,7 @@ from services.output_evaluator_service import (
     build_quality_evaluation_prompt,
     normalize_output_items,
     quality_eval_max_tokens,
+    sample_outputs_stratified,
 )
 
 
@@ -185,3 +186,70 @@ def test_evaluate_outputs_batches_large_experiment_b_sets():
     assert len(result['evaluations']) == 5
     assert all(row['overall_score'] == 80.0 for row in result['evaluations'])
     assert provider.chat_completion.call_count == 2
+
+
+def test_sample_outputs_stratified_keeps_groups():
+    outputs = [
+        {'label': 'Baseline (full prompt) — sample 1', 'text': 'b1', 'group': 'baseline'},
+        {'label': 'Baseline (full prompt) — sample 2', 'text': 'b2', 'group': 'baseline'},
+        {'label': 'Ablated: Role — sample 1', 'text': 'r1', 'group': 'ablated', 'focus': 'Role'},
+        {'label': 'Ablated: Role — sample 2', 'text': 'r2', 'group': 'ablated', 'focus': 'Role'},
+        {'label': 'Ablated: Tone — sample 1', 'text': 't1', 'group': 'ablated', 'focus': 'Tone'},
+    ]
+    sampled = sample_outputs_stratified(outputs, 0.5, seed=42)
+    labels = {row['label'] for row in sampled}
+    assert any(l.startswith('Baseline') for l in labels)
+    assert any('Role' in l for l in labels)
+    assert any('Tone' in l for l in labels)
+    assert len(sampled) < len(outputs)
+
+
+def test_evaluate_all_outputs_accepts_100_experiment_b_outputs():
+    provider = MagicMock()
+    outputs = [
+        {'label': f'Baseline (full prompt) — sample {i}', 'text': f'b{i}'}
+        for i in range(1, 11)
+    ]
+    for focus in ('A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'):
+        for i in range(1, 10):
+            outputs.append({
+                'label': f'Ablated: {focus} — sample {i}',
+                'text': f'{focus}-{i}',
+                'group': 'ablated',
+                'focus': focus,
+            })
+    assert len(outputs) == 100
+
+    def _response(labels):
+        return {
+            'content': json.dumps({
+                'evaluations': [
+                    {
+                        'label': label,
+                        'overall_score': 80,
+                        'meets_primary_criterion': True,
+                        'criterion_breakdown': [],
+                        'strengths': [],
+                        'weaknesses': [],
+                        'summary': 'ok',
+                    }
+                    for label in labels
+                ],
+                'comparative_notes': '',
+            }),
+            'usage': {'prompt_tokens': 5, 'completion_tokens': 5},
+        }
+
+    batches = [outputs[i:i + 4] for i in range(0, len(outputs), 4)]
+    provider.chat_completion.side_effect = [
+        _response([o['label'] for o in batch]) for batch in batches
+    ]
+    ev = OutputQualityEvaluator(provider, 'mock-model', provider_name='openai')
+    result = ev.evaluate_outputs(
+        eval_criteria='Be polite.',
+        outputs=outputs,
+        sample_fraction=1.0,
+    )
+    assert result['n_outputs'] == 100
+    assert result['n_outputs_total'] == 100
+    assert result['n_batches'] == 25

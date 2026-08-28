@@ -8,13 +8,12 @@ This is explicit quality & task-fit assessment — NOT behavioral-difference
 
 from __future__ import annotations
 
-import json
+import random
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from utils.gateway_chat import chat_completion as gateway_chat_completion
 from utils.llm_json import parse_quality_eval_json
 
-MAX_OUTPUTS = 60
 MAX_OUTPUT_CHARS = 4000
 MAX_CRITERIA_CHARS = 3000
 MAX_CONTEXT_CHARS = 2000
@@ -23,6 +22,8 @@ MAX_CRITERIA_BREAKDOWN = 5
 MAX_STRENGTHS_WEAKNESSES = 2
 MAX_NOTE_CHARS = 60
 QUALITY_EVAL_BATCH_SIZE = 4
+# Soft guard against accidental huge runs (100+ LLM batches). Batching handles any size below this.
+ABSOLUTE_MAX_OUTPUTS = 500
 
 QUALITY_EVAL_RETRY_SUFFIX = (
     '\n\nCRITICAL RETRY: Your previous JSON was invalid or truncated. '
@@ -123,7 +124,72 @@ Return JSON:
 """
 
 
-def normalize_output_items(outputs: Sequence[Mapping[str, Any]]) -> List[Dict[str, str]]:
+def sample_outputs_stratified(
+    outputs: Sequence[Mapping[str, Any]],
+    sample_fraction: float,
+    *,
+    seed: int = 0,
+) -> List[Dict[str, str]]:
+    """
+    Stratified sample across baseline and each ablated focus group.
+
+    Keeps at least one item per non-empty group when fraction < 1.
+    ``sample_fraction`` in (0, 1]; 1 returns all outputs unchanged.
+    """
+    if sample_fraction >= 1.0:
+        return [
+            {'label': str(o.get('label') or ''), 'text': str(o.get('text') or '')}
+            for o in outputs
+            if str(o.get('text') or '').strip()
+        ]
+    if sample_fraction <= 0:
+        raise ValueError('sample_fraction must be greater than 0')
+
+    rng = random.Random(seed)
+    normalized: List[Dict[str, Any]] = []
+    for i, item in enumerate(outputs):
+        if not isinstance(item, Mapping):
+            continue
+        text = str(item.get('text') or '').strip()
+        if not text:
+            continue
+        normalized.append({
+            'label': str(item.get('label') or f'Output {i + 1}').strip(),
+            'text': text,
+            'group': item.get('group'),
+            'focus': item.get('focus'),
+        })
+
+    def _pick(group_items: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+        if not group_items:
+            return []
+        n = max(1, round(len(group_items) * sample_fraction))
+        n = min(n, len(group_items))
+        chosen = group_items if n >= len(group_items) else rng.sample(group_items, n)
+        return [{'label': g['label'], 'text': g['text']} for g in chosen]
+
+    baselines = [o for o in normalized if o.get('group') == 'baseline']
+    ablated = [o for o in normalized if o.get('group') == 'ablated']
+    other = [o for o in normalized if o.get('group') not in ('baseline', 'ablated')]
+
+    sampled: List[Dict[str, str]] = []
+    sampled.extend(_pick(baselines))
+
+    by_focus: Dict[str, List[Dict[str, Any]]] = {}
+    for row in ablated:
+        key = str(row.get('focus') or row.get('label') or 'ablated')
+        by_focus.setdefault(key, []).append(row)
+    for rows in by_focus.values():
+        sampled.extend(_pick(rows))
+    sampled.extend(_pick(other))
+    return sampled
+
+
+def normalize_output_items(
+    outputs: Sequence[Mapping[str, Any]],
+    *,
+    max_outputs: int = ABSOLUTE_MAX_OUTPUTS,
+) -> List[Dict[str, str]]:
     """Validate and trim the outputs list."""
     if not outputs:
         raise ValueError('At least one output is required')
@@ -138,9 +204,10 @@ def normalize_output_items(outputs: Sequence[Mapping[str, Any]]) -> List[Dict[st
         out.append({'label': label, 'text': text})
     if not out:
         raise ValueError('All outputs were empty')
-    if len(out) > MAX_OUTPUTS:
+    if len(out) > max_outputs:
         raise ValueError(
-            f'Too many outputs ({len(out)}). Maximum is {MAX_OUTPUTS} per evaluation run.'
+            f'Too many outputs ({len(out)}). Maximum is {max_outputs} per evaluation run. '
+            'Use a lower sample percentage or reduce Experiment B sample counts.'
         )
     return out
 
@@ -291,13 +358,25 @@ class OutputQualityEvaluator:
         task_context: str = '',
         prompt: str = '',
         temperature: float = 0.2,
+        sample_fraction: float = 1.0,
+        sample_seed: int = 0,
     ) -> Dict[str, Any]:
         """
         Score each output against eval_criteria.
 
         Returns evaluations aligned to input labels plus usage metadata.
         """
-        items = normalize_output_items(outputs)
+        if sample_fraction < 1.0:
+            items = sample_outputs_stratified(
+                outputs, sample_fraction, seed=sample_seed
+            )
+            items = normalize_output_items(items)
+        else:
+            items = normalize_output_items(outputs)
+        n_total = len([
+            o for o in outputs
+            if isinstance(o, Mapping) and str(o.get('text') or '').strip()
+        ])
         if not (eval_criteria or '').strip():
             raise ValueError('Evaluation criteria are required')
 
@@ -335,6 +414,9 @@ class OutputQualityEvaluator:
             'evaluations': ordered_evaluations,
             'comparative_notes': ' '.join(comparative_notes_parts).strip(),
             'n_outputs': len(items),
+            'n_outputs_total': n_total,
+            'n_outputs_evaluated': len(items),
+            'sample_fraction': float(sample_fraction) if sample_fraction < 1.0 else 1.0,
             'n_batches': len(batches),
             'evaluation_type': 'task_quality',
             'explicitly_not_behavioral_difference': True,
