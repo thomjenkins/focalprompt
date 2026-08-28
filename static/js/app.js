@@ -991,6 +991,25 @@ window.addEventListener('DOMContentLoaded', async () => {
             loadCheckpointBtn.addEventListener('click', displayCheckpointList);
         }
     }
+
+    const exportWorkspaceBtn = document.getElementById('export-workspace-btn');
+    const importWorkspaceBtn = document.getElementById('import-workspace-btn');
+    const importWorkspaceInput = document.getElementById('import-workspace-input');
+    if (exportWorkspaceBtn) {
+        exportWorkspaceBtn.addEventListener('click', exportWorkspaceSessionFile);
+    }
+    if (importWorkspaceBtn && importWorkspaceInput) {
+        importWorkspaceBtn.addEventListener('click', function () {
+            importWorkspaceInput.click();
+        });
+        importWorkspaceInput.addEventListener('change', function () {
+            const file = importWorkspaceInput.files && importWorkspaceInput.files[0];
+            if (file) {
+                importWorkspaceSessionFile(file);
+            }
+            importWorkspaceInput.value = '';
+        });
+    }
     
     // Error Modal Event Listeners
     const errorModal = document.getElementById('error-modal');
@@ -2032,8 +2051,9 @@ function renderAssessment(data) {
         }
     });
     
-    // Store for sliders
+    // Store for sliders and workspace export
     assessmentFoci = allFoci;
+    window.lastAssessmentApiPayload = data;
     
     let html = `
         <div class="assessment-summary">
@@ -2837,7 +2857,7 @@ if (runAblationBtn) {
 }
 
 // Render Ablation Results
-function renderAblationResults(data) {
+function renderAblationResults(data, options) {
     window.singleAblationResults = data;
     if (!ablationResults) return;
     if (!window.FocalPromptResults) {
@@ -2898,7 +2918,9 @@ function renderAblationResults(data) {
 
     bindBehavioralDifferenceReviewHandlers(data);
     bindShuffleRobustnessHandlers(data);
-    refreshExperimentCComparison({ scroll: true });
+    if (!options || !options.skipExperimentCRefresh) {
+        refreshExperimentCComparison({ scroll: true });
+    }
 }
 
 function bindReportedFocusDynamicsHandlers(data) {
@@ -7014,6 +7036,462 @@ if (exportBatchAgentResultsBtn) {
         URL.revokeObjectURL(url);
     });
 }
+
+// ---------------------------------------------------------------------------
+// Workspace session export / import (full page state)
+// ---------------------------------------------------------------------------
+const WORKSPACE_SESSION_VERSION = 1;
+
+function readAblationExperimentConfig(scope) {
+    const root = scope || document.getElementById('prompt-analysis-tab');
+    if (!root) {
+        return {};
+    }
+    return {
+        temperature: root.querySelector('.exp-temperature')?.value ?? '0.7',
+        n_baseline: root.querySelector('.exp-n-baseline')?.value ?? '10',
+        n_ablated: root.querySelector('.exp-n-ablated')?.value ?? '5',
+    };
+}
+
+function applyAblationExperimentConfig(config, scope) {
+    if (!config || !scope) {
+        return;
+    }
+    const tempEl = scope.querySelector('.exp-temperature');
+    const baseEl = scope.querySelector('.exp-n-baseline');
+    const ablEl = scope.querySelector('.exp-n-ablated');
+    if (tempEl && config.temperature != null) {
+        tempEl.value = config.temperature;
+    }
+    if (baseEl && config.n_baseline != null) {
+        baseEl.value = config.n_baseline;
+    }
+    if (ablEl && config.n_ablated != null) {
+        ablEl.value = config.n_ablated;
+    }
+}
+
+function collectPromptAnalysisWorkspace() {
+    const paTab = document.getElementById('prompt-analysis-tab');
+    const focusOrder = window.focusOrderSensitivityResults
+        || (window.singleAblationResults && window.singleAblationResults.focus_order_sensitivity)
+        || null;
+    return {
+        prompt: promptInput ? promptInput.value : '',
+        output: outputInput ? outputInput.value : '',
+        foci: foci,
+        assessment_payload: window.lastAssessmentApiPayload || null,
+        focus_control: {
+            weights: { ...focusWeights },
+            assessment_foci: assessmentFoci.map(function (f) { return { ...f }; }),
+            rewritten_prompt: rewrittenPromptText,
+            intended_distribution: { ...intendedDistribution },
+            generated_from_adjusted: !!window.generatedFromAdjustedPrompt,
+            adjusted_output: adjustedOutput ? adjustedOutput.textContent : '',
+        },
+        ablation_config: readAblationExperimentConfig(paTab),
+        single_ablation: window.singleAblationResults || null,
+        experiment_c: {
+            comparison: window.experimentCComparison || null,
+            explanation_html: window.experimentCExplanationHtml || '',
+        },
+        quality_eval: {
+            criteria: evalCriteriaInput ? evalCriteriaInput.value : '',
+            sample_pct: qualityEvalSamplePct ? qualityEvalSamplePct.value : '100',
+            results: window.lastQualityEvalResults || null,
+        },
+        focus_order: {
+            results: focusOrder,
+            k: focusOrderKSel ? focusOrderKSel.value : '5',
+            m: focusOrderMSel ? focusOrderMSel.value : '3',
+            sweep_focus: focusOrderSweepFocus ? focusOrderSweepFocus.value : '',
+            run_sweep: focusOrderRunSweep ? focusOrderRunSweep.checked : false,
+            run_judge: focusOrderRunJudge ? focusOrderRunJudge.checked : false,
+            criterion: focusOrderCriterion ? focusOrderCriterion.value : '',
+        },
+    };
+}
+
+function collectWorkspaceSession() {
+    const batchTab = document.getElementById('batch-analysis-tab');
+    return {
+        focalprompt_workspace: true,
+        version: WORKSPACE_SESSION_VERSION,
+        exported_at: new Date().toISOString(),
+        active_tab: currentTab,
+        model: { provider: userProvider, model: userModel },
+        prompt_analysis: collectPromptAnalysisWorkspace(),
+        batch_analysis: {
+            prompt: batchPromptInput ? batchPromptInput.value : '',
+            foci: batchFoci,
+            pairs: batchPairs,
+            results: window.batchResultsData || null,
+            batch_config: readAblationExperimentConfig(batchTab),
+        },
+        agent_builder: {
+            foci: agentFoci,
+            chat_input: chatInput ? chatInput.value : '',
+            imported_batch: batchAgentData,
+            results: batchAgentResultsData,
+            cost_breakdown: window.batchAgentCostBreakdown || null,
+        },
+        optimization: {
+            html: optimizationResults ? optimizationResults.innerHTML : '',
+            visible: promptOptimizationSection
+                ? promptOptimizationSection.style.display !== 'none'
+                : false,
+        },
+    };
+}
+
+function validateWorkspaceSession(data) {
+    if (!data || typeof data !== 'object') {
+        return 'Invalid file: not a JSON object.';
+    }
+    if (data.focalprompt_workspace !== true) {
+        if (data.baseline_outputs || data.influence_scores || data.ablation_results) {
+            return { legacy_ablation: true };
+        }
+        return 'Unrecognized file: expected a FocalPrompt workspace export.';
+    }
+    if (data.version != null && data.version !== WORKSPACE_SESSION_VERSION) {
+        return 'Unsupported workspace version ' + data.version +
+            ' (expected ' + WORKSPACE_SESSION_VERSION + ').';
+    }
+    return null;
+}
+
+function restoreFocusControlState(fc) {
+    if (!fc) {
+        return;
+    }
+    if (fc.assessment_foci && fc.assessment_foci.length) {
+        assessmentFoci = fc.assessment_foci.map(function (f) { return { ...f }; });
+        if (focusControlSection) {
+            focusControlSection.classList.remove('hidden');
+        }
+    }
+    if (fc.weights && Object.keys(fc.weights).length && assessmentFoci.length) {
+        focusWeights = { ...fc.weights };
+        renderSliders();
+        updateTotalBudget();
+    }
+    if (fc.rewritten_prompt) {
+        rewrittenPromptText = fc.rewritten_prompt;
+        if (rewrittenPrompt) {
+            rewrittenPrompt.textContent = rewrittenPromptText;
+        }
+        if (rewrittenPromptContainer) {
+            rewrittenPromptContainer.classList.remove('hidden');
+        }
+    } else {
+        rewrittenPromptText = '';
+        if (rewrittenPrompt) {
+            rewrittenPrompt.textContent = '';
+        }
+        if (rewrittenPromptContainer) {
+            rewrittenPromptContainer.classList.add('hidden');
+        }
+    }
+    intendedDistribution = fc.intended_distribution ? { ...fc.intended_distribution } : {};
+    window.generatedFromAdjustedPrompt = !!fc.generated_from_adjusted;
+    if (fc.generated_from_adjusted && fc.adjusted_output) {
+        if (adjustedOutput) {
+            adjustedOutput.textContent = fc.adjusted_output;
+        }
+        if (adjustedOutputContainer) {
+            adjustedOutputContainer.classList.remove('hidden');
+        }
+        if (compareIntentBtn) {
+            compareIntentBtn.classList.remove('hidden');
+        }
+    } else {
+        if (adjustedOutput) {
+            adjustedOutput.textContent = '';
+        }
+        if (adjustedOutputContainer) {
+            adjustedOutputContainer.classList.add('hidden');
+        }
+        if (compareIntentBtn) {
+            compareIntentBtn.classList.add('hidden');
+        }
+    }
+}
+
+function restoreFocusOrderControls(fo) {
+    if (!fo) {
+        return;
+    }
+    if (focusOrderKSel && fo.k != null) {
+        focusOrderKSel.value = fo.k;
+    }
+    if (focusOrderMSel && fo.m != null) {
+        focusOrderMSel.value = fo.m;
+    }
+    if (focusOrderRunSweep && fo.run_sweep != null) {
+        focusOrderRunSweep.checked = !!fo.run_sweep;
+    }
+    if (focusOrderRunJudge && fo.run_judge != null) {
+        focusOrderRunJudge.checked = !!fo.run_judge;
+    }
+    if (focusOrderCriterion && fo.criterion != null) {
+        focusOrderCriterion.value = fo.criterion;
+    }
+    refreshFocusOrderControls(window.singleAblationResults);
+    if (focusOrderSweepFocus && fo.sweep_focus != null) {
+        focusOrderSweepFocus.value = fo.sweep_focus;
+    }
+}
+
+function restorePromptAnalysisWorkspace(pa) {
+    if (!pa) {
+        return;
+    }
+    if (pa.prompt != null && promptInput) {
+        promptInput.value = pa.prompt;
+    }
+    if (pa.output != null && outputInput) {
+        outputInput.value = pa.output;
+    }
+    if (Array.isArray(pa.foci)) {
+        foci = pa.foci;
+        renderFoci();
+        if (foci.length > 0) {
+            updateCoverageVisualization();
+            updateCoverageStats();
+        }
+    }
+    if (pa.assessment_payload) {
+        renderAssessment(pa.assessment_payload);
+    } else if (assessmentResults) {
+        assessmentResults.innerHTML = '';
+        assessmentFoci = [];
+        if (focusControlSection) {
+            focusControlSection.classList.add('hidden');
+        }
+    }
+    restoreFocusControlState(pa.focus_control);
+    if (pa.ablation_config) {
+        applyAblationExperimentConfig(pa.ablation_config, document.getElementById('prompt-analysis-tab'));
+    }
+    if (pa.single_ablation) {
+        window.singleAblationResults = pa.single_ablation;
+        const skipExperimentC = !!(pa.experiment_c && pa.experiment_c.comparison);
+        renderAblationResults(pa.single_ablation, { skipExperimentCRefresh: skipExperimentC });
+    } else {
+        window.singleAblationResults = null;
+        if (ablationResults) {
+            ablationResults.innerHTML = '';
+        }
+        refreshQualityEvalPreview();
+        refreshFocusOrderControls(null);
+    }
+    if (pa.experiment_c && pa.experiment_c.comparison) {
+        window.experimentCComparison = pa.experiment_c.comparison;
+        window.experimentCExplanationHtml = pa.experiment_c.explanation_html || '';
+        paintExperimentCComparison(pa.experiment_c.comparison, true);
+        if (explainExperimentCBtn) {
+            const nDis = (pa.experiment_c.comparison.summary || {}).n_disagreements || 0;
+            explainExperimentCBtn.disabled = nDis === 0;
+        }
+    } else if (!pa.single_ablation) {
+        window.experimentCComparison = null;
+        window.experimentCExplanationHtml = '';
+        setExperimentCMessage(
+            '<p class="empty-state">Run <strong>Ablation Analysis</strong> (Experiment B) first.</p>'
+        );
+    }
+    if (pa.quality_eval) {
+        if (evalCriteriaInput && pa.quality_eval.criteria != null) {
+            evalCriteriaInput.value = pa.quality_eval.criteria;
+        }
+        if (qualityEvalSamplePct && pa.quality_eval.sample_pct != null) {
+            qualityEvalSamplePct.value = pa.quality_eval.sample_pct;
+        }
+        refreshQualityEvalPreview();
+        if (pa.quality_eval.results) {
+            renderQualityEvalResults(pa.quality_eval.results);
+        } else if (qualityEvalResults) {
+            qualityEvalResults.innerHTML = '';
+            window.lastQualityEvalResults = null;
+        }
+    }
+    if (pa.focus_order) {
+        restoreFocusOrderControls(pa.focus_order);
+        if (pa.focus_order.results) {
+            window.focusOrderSensitivityResults = pa.focus_order.results;
+            if (window.singleAblationResults) {
+                window.singleAblationResults.focus_order_sensitivity = pa.focus_order.results;
+            }
+            if (focusOrderResults && window.FocalPromptResults) {
+                focusOrderResults.innerHTML =
+                    window.FocalPromptResults.renderFocusOrderSensitivityHtml(pa.focus_order.results);
+            }
+        } else if (focusOrderResults) {
+            focusOrderResults.innerHTML = '';
+            window.focusOrderSensitivityResults = null;
+        }
+    }
+}
+
+function restoreBatchAnalysisWorkspace(ba) {
+    if (!ba) {
+        return;
+    }
+    if (batchPromptInput && ba.prompt != null) {
+        batchPromptInput.value = ba.prompt;
+    }
+    if (Array.isArray(ba.foci)) {
+        batchFoci = ba.foci.map(function (f) {
+            return {
+                ...f,
+                is_dynamic: f.is_dynamic || false,
+                dynamic_type: f.dynamic_type || null,
+            };
+        });
+        renderBatchFoci();
+    }
+    if (Array.isArray(ba.pairs)) {
+        batchPairs = ba.pairs;
+        renderPairs();
+    }
+    if (ba.batch_config) {
+        applyAblationExperimentConfig(ba.batch_config, document.getElementById('batch-analysis-tab'));
+    }
+    if (ba.results) {
+        window.batchResultsData = ba.results;
+        renderBatchResults(ba.results);
+        if (exportResultsBtn) {
+            exportResultsBtn.disabled = false;
+        }
+        if (exportResultsJsonBtn) {
+            exportResultsJsonBtn.disabled = false;
+        }
+    } else {
+        window.batchResultsData = null;
+        if (batchResults) {
+            batchResults.innerHTML = '';
+        }
+        if (exportResultsBtn) {
+            exportResultsBtn.disabled = true;
+        }
+        if (exportResultsJsonBtn) {
+            exportResultsJsonBtn.disabled = true;
+        }
+    }
+    updateBatchAnalysisButton();
+}
+
+function restoreAgentBuilderWorkspace(ab) {
+    if (!ab) {
+        return;
+    }
+    if (Array.isArray(ab.foci)) {
+        agentFoci = ab.foci;
+        renderAgentFoci();
+    }
+    if (chatInput && ab.chat_input != null) {
+        chatInput.value = ab.chat_input;
+    }
+    batchAgentData = ab.imported_batch || null;
+    batchAgentResultsData = ab.results || [];
+    window.batchAgentCostBreakdown = ab.cost_breakdown || null;
+    if (batchAgentResultsData.length) {
+        renderBatchAgentResults(batchAgentResultsData, window.batchAgentCostBreakdown);
+        if (batchAgentReportingSection) {
+            batchAgentReportingSection.style.display = 'block';
+        }
+        if (exportBatchAgentResultsBtn) {
+            exportBatchAgentResultsBtn.disabled = false;
+        }
+        updateBatchAgentReporting();
+    } else if (batchAgentResults) {
+        batchAgentResults.innerHTML = '';
+        if (exportBatchAgentResultsBtn) {
+            exportBatchAgentResultsBtn.disabled = true;
+        }
+    }
+}
+
+function restoreWorkspaceSession(data) {
+    if (data.model && data.model.provider && data.model.model) {
+        persistModelSelection(data.model.provider, data.model.model);
+        updateModelSelector(data.model.provider);
+    }
+    restorePromptAnalysisWorkspace(data.prompt_analysis);
+    restoreBatchAnalysisWorkspace(data.batch_analysis);
+    restoreAgentBuilderWorkspace(data.agent_builder);
+    if (data.optimization) {
+        if (optimizationResults) {
+            optimizationResults.innerHTML = data.optimization.html || '';
+        }
+        if (promptOptimizationSection) {
+            promptOptimizationSection.style.display = data.optimization.visible ? 'block' : 'none';
+        }
+    }
+    if (data.active_tab) {
+        switchTab(data.active_tab);
+    }
+}
+
+function exportWorkspaceSessionFile() {
+    const payload = collectWorkspaceSession();
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'focalprompt-workspace-' + new Date().toISOString().split('T')[0] + '.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+function importWorkspaceSessionFile(file) {
+    const reader = new FileReader();
+    reader.onload = function () {
+        let data;
+        try {
+            data = JSON.parse(reader.result);
+        } catch (err) {
+            showErrorModal('Could not parse workspace file: ' + err.message);
+            return;
+        }
+        const validation = validateWorkspaceSession(data);
+        if (typeof validation === 'string') {
+            showErrorModal(validation);
+            return;
+        }
+        if (validation && validation.legacy_ablation) {
+            if (!confirm('This file looks like an ablation-only export. Import it into the current workspace?')) {
+                return;
+            }
+            window.singleAblationResults = data;
+            renderAblationResults(data);
+            switchTab('prompt-analysis');
+            alert('Ablation results imported. Run assessment or export a full workspace next time to save everything.');
+            return;
+        }
+        if (!confirm('Import workspace? This replaces current data across all tabs.')) {
+            return;
+        }
+        try {
+            restoreWorkspaceSession(data);
+            alert('Workspace imported successfully. You can continue from where you left off.');
+        } catch (err) {
+            showErrorModal('Failed to restore workspace: ' + err.message);
+            console.error('Workspace import error:', err);
+        }
+    };
+    reader.onerror = function () {
+        showErrorModal('Could not read workspace file.');
+    };
+    reader.readAsText(file);
+}
+
+window.collectWorkspaceSession = collectWorkspaceSession;
+window.restoreWorkspaceSession = restoreWorkspaceSession;
 
 // Make functions available globally
 window.removePair = removePair;
