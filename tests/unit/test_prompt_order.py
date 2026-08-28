@@ -124,6 +124,38 @@ def test_sample_random_assignments_respects_k():
     assert len(set(tuple(p[1]) for p in perms)) == 3
 
 
+def test_reorder_preserves_triple_newlines_inside_focus_span():
+    """Focus spans with \\n\\n\\n must round-trip without normalization loss."""
+    prompt = (
+        "Start\n\n"
+        "Focus line1\n\n\nFocus line2\n\n"
+        "Instruction B.\n\n"
+        "End"
+    )
+    foci = [
+        {
+            'focus': 'Block A',
+            'prompt_section': 'Focus line1\n\n\nFocus line2',
+            'is_dynamic': False,
+        },
+        {
+            'focus': 'Block B',
+            'prompt_section': 'Instruction B.',
+            'is_dynamic': False,
+        },
+    ]
+    classified = classify_foci_for_ablation(prompt, foci)
+    prep = prepare_order_experiment(prompt, foci)
+    assignment = list(range(prep['n_movable_slots']))
+    assignment.reverse()
+    reconstructed, _meta = build_reordered_prompt(
+        prompt, classified, assignment, policies=prep['ordering_policy']
+    )
+    ok, errors = validate_semantic_completeness(prompt, reconstructed, prep['template'])
+    assert ok, errors
+    assert '\n\n\n' in reconstructed
+
+
 def test_inputs_chat_appended_once_when_missing():
     prompt = VET_PROMPT.replace('{{CHAT}}', '{{CHAT}}')
     classified = classify_foci_for_ablation(prompt, _vet_foci())

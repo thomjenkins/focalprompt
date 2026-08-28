@@ -11,7 +11,6 @@ This is behavioural sensitivity tooling — not mechanistic attention analysis.
 from __future__ import annotations
 
 import random
-import re
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from utils.span_alignment import append_dynamic_inputs, classify_foci_for_ablation
@@ -182,8 +181,9 @@ def reassemble_from_assignment(
             raise ValueError(f'invalid assignment[{slot_i}]={movable_i}')
         focus_idx = movable_indices[movable_i]
         parts.append(str(focus_texts.get(str(focus_idx), '')))
+    # Byte-exact join: do not collapse newlines or strip — validation checks exact
+    # movable/fixed substrings from the original prompt.
     out = ''.join(parts)
-    out = re.sub(r'\n{3,}', '\n\n', out).strip()
     return append_dynamic_inputs(out, inputs)
 
 
