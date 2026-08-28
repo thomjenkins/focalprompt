@@ -472,8 +472,10 @@
                 </div>
                 <div class="card-body">
                     <p class="info-text">
-                        Score how well each output meets your task criteria (quality / instruction-following).
-                        This is separate from <strong>behavioral difference</strong> (baseline vs ablated change)
+                        Score how well each <strong>Experiment B</strong> output meets your task criteria
+                        (quality / instruction-following). Evaluates baseline samples (full prompt) and
+                        ablated samples (one focus removed per run) — not the single output from section 3.
+                        Separate from <strong>behavioral difference</strong> (whether ablation changed outputs)
                         and from <strong>reported focus</strong> (Experiment A).
                     </p>
                     <label for="eval-criteria-input" style="display:block;font-weight:600;margin-bottom:6px;">
@@ -485,9 +487,9 @@
                         rows="4"
                         placeholder="Describe what a good output must do (e.g. answer the client question, follow JSON schema, include clinic hours, professional tone, schedule next steps)..."
                     ></textarea>
-                    <p class="info-text" style="margin-top: 10px;">
-                        Outputs evaluated: current output (section 3), output from rewritten prompt (if any),
-                        and ablation baseline/ablated samples (if Experiment B was run). Max 12 outputs per run.
+                    <p class="info-text" id="quality-eval-output-preview" style="margin-top: 10px;">
+                        Run Experiment B (section 7) first. Baseline and ablated samples from that run will be
+                        scored here against your criteria.
                     </p>
                     <div id="quality-eval-results" class="quality-eval-results">
                         <p class="empty-state">Enter criteria above, then click Evaluate.</p>

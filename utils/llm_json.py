@@ -22,6 +22,31 @@ _FOCUS_OBJECT_RE = re.compile(
     re.DOTALL,
 )
 
+_EVALUATION_HEAD_RE = re.compile(
+    r'\{\s*"label"\s*:\s*"(?P<label>(?:\\.|[^"\\])*)"\s*,\s*'
+    r'"overall_score"\s*:\s*(?P<overall_score>-?\d+(?:\.\d+)?)\s*,\s*'
+    r'"meets_primary_criterion"\s*:\s*(?P<meets>true|false)',
+    re.DOTALL | re.IGNORECASE,
+)
+
+_CRITERION_ITEM_RE = re.compile(
+    r'\{\s*"name"\s*:\s*"(?P<name>(?:\\.|[^"\\])*)"\s*,\s*'
+    r'"score"\s*:\s*(?P<score>-?\d+(?:\.\d+)?)\s*,\s*'
+    r'"met"\s*:\s*(?P<met>true|false)'
+    r'(?:\s*,\s*"notes"\s*:\s*"(?P<notes>(?:\\.|[^"\\])*)")?',
+    re.DOTALL | re.IGNORECASE,
+)
+
+_DEFAULT_TRUNCATION_HINT = (
+    ' Response looks truncated (unbalanced braces). '
+    'Retry, or use fewer/shorter foci so the model can finish the JSON.'
+)
+
+_QUALITY_EVAL_TRUNCATION_HINT = (
+    ' Response looks truncated (unbalanced braces). '
+    'Retry, or evaluate fewer outputs / use shorter criteria so the model can finish the JSON.'
+)
+
 
 def strip_prompt_section_fields(text: str) -> str:
     """Remove prompt_section key/values, including truncated mid-string values."""
@@ -81,7 +106,79 @@ def recover_assessment_foci(text: str) -> Optional[Dict[str, Any]]:
     return out
 
 
-def parse_llm_json(content: str) -> Any:
+def recover_quality_evaluations(text: str) -> Optional[Dict[str, Any]]:
+    """
+    Best-effort recovery when quality-eval JSON was truncated.
+
+    Returns a dict with evaluations (and optional comparative_notes) if at
+    least one label+overall_score block can be salvaged; otherwise None.
+    """
+    if not text:
+        return None
+    evaluations: List[Dict[str, Any]] = []
+    for match in _EVALUATION_HEAD_RE.finditer(text):
+        label = _unescape_json_string(match.group('label'))
+        try:
+            overall = float(match.group('overall_score'))
+        except (TypeError, ValueError):
+            continue
+        meets_raw = (match.group('meets') or '').lower()
+        item: Dict[str, Any] = {
+            'label': label,
+            'overall_score': overall,
+            'meets_primary_criterion': meets_raw == 'true',
+            'criterion_breakdown': [],
+            'strengths': [],
+            'weaknesses': [],
+            'summary': '',
+        }
+        summary_match = re.search(
+            r'"summary"\s*:\s*"(?P<summary>(?:\\.|[^"\\])*)"',
+            text[match.start() : match.start() + 2500],
+            re.DOTALL,
+        )
+        if summary_match:
+            item['summary'] = _unescape_json_string(summary_match.group('summary'))
+        evaluations.append(item)
+
+    if not evaluations:
+        return None
+
+    breakdown: List[Dict[str, Any]] = []
+    for crit in _CRITERION_ITEM_RE.finditer(text):
+        try:
+            score = float(crit.group('score'))
+        except (TypeError, ValueError):
+            continue
+        entry: Dict[str, Any] = {
+            'name': _unescape_json_string(crit.group('name')),
+            'score': score,
+            'met': (crit.group('met') or '').lower() == 'true',
+        }
+        notes = crit.group('notes')
+        if notes is not None:
+            entry['notes'] = _unescape_json_string(notes)
+        breakdown.append(entry)
+
+    if breakdown and evaluations:
+        evaluations[0]['criterion_breakdown'] = breakdown[:5]
+
+    comparative_notes = ''
+    cm = re.search(
+        r'"comparative_notes"\s*:\s*"(?P<notes>(?:\\.|[^"\\])*)"',
+        text,
+        re.DOTALL,
+    )
+    if cm:
+        comparative_notes = _unescape_json_string(cm.group('notes'))
+
+    return {
+        'evaluations': evaluations,
+        'comparative_notes': comparative_notes,
+    }
+
+
+def parse_llm_json(content: str, *, truncation_hint: Optional[str] = None) -> Any:
     """
     Parse a JSON object/array from model output.
 
@@ -143,10 +240,7 @@ def parse_llm_json(content: str) -> Any:
     hint = ''
     stripped_tail = text.rstrip()
     if stripped_tail.count('{') > stripped_tail.count('}') or stripped_tail.count('[') > stripped_tail.count(']'):
-        hint = (
-            ' Response looks truncated (unbalanced braces). '
-            'Retry, or use fewer/shorter foci so the model can finish the JSON.'
-        )
+        hint = truncation_hint or _DEFAULT_TRUNCATION_HINT
     elif stripped_tail.endswith(('"', ',', ':')) or '"prompt_section"' in text[:400]:
         hint = (
             ' Response looks incomplete or mid-string. '
@@ -155,6 +249,25 @@ def parse_llm_json(content: str) -> Any:
     raise ValueError(
         f'LLM did not return valid JSON.{hint} Response: {text[:200]}...'
     )
+
+
+def parse_quality_eval_json(content: str) -> Dict[str, Any]:
+    """Parse task-quality evaluation JSON; tolerate truncated responses."""
+    try:
+        result = parse_llm_json(content, truncation_hint=_QUALITY_EVAL_TRUNCATION_HINT)
+    except ValueError:
+        recovered = recover_quality_evaluations(content)
+        if recovered is not None:
+            return recovered
+        raise
+    if not isinstance(result, dict):
+        raise ValueError('Quality evaluation JSON must be an object')
+    if 'evaluations' not in result or not isinstance(result.get('evaluations'), list):
+        recovered = recover_quality_evaluations(content)
+        if recovered is not None:
+            return recovered
+        raise ValueError('Quality evaluation JSON missing evaluations array')
+    return result
 
 
 def parse_assessment_json(content: str) -> Dict[str, Any]:

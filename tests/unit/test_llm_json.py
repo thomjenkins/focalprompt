@@ -5,7 +5,9 @@ import pytest
 from utils.llm_json import (
     parse_assessment_json,
     parse_llm_json,
+    parse_quality_eval_json,
     recover_assessment_foci,
+    recover_quality_evaluations,
     strip_prompt_section_fields,
 )
 
@@ -101,3 +103,38 @@ def test_parse_assessment_json_strips_residual_prompt_section():
     result = parse_assessment_json(raw)
     assert result['foci'][0]['score'] == 100
     assert 'prompt_section' not in result['foci'][0]
+
+
+def test_recover_quality_evaluations_from_truncated_response():
+    truncated = (
+        '{\n  "evaluations": [\n    {\n'
+        '      "label": "Current output",\n'
+        '      "overall_score": 90,\n'
+        '      "meets_primary_criterion": true,\n'
+        '      "criterion_breakdown": [\n'
+        '        {"name": "Polite Decline", "score":'
+    )
+    recovered = recover_quality_evaluations(truncated)
+    assert recovered is not None
+    assert recovered['evaluations'][0]['label'] == 'Current output'
+    assert recovered['evaluations'][0]['overall_score'] == 90.0
+    assert recovered['evaluations'][0]['meets_primary_criterion'] is True
+
+
+def test_parse_quality_eval_json_recovers_truncated_response():
+    truncated = (
+        '{\n  "evaluations": [\n    {\n'
+        '      "label": "Current output",\n'
+        '      "overall_score": 90,\n'
+        '      "meets_primary_criterion": true,\n'
+        '      "criterion_breakdown": [\n'
+        '        {"name": "Polite Decline", "score":'
+    )
+    parsed = parse_quality_eval_json(truncated)
+    assert parsed['evaluations'][0]['overall_score'] == 90.0
+
+
+def test_parse_quality_eval_json_hint_mentions_outputs_not_foci():
+    truncated = '{"evaluations":[{"label":"A","overall_score":'
+    with pytest.raises(ValueError, match='fewer outputs|shorter criteria'):
+        parse_quality_eval_json(truncated)

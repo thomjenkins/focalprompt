@@ -11,6 +11,7 @@ from services.output_evaluator_service import (
     OutputQualityEvaluator,
     build_quality_evaluation_prompt,
     normalize_output_items,
+    quality_eval_max_tokens,
 )
 
 
@@ -31,6 +32,14 @@ def test_build_prompt_includes_criteria_and_outputs():
     assert 'Must schedule appointment politely' in text
     assert 'Baseline' in text
     assert 'User wants a booster' in text
+    assert 'JSON compactness' in text
+    assert 'Score every output' in text
+
+
+def test_quality_eval_max_tokens_scales_with_outputs():
+    assert quality_eval_max_tokens(1) == 4096
+    assert quality_eval_max_tokens(5) > 4096
+    assert quality_eval_max_tokens(100) <= 16384
 
 
 def test_evaluate_outputs_parses_response():
@@ -73,3 +82,106 @@ def test_evaluate_requires_criteria():
             eval_criteria='',
             outputs=[{'label': 'A', 'text': 'x'}],
         )
+
+
+def test_evaluate_outputs_retries_when_first_response_truncated():
+    provider = MagicMock()
+    truncated = (
+        '{\n  "evaluations": [\n    {\n'
+        '      "label": "Current output",\n'
+        '      "criterion_breakdown": [\n'
+        '        {"name": "Polite Decline", "score":'
+    )
+    good = json.dumps({
+        'evaluations': [
+            {
+                'label': 'Current output',
+                'overall_score': 90,
+                'meets_primary_criterion': True,
+                'criterion_breakdown': [],
+                'strengths': [],
+                'weaknesses': [],
+                'summary': 'Good.',
+            }
+        ],
+        'comparative_notes': '',
+    })
+    provider.chat_completion.side_effect = [
+        {'content': truncated, 'usage': {'prompt_tokens': 5, 'completion_tokens': 5}},
+        {'content': good, 'usage': {'prompt_tokens': 5, 'completion_tokens': 10}},
+    ]
+    ev = OutputQualityEvaluator(provider, 'mock-model', provider_name='openai')
+    result = ev.evaluate_outputs(
+        eval_criteria='Decline politely.',
+        outputs=[{'label': 'Current output', 'text': 'Thanks, but we cannot help.'}],
+    )
+    assert result['evaluations'][0]['overall_score'] == 90.0
+    assert provider.chat_completion.call_count == 2
+    retry_user = provider.chat_completion.call_args_list[1].kwargs['messages'][1]['content']
+    assert 'CRITICAL RETRY' in retry_user
+    assert provider.chat_completion.call_args_list[0].kwargs.get('max_tokens') == 4096
+
+
+def test_evaluate_outputs_recovers_partial_truncated_response():
+    provider = MagicMock()
+    truncated = (
+        '{\n  "evaluations": [\n    {\n'
+        '      "label": "Current output",\n'
+        '      "overall_score": 90,\n'
+        '      "meets_primary_criterion": true,\n'
+        '      "criterion_breakdown": [\n'
+        '        {"name": "Polite Decline", "score":'
+    )
+    provider.chat_completion.side_effect = [
+        {'content': truncated, 'usage': {'prompt_tokens': 5, 'completion_tokens': 5}},
+        {'content': truncated, 'usage': {'prompt_tokens': 5, 'completion_tokens': 5}},
+    ]
+    ev = OutputQualityEvaluator(provider, 'mock-model', provider_name='openai')
+    result = ev.evaluate_outputs(
+        eval_criteria='Decline politely.',
+        outputs=[{'label': 'Current output', 'text': 'Thanks, but we cannot help.'}],
+    )
+    assert result['evaluations'][0]['overall_score'] == 90.0
+    assert result['evaluations'][0]['meets_primary_criterion'] is True
+
+
+def test_evaluate_outputs_batches_large_experiment_b_sets():
+    provider = MagicMock()
+
+    def _response(labels):
+        return {
+            'content': json.dumps({
+                'evaluations': [
+                    {
+                        'label': label,
+                        'overall_score': 80,
+                        'meets_primary_criterion': True,
+                        'criterion_breakdown': [],
+                        'strengths': [],
+                        'weaknesses': [],
+                        'summary': 'ok',
+                    }
+                    for label in labels
+                ],
+                'comparative_notes': '',
+            }),
+            'usage': {'prompt_tokens': 5, 'completion_tokens': 5},
+        }
+
+    outputs = [
+        {'label': f'Baseline (full prompt) — sample {i}', 'text': f'baseline {i}'}
+        for i in range(1, 6)
+    ]
+    provider.chat_completion.side_effect = [
+        _response([outputs[0]['label'], outputs[1]['label'], outputs[2]['label'], outputs[3]['label']]),
+        _response([outputs[4]['label']]),
+    ]
+    ev = OutputQualityEvaluator(provider, 'mock-model', provider_name='openai')
+    result = ev.evaluate_outputs(
+        eval_criteria='Be polite.',
+        outputs=outputs,
+    )
+    assert result['n_batches'] == 2
+    assert len(result['evaluations']) == 5
+    assert all(row['overall_score'] == 80.0 for row in result['evaluations'])
+    assert provider.chat_completion.call_count == 2

@@ -12,20 +12,43 @@ import json
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from utils.gateway_chat import chat_completion as gateway_chat_completion
-from utils.llm_json import parse_llm_json
+from utils.llm_json import parse_quality_eval_json
 
-MAX_OUTPUTS = 12
+MAX_OUTPUTS = 60
 MAX_OUTPUT_CHARS = 4000
 MAX_CRITERIA_CHARS = 3000
 MAX_CONTEXT_CHARS = 2000
 MAX_PROMPT_CHARS = 2500
+MAX_CRITERIA_BREAKDOWN = 5
+MAX_STRENGTHS_WEAKNESSES = 2
+MAX_NOTE_CHARS = 60
+QUALITY_EVAL_BATCH_SIZE = 4
+
+QUALITY_EVAL_RETRY_SUFFIX = (
+    '\n\nCRITICAL RETRY: Your previous JSON was invalid or truncated. '
+    'Return ONLY compact JSON with ALL outputs scored:\n'
+    '{"evaluations":[{"label":"exact label","overall_score":0,'
+    '"meets_primary_criterion":true,'
+    '"criterion_breakdown":[{"name":"short","score":0,"met":true,"notes":"brief"}],'
+    '"strengths":["one"],"weaknesses":["one"],"summary":"one sentence"}],'
+    '"comparative_notes":""}\n'
+    f'Rules: max {MAX_CRITERIA_BREAKDOWN} criterion_breakdown items; notes under '
+    f'{MAX_NOTE_CHARS} chars; max {MAX_STRENGTHS_WEAKNESSES} strengths and '
+    f'{MAX_STRENGTHS_WEAKNESSES} weaknesses; do not quote output text.'
+)
 
 QUALITY_EVAL_SYSTEM = (
     'You are an expert task-quality evaluator. You score how well each model '
     'output meets the user\'s evaluation criteria. You judge task fit, '
     'instruction following, correctness, completeness, and tone — not '
-    'embedding similarity or whether two outputs differ. Return valid JSON only.'
+    'embedding similarity or whether two outputs differ. Return valid JSON only. '
+    'Keep JSON compact: short notes, no quoted output text, no extra keys.'
 )
+
+
+def quality_eval_max_tokens(n_outputs: int) -> int:
+    """Scale completion budget so multi-output evaluations are less likely to truncate."""
+    return min(16384, max(4096, 1024 + n_outputs * 768))
 
 
 def _clip(text: str, limit: int) -> str:
@@ -41,6 +64,7 @@ def build_quality_evaluation_prompt(
     outputs: Sequence[Mapping[str, Any]],
     task_context: str = '',
     prompt: str = '',
+    include_comparative_notes: bool = True,
 ) -> str:
     """Build user message for criterion-based output evaluation."""
     blocks: List[str] = []
@@ -70,7 +94,14 @@ OUTPUTS TO SCORE ({len(outputs)}):
 For EACH output, return an evaluation object. Score overall quality 0–100.
 Break down against the criteria where possible (0–5 per sub-criterion).
 Do NOT compare outputs for "difference only" — judge each on task merit.
-You may add brief comparative_notes if multiple outputs are present.
+{'You may add brief comparative_notes if multiple outputs are present.' if include_comparative_notes else 'Set comparative_notes to an empty string for this batch.'}
+
+JSON compactness (required):
+- At most {MAX_CRITERIA_BREAKDOWN} criterion_breakdown entries per output
+- Notes under {MAX_NOTE_CHARS} characters; no quoting output text in JSON
+- At most {MAX_STRENGTHS_WEAKNESSES} strengths and {MAX_STRENGTHS_WEAKNESSES} weaknesses
+- summary: one sentence only
+- Score every output listed above
 
 Return JSON:
 {{
@@ -87,7 +118,7 @@ Return JSON:
       "summary": "1-2 sentences"
     }}
   ],
-  "comparative_notes": "optional: which output best met criteria and why"
+  "comparative_notes": "{'optional: which output best met criteria and why' if include_comparative_notes else ''}"
 }}
 """
 
@@ -109,9 +140,77 @@ def normalize_output_items(outputs: Sequence[Mapping[str, Any]]) -> List[Dict[st
         raise ValueError('All outputs were empty')
     if len(out) > MAX_OUTPUTS:
         raise ValueError(
-            f'Too many outputs ({len(out)}). Maximum is {MAX_OUTPUTS} per evaluation.'
+            f'Too many outputs ({len(out)}). Maximum is {MAX_OUTPUTS} per evaluation run.'
         )
     return out
+
+
+def _merge_usage(
+    base: Optional[Dict[str, Any]],
+    extra: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    if not extra:
+        return base
+    if not base:
+        return dict(extra)
+    merged = dict(base)
+    for key, value in (extra or {}).items():
+        try:
+            merged[key] = int(merged.get(key) or 0) + int(value or 0)
+        except (TypeError, ValueError):
+            merged[key] = value
+    return merged
+
+
+def _normalize_evaluation_rows(
+    parsed: Sequence[Mapping[str, Any]],
+    by_label: Mapping[str, Mapping[str, str]],
+) -> List[Dict[str, Any]]:
+    evaluations: List[Dict[str, Any]] = []
+    seen = set()
+    for row in parsed:
+        if not isinstance(row, dict):
+            continue
+        label = str(row.get('label') or '').strip()
+        if label not in by_label:
+            for key in by_label:
+                if (
+                    key.lower() == label.lower()
+                    or key.startswith(label)
+                    or label.startswith(key)
+                ):
+                    label = key
+                    break
+        if label not in by_label or label in seen:
+            continue
+        seen.add(label)
+        try:
+            overall = float(row.get('overall_score', 0))
+        except (TypeError, ValueError):
+            overall = 0.0
+        overall = max(0.0, min(100.0, overall))
+        evaluations.append({
+            'label': label,
+            'overall_score': overall,
+            'meets_primary_criterion': bool(row.get('meets_primary_criterion')),
+            'criterion_breakdown': row.get('criterion_breakdown') or [],
+            'strengths': row.get('strengths') or [],
+            'weaknesses': row.get('weaknesses') or [],
+            'summary': str(row.get('summary') or ''),
+        })
+
+    for label in by_label:
+        if label not in seen:
+            evaluations.append({
+                'label': label,
+                'overall_score': None,
+                'meets_primary_criterion': None,
+                'criterion_breakdown': [],
+                'strengths': [],
+                'weaknesses': [],
+                'summary': 'Not scored in model response.',
+            })
+    return evaluations
 
 
 class OutputQualityEvaluator:
@@ -126,6 +225,63 @@ class OutputQualityEvaluator:
         self.provider = provider
         self.model = model
         self.provider_name = provider_name or 'openai'
+
+    def _evaluate_output_batch(
+        self,
+        *,
+        eval_criteria: str,
+        items: Sequence[Mapping[str, str]],
+        task_context: str,
+        prompt: str,
+        temperature: float,
+        include_comparative_notes: bool,
+    ) -> Dict[str, Any]:
+        user_prompt = build_quality_evaluation_prompt(
+            eval_criteria=eval_criteria,
+            outputs=items,
+            task_context=task_context,
+            prompt=prompt,
+            include_comparative_notes=include_comparative_notes,
+        )
+        max_tokens = quality_eval_max_tokens(len(items))
+
+        def _chat(user_content: str) -> Dict[str, Any]:
+            return gateway_chat_completion(
+                self.provider,
+                self.model,
+                self.provider_name,
+                [
+                    {'role': 'system', 'content': QUALITY_EVAL_SYSTEM},
+                    {'role': 'user', 'content': user_content},
+                ],
+                temperature=temperature,
+                response_format={'type': 'json_object'},
+                max_tokens=max_tokens,
+            )
+
+        response = _chat(user_prompt)
+        usage = response.get('usage')
+        raw_content = response.get('content') or ''
+        try:
+            raw = parse_quality_eval_json(raw_content)
+        except ValueError:
+            retry_response = _chat(user_prompt + QUALITY_EVAL_RETRY_SUFFIX)
+            usage = _merge_usage(usage, retry_response.get('usage'))
+            response = retry_response
+            raw = parse_quality_eval_json(response.get('content') or '')
+        if not isinstance(raw, dict):
+            raise ValueError('Evaluator did not return a JSON object')
+
+        by_label = {it['label']: it for it in items}
+        parsed = raw.get('evaluations') or []
+        if not isinstance(parsed, list):
+            parsed = []
+        evaluations = _normalize_evaluation_rows(parsed, by_label)
+        return {
+            'evaluations': evaluations,
+            'comparative_notes': str(raw.get('comparative_notes') or ''),
+            'usage': usage,
+        }
 
     def evaluate_outputs(
         self,
@@ -145,81 +301,42 @@ class OutputQualityEvaluator:
         if not (eval_criteria or '').strip():
             raise ValueError('Evaluation criteria are required')
 
-        user_prompt = build_quality_evaluation_prompt(
-            eval_criteria=eval_criteria,
-            outputs=items,
-            task_context=task_context,
-            prompt=prompt,
-        )
-        response = gateway_chat_completion(
-            self.provider,
-            self.model,
-            self.provider_name,
-            [
-                {'role': 'system', 'content': QUALITY_EVAL_SYSTEM},
-                {'role': 'user', 'content': user_prompt},
-            ],
-            temperature=temperature,
-            response_format={'type': 'json_object'},
-            max_tokens=4096,
-        )
-        raw = parse_llm_json(response.get('content') or '')
-        if not isinstance(raw, dict):
-            raise ValueError('Evaluator did not return a JSON object')
+        all_evaluations: List[Dict[str, Any]] = []
+        comparative_notes_parts: List[str] = []
+        usage: Optional[Dict[str, Any]] = None
+        batches = [
+            items[i : i + QUALITY_EVAL_BATCH_SIZE]
+            for i in range(0, len(items), QUALITY_EVAL_BATCH_SIZE)
+        ]
 
-        by_label = {it['label']: it for it in items}
-        parsed = raw.get('evaluations') or []
-        if not isinstance(parsed, list):
-            parsed = []
+        for batch_index, batch in enumerate(batches):
+            batch_result = self._evaluate_output_batch(
+                eval_criteria=eval_criteria,
+                items=batch,
+                task_context=task_context,
+                prompt=prompt,
+                temperature=temperature,
+                include_comparative_notes=(batch_index == len(batches) - 1),
+            )
+            usage = _merge_usage(usage, batch_result.get('usage'))
+            all_evaluations.extend(batch_result.get('evaluations') or [])
+            note = (batch_result.get('comparative_notes') or '').strip()
+            if note:
+                comparative_notes_parts.append(note)
 
-        evaluations: List[Dict[str, Any]] = []
-        seen = set()
-        for row in parsed:
-            if not isinstance(row, dict):
-                continue
-            label = str(row.get('label') or '').strip()
-            if label not in by_label:
-                # Fuzzy match by prefix
-                for k in by_label:
-                    if k.lower() == label.lower() or k.startswith(label) or label.startswith(k):
-                        label = k
-                        break
-            if label not in by_label or label in seen:
-                continue
-            seen.add(label)
-            try:
-                overall = float(row.get('overall_score', 0))
-            except (TypeError, ValueError):
-                overall = 0.0
-            overall = max(0.0, min(100.0, overall))
-            evaluations.append({
-                'label': label,
-                'overall_score': overall,
-                'meets_primary_criterion': bool(row.get('meets_primary_criterion')),
-                'criterion_breakdown': row.get('criterion_breakdown') or [],
-                'strengths': row.get('strengths') or [],
-                'weaknesses': row.get('weaknesses') or [],
-                'summary': str(row.get('summary') or ''),
-            })
-
-        # Ensure every submitted output gets a row (model may omit some)
-        for label in by_label:
-            if label not in seen:
-                evaluations.append({
-                    'label': label,
-                    'overall_score': None,
-                    'meets_primary_criterion': None,
-                    'criterion_breakdown': [],
-                    'strengths': [],
-                    'weaknesses': [],
-                    'summary': 'Not scored in model response.',
-                })
+        by_label = {row['label']: row for row in all_evaluations}
+        ordered_evaluations = [
+            by_label[item['label']]
+            for item in items
+            if item['label'] in by_label
+        ]
 
         return {
-            'evaluations': evaluations,
-            'comparative_notes': str(raw.get('comparative_notes') or ''),
+            'evaluations': ordered_evaluations,
+            'comparative_notes': ' '.join(comparative_notes_parts).strip(),
             'n_outputs': len(items),
+            'n_batches': len(batches),
             'evaluation_type': 'task_quality',
             'explicitly_not_behavioral_difference': True,
-            'usage': response.get('usage'),
+            'usage': usage,
         }

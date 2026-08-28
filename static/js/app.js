@@ -811,6 +811,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     }
     
     updateManualInputFields();
+    refreshQualityEvalPreview();
     
     // Initialize settings UI
     const providerSelect = document.getElementById('provider-select');
@@ -2844,6 +2845,8 @@ function renderAblationResults(data) {
     }
     ablationResults.innerHTML = window.FocalPromptResults.renderAblationResultsHtml(data);
 
+    refreshQualityEvalPreview();
+
     const toggleOutputsBtn = document.getElementById('toggle-all-outputs');
     const allOutputsContainer = document.getElementById('all-outputs-container');
     const downloadBtn = document.getElementById('download-ablation-results');
@@ -3342,6 +3345,7 @@ const explainExperimentCBtn = document.getElementById('explain-experiment-c-btn'
 const evalCriteriaInput = document.getElementById('eval-criteria-input');
 const runQualityEvalBtn = document.getElementById('run-quality-eval-btn');
 const qualityEvalResults = document.getElementById('quality-eval-results');
+const qualityEvalOutputPreview = document.getElementById('quality-eval-output-preview');
 window.experimentCComparison = null;
 
 function getExperimentAReportedPayload() {
@@ -3564,43 +3568,111 @@ if (explainExperimentCBtn) {
 
 function collectOutputsForQualityEval() {
     const outputs = [];
-    const seen = new Set();
-    function add(label, text) {
-        const t = (text || '').trim();
-        if (!t) return;
-        const dedupeKey = label + '::' + t.length + '::' + t.slice(0, 120);
-        if (seen.has(dedupeKey)) return;
-        seen.add(dedupeKey);
-        outputs.push({ label: label, text: t });
-    }
-
-    if (outputInput && outputInput.value) {
-        add('Current output', outputInput.value);
-    }
-    if (adjustedOutput && adjustedOutput.textContent) {
-        add('Output from rewritten prompt', adjustedOutput.textContent);
-    }
-
     const ab = window.singleAblationResults;
-    if (ab) {
-        const baselines = (ab.baseline_outputs && ab.baseline_outputs.length)
-            ? ab.baseline_outputs
-            : (ab.baseline_output ? [ab.baseline_output] : []);
-        baselines.forEach(function (t, i) {
-            add('Baseline sample ' + (i + 1), t);
+    if (!ab) {
+        return outputs;
+    }
+
+    const baselines = (ab.baseline_outputs && ab.baseline_outputs.length)
+        ? ab.baseline_outputs
+        : (ab.baseline_output ? [ab.baseline_output] : []);
+    baselines.forEach(function (t, i) {
+        const text = (t || '').trim();
+        if (!text) return;
+        outputs.push({
+            label: 'Baseline (full prompt) — sample ' + (i + 1),
+            text: text,
+            group: 'baseline',
         });
-        const records = (window.FocalPromptResults && window.FocalPromptResults.collectFocusRecords)
-            ? window.FocalPromptResults.collectFocusRecords(ab)
-            : (ab.ablation_results || []);
-        records.forEach(function (rec) {
-            const name = rec.focus || rec.focus_name || 'Focus';
-            const ablated = rec.ablated_outputs || (rec.ablated_output ? [rec.ablated_output] : []);
-            ablated.forEach(function (t, i) {
-                add('Ablated: ' + name + ' (sample ' + (i + 1) + ')', t);
+    });
+
+    const records = (window.FocalPromptResults && window.FocalPromptResults.collectFocusRecords)
+        ? window.FocalPromptResults.collectFocusRecords(ab)
+        : (ab.ablation_results || []);
+    records.forEach(function (rec) {
+        const name = rec.focus || rec.focus_name || 'Focus';
+        const ablated = rec.ablated_outputs || (rec.ablated_output ? [rec.ablated_output] : []);
+        ablated.forEach(function (t, i) {
+            const text = (t || '').trim();
+            if (!text) return;
+            outputs.push({
+                label: 'Ablated: ' + name + ' — sample ' + (i + 1),
+                text: text,
+                group: 'ablated',
+                focus: name,
             });
         });
+    });
+    return outputs;
+}
+
+function summarizeQualityEvalOutputs(outputs) {
+    if (!outputs || !outputs.length) {
+        return 'Run Experiment B (section 7) first. Baseline and ablated samples from that run will be scored here against your criteria.';
     }
-    return outputs.slice(0, 12);
+    const baselineCount = outputs.filter(function (o) { return o.group === 'baseline'; }).length;
+    const ablatedRows = outputs.filter(function (o) { return o.group === 'ablated'; });
+    const focusNames = [];
+    ablatedRows.forEach(function (o) {
+        if (o.focus && focusNames.indexOf(o.focus) === -1) {
+            focusNames.push(o.focus);
+        }
+    });
+    let text = 'Will evaluate <strong>' + outputs.length + ' Experiment B output(s)</strong>: ';
+    text += baselineCount + ' baseline sample' + (baselineCount === 1 ? '' : 's') + ' (full prompt)';
+    if (ablatedRows.length) {
+        text += ' and ' + ablatedRows.length + ' ablated sample' +
+            (ablatedRows.length === 1 ? '' : 's') + ' across ' +
+            focusNames.length + ' focus' + (focusNames.length === 1 ? '' : 'es');
+        if (focusNames.length) {
+            text += ' (' + focusNames.join(', ') + ')';
+        }
+    }
+    text += '. Section 3 output is not included.';
+    return text;
+}
+
+function refreshQualityEvalPreview() {
+    if (!qualityEvalOutputPreview) return;
+    qualityEvalOutputPreview.innerHTML = summarizeQualityEvalOutputs(collectOutputsForQualityEval());
+}
+
+function renderQualityEvalCard(row) {
+    const score = row.overall_score;
+    const scoreTxt = (score == null || Number.isNaN(Number(score)))
+        ? 'n/a'
+        : Number(score).toFixed(0) + '/100';
+    let html = '<div class="quality-eval-card">';
+    html += '<h4><span>' + escapeHtml(row.label || 'Output') + '</span>';
+    html += '<span class="quality-eval-score">' + escapeHtml(scoreTxt) + '</span></h4>';
+    if (row.summary) {
+        html += '<p>' + escapeHtml(row.summary) + '</p>';
+    }
+    if (row.meets_primary_criterion != null) {
+        html += '<p style="font-size:0.9em;margin:4px 0"><strong>Meets primary criterion:</strong> ' +
+            (row.meets_primary_criterion ? 'Yes' : 'No') + '</p>';
+    }
+    const breakdown = row.criterion_breakdown || [];
+    if (breakdown.length) {
+        html += '<ul style="margin:8px 0 0 18px;font-size:0.92em">';
+        breakdown.forEach(function (c) {
+            html += '<li><strong>' + escapeHtml(c.name || 'Criterion') + '</strong>: ' +
+                escapeHtml(String(c.score != null ? c.score : '')) + '/5' +
+                (c.met === true ? ' ✓' : (c.met === false ? ' ✗' : '')) +
+                (c.notes ? ' — ' + escapeHtml(c.notes) : '') + '</li>';
+        });
+        html += '</ul>';
+    }
+    if (row.strengths && row.strengths.length) {
+        html += '<p style="font-size:0.9em;margin-top:8px"><strong>Strengths:</strong> ' +
+            escapeHtml(row.strengths.join('; ')) + '</p>';
+    }
+    if (row.weaknesses && row.weaknesses.length) {
+        html += '<p style="font-size:0.9em"><strong>Weaknesses:</strong> ' +
+            escapeHtml(row.weaknesses.join('; ')) + '</p>';
+    }
+    html += '</div>';
+    return html;
 }
 
 function renderQualityEvalResults(data) {
@@ -3612,46 +3684,38 @@ function renderQualityEvalResults(data) {
     }
 
     let html = '';
+    html += '<p class="info-text"><strong>Scope:</strong> Experiment B outputs only — baseline samples (full prompt) and ablated samples (focus removed). Not section 3.</p>';
     if (data.cost_breakdown && data.cost_breakdown.total_cost != null) {
         html += '<p class="info-text">Evaluation cost: $' +
             Number(data.cost_breakdown.total_cost).toFixed(4) + '</p>';
     }
+    if (data.n_batches && data.n_batches > 1) {
+        html += '<p class="info-text">Scored in ' + data.n_batches + ' batches of up to 4 outputs each.</p>';
+    }
 
-    evals.forEach(function (row) {
-        const score = row.overall_score;
-        const scoreTxt = (score == null || Number.isNaN(Number(score)))
-            ? 'n/a'
-            : Number(score).toFixed(0) + '/100';
-        html += '<div class="quality-eval-card">';
-        html += '<h4><span>' + escapeHtml(row.label || 'Output') + '</span>';
-        html += '<span class="quality-eval-score">' + escapeHtml(scoreTxt) + '</span></h4>';
-        if (row.summary) {
-            html += '<p>' + escapeHtml(row.summary) + '</p>';
-        }
-        if (row.meets_primary_criterion != null) {
-            html += '<p style="font-size:0.9em;margin:4px 0"><strong>Meets primary criterion:</strong> ' +
-                (row.meets_primary_criterion ? 'Yes' : 'No') + '</p>';
-        }
-        const breakdown = row.criterion_breakdown || [];
-        if (breakdown.length) {
-            html += '<ul style="margin:8px 0 0 18px;font-size:0.92em">';
-            breakdown.forEach(function (c) {
-                html += '<li><strong>' + escapeHtml(c.name || 'Criterion') + '</strong>: ' +
-                    escapeHtml(String(c.score != null ? c.score : '')) + '/5' +
-                    (c.met === true ? ' ✓' : (c.met === false ? ' ✗' : '')) +
-                    (c.notes ? ' — ' + escapeHtml(c.notes) : '') + '</li>';
-            });
-            html += '</ul>';
-        }
-        if (row.strengths && row.strengths.length) {
-            html += '<p style="font-size:0.9em;margin-top:8px"><strong>Strengths:</strong> ' +
-                escapeHtml(row.strengths.join('; ')) + '</p>';
-        }
-        if (row.weaknesses && row.weaknesses.length) {
-            html += '<p style="font-size:0.9em"><strong>Weaknesses:</strong> ' +
-                escapeHtml(row.weaknesses.join('; ')) + '</p>';
-        }
-        html += '</div>';
+    const baselineEvals = evals.filter(function (row) {
+        return String(row.label || '').indexOf('Baseline (full prompt)') === 0;
+    });
+    const ablatedEvals = evals.filter(function (row) {
+        return String(row.label || '').indexOf('Ablated:') === 0;
+    });
+
+    if (baselineEvals.length) {
+        html += '<h3 style="margin:16px 0 8px;font-size:1.05em">Baseline (full prompt)</h3>';
+        baselineEvals.forEach(function (row) {
+            html += renderQualityEvalCard(row);
+        });
+    }
+    if (ablatedEvals.length) {
+        html += '<h3 style="margin:16px 0 8px;font-size:1.05em">Ablated outputs (Experiment B)</h3>';
+        ablatedEvals.forEach(function (row) {
+            html += renderQualityEvalCard(row);
+        });
+    }
+    evals.filter(function (row) {
+        return baselineEvals.indexOf(row) === -1 && ablatedEvals.indexOf(row) === -1;
+    }).forEach(function (row) {
+        html += renderQualityEvalCard(row);
     });
 
     if (data.comparative_notes) {
@@ -3660,7 +3724,7 @@ function renderQualityEvalResults(data) {
     }
 
     html += '<p style="font-size:0.85em;color:#64748b;margin-top:12px">' +
-        'Task quality evaluation — not behavioral difference or reported focus.</p>';
+        'Task quality on Experiment B samples — not behavioral difference or reported focus.</p>';
     qualityEvalResults.innerHTML = html;
     window.lastQualityEvalResults = data;
 }
@@ -3675,12 +3739,12 @@ if (runQualityEvalBtn) {
         const outputs = collectOutputsForQualityEval();
         if (!outputs.length) {
             showErrorModal(
-                'No outputs to evaluate. Generate an output (section 3) and/or run ablation (Experiment B).'
+                'No Experiment B outputs to evaluate. Run ablation analysis in section 7 first.'
             );
             return;
         }
 
-        showLoading('Evaluating ' + outputs.length + ' output(s) against your criteria…');
+        showLoading('Evaluating ' + outputs.length + ' Experiment B output(s) against your criteria…');
         runQualityEvalBtn.disabled = true;
         try {
             const response = await fetch('/api/evaluate-outputs-quality', {
@@ -3691,7 +3755,8 @@ if (runQualityEvalBtn) {
                     outputs: outputs,
                     prompt: promptInput ? promptInput.value : '',
                     task_context: '',
-                    temperature: 0.2
+                    temperature: 0.2,
+                    evaluation_scope: 'experiment_b',
                 }))
             });
             const data = await response.json();

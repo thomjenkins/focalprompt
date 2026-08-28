@@ -48,6 +48,7 @@ def evaluate_outputs_quality():
         )
 
         usage = result.pop('usage', None) or {}
+        evaluation_scope = (data.get('evaluation_scope') or 'experiment_b').strip()
         cost_breakdown = None
         if usage:
             cost_breakdown = CostCalculator().calculate_cost(
@@ -60,6 +61,7 @@ def evaluate_outputs_quality():
 
         return jsonify({
             **result,
+            'evaluation_scope': evaluation_scope,
             'cost_breakdown': cost_breakdown,
         })
     except ValueError as e:
