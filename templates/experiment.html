@@ -15,6 +15,28 @@
         .exp .nav { margin-bottom: 24px; display: flex; gap: 12px; flex-wrap: wrap; }
         .exp pre.prompt { white-space: pre-wrap; background: #f6f8fa; padding: 16px; border-radius: 6px; border: 1px solid var(--border-color); }
         .exp .frame { background: #e8f4f8; border-left: 4px solid #0c5460; padding: 12px 16px; margin: 12px 0; }
+        .exp-index { display: flex; flex-direction: column; gap: 16px; margin-top: 20px; }
+        .exp-card {
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 16px 18px;
+            background: #fff;
+        }
+        .exp-card h2 { margin: 0 0 6px; font-size: 1.15rem; }
+        .exp-card-desc { color: #555; margin: 0 0 8px; }
+        .exp-card-finding { margin: 8px 0; line-height: 1.4; }
+        .exp-card-meta {
+            display: flex; flex-wrap: wrap; gap: 8px 14px;
+            font-size: 0.85rem; color: #666; margin-top: 8px;
+        }
+        .exp-card-signals { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+        .exp-signal {
+            font-size: 0.75rem; padding: 2px 8px; border-radius: 999px;
+            background: #f0f0eb; color: #333;
+        }
+        .exp-signal-high { background: #fde8e8; color: #8b1e1e; }
+        .exp-signal-medium { background: #e8eef6; color: #1e3a5f; }
+        .exp-signal-low { background: #e6f4ea; color: #1e5a34; }
     </style>
 </head>
 <body>
@@ -28,16 +50,31 @@
         {% if not experiment %}
         <h1>Precomputed experiments</h1>
         <p>Browse published runs without spending inference credits. Reproduce locally with your own credentials.</p>
-        <ul>
+        <div class="exp-index">
             {% for item in experiments %}
-            <li style="margin: 12px 0;">
-                <a href="{{ url_for('show_experiment', experiment_id=item.id) }}"><strong>{{ item.title }}</strong></a>
-                <div style="color:#555; margin-top:4px;">{{ item.description }}</div>
-            </li>
+            <article class="exp-card">
+                <h2><a href="{{ url_for('show_experiment', experiment_id=item.id) }}">{{ item.title }}</a></h2>
+                <p class="exp-card-desc">{{ item.description }}</p>
+                {% if item.principal_finding %}
+                <p class="exp-card-finding"><strong>Finding:</strong> {{ item.principal_finding }}</p>
+                {% endif %}
+                <div class="exp-card-meta">
+                    {% if item.model %}<span>{{ item.model }}</span>{% endif %}
+                    {% if item.focus_count %}<span>{{ item.focus_count }} foci</span>{% endif %}
+                    {% if item.n_baseline %}<span>{{ item.n_baseline }} samples</span>{% endif %}
+                </div>
+                {% if item.signals %}
+                <div class="exp-card-signals">
+                    {% for sig in item.signals %}
+                    <span class="exp-signal exp-signal-{{ sig.level|lower }}">{{ sig.label }}: {{ sig.level }}</span>
+                    {% endfor %}
+                </div>
+                {% endif %}
+            </article>
             {% else %}
-            <li>No experiments found under <code>examples/canonical/</code>.</li>
+            <p>No experiments found under <code>examples/canonical/</code>.</p>
             {% endfor %}
-        </ul>
+        </div>
         {% else %}
         <h1>{{ experiment.title }}</h1>
         <p>{{ experiment.description }}</p>

@@ -2053,7 +2053,11 @@ function renderAssessment(data) {
     
     // Store for sliders and workspace export
     assessmentFoci = allFoci;
+    window.assessmentFoci = allFoci;
     window.lastAssessmentApiPayload = data;
+    if (window.FocalPromptReport && typeof window.FocalPromptReport.refresh === 'function') {
+        window.FocalPromptReport.refresh();
+    }
     
     let html = `
         <div class="assessment-summary">
@@ -2864,7 +2868,13 @@ function renderAblationResults(data, options) {
         ablationResults.innerHTML = '<p class="empty-state">Results renderer failed to load.</p>';
         return;
     }
-    ablationResults.innerHTML = window.FocalPromptResults.renderAblationResultsHtml(data);
+
+    // Insight-led report (Overview → Raw); classic diagnostic HTML lives under Raw.
+    if (window.FocalPromptReport && typeof window.FocalPromptReport.render === 'function') {
+        window.FocalPromptReport.render(data, ablationResults);
+    } else {
+        ablationResults.innerHTML = window.FocalPromptResults.renderAblationResultsHtml(data);
+    }
 
     refreshQualityEvalPreview();
 
@@ -3678,6 +3688,9 @@ async function refreshExperimentCComparison(options) {
         }
         window.experimentCComparison = data;
         paintExperimentCComparison(data, true);
+        if (window.FocalPromptReport && typeof window.FocalPromptReport.refresh === 'function') {
+            window.FocalPromptReport.refresh();
+        }
         if (explainBtn) {
             const nDis = (data.summary && data.summary.n_disagreements) || 0;
             explainBtn.disabled = nDis === 0;
@@ -4145,6 +4158,9 @@ if (runFocusOrderBtn) {
             if (focusOrderResults && window.FocalPromptResults) {
                 focusOrderResults.innerHTML =
                     window.FocalPromptResults.renderFocusOrderSensitivityHtml(data);
+            }
+            if (window.FocalPromptReport && typeof window.FocalPromptReport.refresh === 'function') {
+                window.FocalPromptReport.refresh();
             }
         } catch (err) {
             showError('Focus order sensitivity: ' + err.message);
