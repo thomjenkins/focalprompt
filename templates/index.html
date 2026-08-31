@@ -235,8 +235,8 @@
                     <div class="card-header">
                         <h2>1. Enter Your Prompt</h2>
                         <div style="display: flex; gap: 8px; align-items: center;">
-                            <div id="coverage-indicator" class="coverage-indicator hidden">
-                                <span id="coverage-text">Coverage: <strong id="coverage-percent">0%</strong></span>
+                            <div id="coverage-indicator" class="coverage-indicator hidden" title="Unique coverage: how much of the prompt is represented by at least one focus. Focus density: total focus coverage including overlaps (may exceed 100%).">
+                                <span id="coverage-text">Unique <strong id="coverage-percent">0%</strong> · Density <strong id="coverage-density">0%</strong></span>
                             </div>
                             <button id="save-prompt-btn" class="btn btn-outline btn-small" title="Save prompt and foci">
                                 💾 Save
@@ -251,6 +251,9 @@
                         <div class="selection-toolbar hidden" id="selection-toolbar">
                             <button id="tag-selection-btn" class="btn btn-primary btn-small">
                                 ➕ Tag as Focus
+                            </button>
+                            <button id="add-span-to-focus-btn" class="btn btn-outline btn-small" title="Add this selection as another span of the selected focus (Shift+tag also works)">
+                                ➕ Add another span
                             </button>
                             <button id="cancel-selection-btn" class="btn btn-outline btn-small">
                                 ✕ Cancel
@@ -286,6 +289,9 @@
                         <button id="detect-foci-btn" class="btn btn-primary">
                             🤖 Auto-Detect Foci
                         </button>
+                        <button id="structure-foci-btn" class="btn btn-outline" title="Seed coarse foci from XML-like tags or Markdown ## headings">
+                            🧱 Structured sections as foci
+                        </button>
                         <button id="merge-foci-btn" class="btn btn-outline" style="display: none;">
                             🔗 Merge Selected
                         </button>
@@ -294,13 +300,16 @@
                         </button>
                     </div>
                     <p class="info-text" style="margin-top: 12px;">
-                        💡 Tip: Select text in the prompt above and click "Tag as Focus" to manually add focus points.
+                        Tip: A focus is a semantic/experimental unit — it may be contiguous, multi-span, nested, or overlapping.
+                        Select text and use <strong>Tag as Focus</strong>, or select a focus then <strong>Add another span</strong> (Shift+tag also works on desktop).
+                        Structured XML/Markdown sections can seed coarse foci without replacing finer ones.
                     </p>
                 </div>
                 <div class="card-body">
                     <div id="coverage-warning" class="coverage-warning hidden">
-                        ⚠️ Some parts of the prompt are not covered by any focus. Please add foci to cover all sections.
+                        Unique coverage below 100% — some prompt text has no focus yet. Focus density may exceed 100% when foci overlap.
                     </div>
+                    <div id="overlap-matrix" class="overlap-matrix hidden"></div>
                     <div id="foci-container" class="foci-container">
                         <p class="empty-state">No foci defined yet. Click "Auto-Detect Foci" or "Add Focus Manually" to get started.</p>
                     </div>

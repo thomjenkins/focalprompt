@@ -139,19 +139,21 @@ def test_unverified_focus_excluded_no_score(ablation_service, mock_provider):
     assert 'Role' in names
 
 
-def test_overlap_refused_flagged_no_score(ablation_service):
+def test_overlap_scored_with_affected_neighbor_metadata(ablation_service):
     prompt = "The quick brown fox jumps."
     foci = [
         {'focus': 'A', 'prompt_section': 'The quick brown fox'},
         {'focus': 'B', 'prompt_section': 'brown fox jumps.'},
     ]
     result = ablation_service.run_ablation(prompt, foci, n_baseline=2, n_ablated=2)
-    assert result['influence_scores'] == []
+    assert len(result['influence_scores']) == 2
     for row in result['ablation_results']:
-        assert row['attributable'] is False
-        assert row['reason'] == 'overlap'
+        assert row['attributable'] is True
+        assert row.get('has_overlap') is True
         assert row['overlap_with']
-        assert 'ablated_output' not in row
+        assert 'ablated_output' in row
+        assert row.get('affected_overlapping_foci')
+        assert row['affected_overlapping_foci'][0]['overlap_removed_pct'] > 0
 
 
 def test_sole_focus_empty_remainder_runs_and_flags(ablation_service, mock_provider):

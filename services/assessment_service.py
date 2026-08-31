@@ -65,7 +65,9 @@ STRICT COPY RULES for evidence_quote and prompt_section:
 - Copy SOURCE_PROMPT text EXACTLY. Preserve punctuation, capitalization, escaping, newlines, and code syntax.
 - Sequences such as \\n, JSON keys, braces, quotes, and templating syntax must be copied literally.
 - Do NOT paraphrase source text in evidence_quote or prompt_section.
-- Prefer contiguous, non-overlapping spans.
+- Prefer contiguous spans by default.
+- Nested or overlapping foci are allowed when a coarse section and finer instructions coexist (e.g. a whole <governance> block plus a nested species rule). Prefer nesting over inventing cross-cutting multi-span concepts.
+- Only propose a multi-span (non-contiguous) focus when you have high confidence both regions express one experimental concept; otherwise emit separate contiguous foci.
 - Collectively cover meaningful instructional content (boilerplate separators may remain uncovered).
 - Avoid tiny syntactic fragments with no independent meaning and avoid mega-spans that glue unrelated instructions.
 - If you cannot quote unique SOURCE_PROMPT text supporting a focus, omit that focus entirely.

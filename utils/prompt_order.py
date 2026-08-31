@@ -14,6 +14,7 @@ import random
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from utils.span_alignment import append_dynamic_inputs, classify_foci_for_ablation
+from utils.focus_spans import focus_union_tuples, is_order_movable, merge_intervals
 
 ORDERING_FIXED = 'fixed'
 ORDERING_MOVABLE_WITHIN_SECTION = 'movable_within_section'
@@ -29,8 +30,9 @@ def resolve_ordering_policies(
     """
     Resolve per-focus ordering policy.
 
-    Default (conservative): only verified, attributable, non-dynamic static foci
-    are ``movable_within_section``. Everything else is fixed.
+    Default (conservative): only verified, attributable, non-dynamic, contiguous,
+    non-overlapping static foci are ``movable_within_section``. Multi-span
+    semantic foci and overlapping foci are fixed (not reorderable blocks).
     """
     user_policies = user_policies or {}
     policies: Dict[int, str] = {}
@@ -42,6 +44,12 @@ def resolve_ordering_policies(
         if not focus.get('attributable'):
             policies[i] = ORDERING_FIXED
         elif focus.get('is_dynamic'):
+            policies[i] = ORDERING_FIXED
+        elif focus.get('has_overlap'):
+            # Overlapping spans are not independent movable blocks
+            policies[i] = ORDERING_FIXED
+        elif not is_order_movable(focus):
+            # Non-contiguous / multi-gap semantic foci are not movable blocks
             policies[i] = ORDERING_FIXED
         else:
             policies[i] = DEFAULT_ORDERING_POLICY
@@ -64,7 +72,10 @@ def build_order_template(
     """
     Decompose prompt into fixed segments and movable focus slots at document positions.
 
-    Each slot holds one focus span; permutations reassign focus texts to slots.
+    Each slot holds one contiguous movable focus; permutations reassign focus texts
+    to slots. Multi-span foci contribute each real span as fixed text — never the
+    legacy envelope that would swallow intervening glue.
+
     ``omit_focus_indices``: spans removed entirely (LOO deletion), not fixed or slotted.
     ``exclude_focus_indices``: alias for omit (legacy).
     """
@@ -72,42 +83,75 @@ def build_order_template(
     policies = dict(policies or resolve_ordering_policies(classified))
     omitted = set(int(x) for x in (omit_focus_indices or exclude_focus_indices or ()))
 
-    # Document-order walk including omitted spans so glue is captured correctly.
-    ordered = sorted(
-        range(len(classified)),
-        key=lambda idx: int(classified[idx].get('char_start') or 0),
-    )
+    # Piece list: actual span intervals only (never multi-span envelope).
+    pieces: List[Dict[str, Any]] = []
+    for idx, focus in enumerate(classified):
+        intervals = merge_intervals(focus_union_tuples(focus))
+        if not intervals:
+            continue
+        movable = (
+            idx not in omitted
+            and _is_movable(policies, idx)
+            and bool(focus.get('attributable'))
+            and is_order_movable(focus)
+            and not focus.get('has_overlap')
+        )
+        if movable:
+            # Contiguous ⇒ single union interval
+            start, end = intervals[0]
+            pieces.append({
+                'start': start,
+                'end': end,
+                'focus_index': idx,
+                'role': 'slot',
+            })
+        else:
+            for start, end in intervals:
+                pieces.append({
+                    'start': start,
+                    'end': end,
+                    'focus_index': idx,
+                    'role': 'omit' if idx in omitted else 'fixed',
+                })
+
+    pieces.sort(key=lambda p: (p['start'], p['end'], p['focus_index']))
 
     movable_indices: List[int] = []
-    for i in ordered:
-        if i in omitted:
+    seen_movable = set()
+    for piece in pieces:
+        if piece['role'] != 'slot':
             continue
-        if _is_movable(policies, i) and classified[i].get('attributable'):
-            movable_indices.append(i)
+        idx = int(piece['focus_index'])
+        if idx not in seen_movable:
+            seen_movable.add(idx)
+            movable_indices.append(idx)
 
     focus_texts: Dict[int, str] = {}
     for idx in movable_indices:
-        start = int(classified[idx]['char_start'])
-        end = int(classified[idx]['char_end'])
+        intervals = merge_intervals(focus_union_tuples(classified[idx]))
+        start, end = intervals[0]
         focus_texts[idx] = prompt[start:end]
 
     segments: List[Dict[str, Any]] = []
     cursor = 0
     slot_index = 0
-    for idx in ordered:
-        focus = classified[idx]
-        start_raw = focus.get('char_start')
-        end_raw = focus.get('char_end')
-        if start_raw is None or end_raw is None:
+    for piece in pieces:
+        start = int(piece['start'])
+        end = int(piece['end'])
+        if end <= cursor:
+            # Fully covered by a prior overlapping piece — skip duplicate text
             continue
-        start = int(start_raw)
-        end = int(end_raw)
+        if start < cursor:
+            start = cursor
         if cursor < start:
             segments.append({'type': 'fixed', 'text': prompt[cursor:start]})
-        if idx in omitted:
+        role = piece['role']
+        idx = int(piece['focus_index'])
+        focus = classified[idx]
+        if role == 'omit':
             cursor = max(cursor, end)
             continue
-        if idx in movable_indices:
+        if role == 'slot':
             segments.append({
                 'type': 'slot',
                 'slot_index': slot_index,

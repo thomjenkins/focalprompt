@@ -57,8 +57,14 @@ EXCLUDED_DYNAMIC_SLOT = (
 )
 
 EXCLUDED_OVERLAP = (
-    "This focus overlaps another focus's text, so removing it alone isn't well "
-    "defined. Refine the foci to separate them."
+    "This focus was stored with a legacy overlap exclusion. Newer runs keep "
+    "overlapping foci attributable and warn that shared text is not an "
+    "independent intervention. Refine the foci only if you need cleaner separation."
+)
+
+OVERLAP_ABLATION_WARNING = (
+    "This intervention also removed overlapping text from other foci. "
+    "Revealed influences should not be interpreted as independent or additive."
 )
 
 PROMPT_EMPTY_NOTE = (
@@ -80,7 +86,7 @@ METHODS_PANEL_TITLE = "How this works"
 
 METHODS_PANEL = """FocalPrompt tests whether deleting a focus from your prompt changes the model's behaviour, as seen in semantic embedding space. It does not score whether that focus is useful, correct, or safe, and a non-significant result is not a licence to delete the text.
 
-Repeated sampling of both arms. The original prompt is sampled several times (the baseline). For each focus that can be located as a contiguous span in that prompt, the span is deleted and the remaining prompt is sampled several times (the ablated arm). Both arms use the same model and the same temperature. Temperature is kept above zero so repeated samples of the same prompt are allowed to vary.
+Repeated sampling of both arms. The original prompt is sampled several times (the baseline). For each focus that can be located as one or more spans in that prompt, every span belonging to the focus is deleted and the remaining prompt is sampled several times (the ablated arm). Both arms use the same model and the same temperature. Temperature is kept above zero so repeated samples of the same prompt are allowed to vary. Foci may overlap or nest; unique coverage stays ≤100%, while focus density (total span length including overlaps) may exceed 100%.
 
 The statistic. Each sample is embedded. The observed statistic is the cosine distance between the centroid (mean vector) of the baseline embeddings and the centroid of the ablated embeddings. A larger distance means the two groups of outputs sit further apart. That distance is a shift in embedding space, not an importance score, and it is only meaningful when compared with the permutation null for the same samples.
 
@@ -90,7 +96,7 @@ What the p-value means. A small p-value means the observed shift would be unusua
 
 Benjamini–Hochberg correction. Each experiment tests several foci at once. Raw p-values among the foci that were actually tested are converted to q-values with the Benjamini–Hochberg procedure, which controls the false discovery rate. q < 0.05 (the default α) means this focus is called significant after that correction: among the foci called significant, the expected fraction of false calls is at most 5%. It does not mean the remaining foci have no effect.
 
-Known limitations. Embedding blindness: short structural instructions — output formats, escalation rules, guardrails — can change what the model does while barely moving output embeddings. A non-significant result is a failure to detect a shift at this sample size, not evidence that the text is inert. Leave-one-out conditionality: each focus is deleted while the rest of the prompt stays. Redundant instructions can mask each other (deleting one copy may not shift behaviour if another remains). Interacting instructions can be misattributed (the measured shift is the effect of deleting this span in this surrounding prompt, not an isolated effect of the idea). Locality: results hold for this model, this temperature, and this surrounding prompt only. They do not automatically generalise to other models, decoding settings, or prompt revisions."""
+Known limitations. Embedding blindness: short structural instructions — output formats, escalation rules, guardrails — can change what the model does while barely moving output embeddings. A non-significant result is a failure to detect a shift at this sample size, not evidence that the text is inert. Leave-one-out conditionality: each focus is deleted while the rest of the prompt stays. Redundant instructions can mask each other (deleting one copy may not shift behaviour if another remains). Overlapping foci share text: ablating one focus also removes the shared portion of neighbours, so their revealed influences should not be treated as independent or additive. Interacting instructions can be misattributed (the measured shift is the effect of deleting this focus's spans in this surrounding prompt, not an isolated effect of the idea). Locality: results hold for this model, this temperature, and this surrounding prompt only. They do not automatically generalise to other models, decoding settings, or prompt revisions. Position / order experiments only move contiguous non-overlapping prompt blocks; multi-span semantic foci are experimental units, not reorderable units."""
 
 
 MULTI_LENS_EXPLAINER = (
@@ -181,6 +187,7 @@ COPY = {
     'EXCLUDED_UNVERIFIED': EXCLUDED_UNVERIFIED,
     'EXCLUDED_DYNAMIC_SLOT': EXCLUDED_DYNAMIC_SLOT,
     'EXCLUDED_OVERLAP': EXCLUDED_OVERLAP,
+    'OVERLAP_ABLATION_WARNING': OVERLAP_ABLATION_WARNING,
     'PROMPT_EMPTY_NOTE': PROMPT_EMPTY_NOTE,
     'NEAR_THRESHOLD_HINT': NEAR_THRESHOLD_HINT,
     'POWER_BANNER_TEMPLATE': POWER_BANNER_TEMPLATE,
@@ -278,6 +285,41 @@ def format_overlap_names(overlap_with: Optional[Sequence[Any]]) -> str:
     return '; '.join(names)
 
 
+def format_affected_overlapping_warning(focus: Mapping[str, Any]) -> Optional[str]:
+    """Warn when ablating this focus also removed portions of overlapping foci."""
+    affected = focus.get('affected_overlapping_foci') or []
+    if not affected and not focus.get('has_overlap'):
+        return None
+    bits = []
+    extreme = False
+    for item in affected:
+        if not isinstance(item, Mapping):
+            continue
+        name = item.get('focus') or item.get('focus_name') or 'another focus'
+        pct = item.get('overlap_removed_pct')
+        try:
+            pct_f = float(pct)
+        except (TypeError, ValueError):
+            continue
+        if pct_f <= 0:
+            continue
+        if pct_f >= 80:
+            extreme = True
+        bits.append(f'{name} ({pct_f:g}%)')
+    if not bits and not focus.get('has_overlap'):
+        return None
+    detail = ''
+    if bits:
+        detail = ' Also removed: ' + '; '.join(bits) + '.'
+    prefix = OVERLAP_ABLATION_WARNING
+    if extreme:
+        prefix = (
+            'High overlap (>80% of a neighbouring focus was also removed). '
+            + OVERLAP_ABLATION_WARNING
+        )
+    return prefix + detail
+
+
 def excluded_explanation(focus: Mapping[str, Any]) -> Optional[str]:
     """Plain-language reason a focus was not tested, or None if it was tested."""
     reason = focus.get('reason')
@@ -287,6 +329,7 @@ def excluded_explanation(focus: Mapping[str, Any]) -> Optional[str]:
     if reason == 'dynamic_slot':
         return EXCLUDED_DYNAMIC_SLOT
     if reason == 'overlap':
+        # Legacy persisted experiments only — new runs keep overlapping foci attributable.
         names = format_overlap_names(focus.get('overlap_with'))
         if names:
             return f'{EXCLUDED_OVERLAP} Overlaps with: {names}.'
@@ -534,6 +577,12 @@ def render_focus_card(focus: Mapping[str, Any], alpha: float = DEFAULT_ALPHA) ->
         if prompt_empty:
             body.append(f'<p class="focus-prompt-empty">{_esc(PROMPT_EMPTY_NOTE)}</p>')
         body.append(render_statistical_detail(focus))
+
+    overlap_warn = format_affected_overlapping_warning(focus) if not excluded else None
+    if overlap_warn:
+        body.append(
+            f'<p class="focus-overlap-warning" role="status">{_esc(overlap_warn)}</p>'
+        )
 
     if not excluded:
         body.append(render_evidence_lenses(focus))

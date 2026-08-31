@@ -109,8 +109,9 @@ def test_copy_constants_are_exact():
         "prompt, so subtractive testing doesn't apply in this version."
     )
     assert EXCLUDED_OVERLAP == (
-        "This focus overlaps another focus's text, so removing it alone isn't well "
-        "defined. Refine the foci to separate them."
+        "This focus was stored with a legacy overlap exclusion. Newer runs keep "
+        "overlapping foci attributable and warn that shared text is not an "
+        "independent intervention. Refine the foci only if you need cleaner separation."
     )
     assert NEAR_THRESHOLD_HINT == (
         "Near the threshold. Rerun with more ablated samples to resolve."
@@ -125,6 +126,8 @@ def test_copy_constants_are_exact():
     assert "embedding blindness" in METHODS_PANEL.lower()
     assert "leave-one-out" in METHODS_PANEL.lower()
     assert "locality" in METHODS_PANEL.lower()
+    assert "focus density" in METHODS_PANEL.lower()
+    assert "overlapping foci" in METHODS_PANEL.lower()
 
 
 def test_effect_size_qualifier_bands():
@@ -204,6 +207,20 @@ def test_excluded_overlap_names_the_other_focus():
     })
     assert EXCLUDED_OVERLAP in html
     assert "Overlaps with: Style B." in html
+
+
+def test_overlap_ablation_warning_on_tested_focus():
+    from utils.results_copy import OVERLAP_ABLATION_WARNING
+    html = render_focus_card({
+        **_significant_focus(),
+        'has_overlap': True,
+        'affected_overlapping_foci': [
+            {'focus': 'Governance', 'overlap_removed_pct': 42},
+        ],
+    })
+    assert OVERLAP_ABLATION_WARNING in html
+    assert 'Governance (42%)' in html
+    assert 'independent' in html.lower()
 
 
 def test_prompt_empty_note_on_tested_focus():

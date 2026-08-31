@@ -136,11 +136,16 @@ def test_process_single_pair_unverified_and_overlap(batch_service):
         {'focus': 'Nope', 'prompt_section': 'not present'},
     ]
     result = batch_service.process_single_pair(pair, 0, foci, n_baseline=2, n_ablated=2)
-    assert result['influence_scores'] == {}
-    reasons = {r['focus']: r['reason'] for r in result['ablation_results']}
-    assert reasons['A'] == 'overlap'
-    assert reasons['B'] == 'overlap'
+    reasons = {r['focus']: r.get('reason') for r in result['ablation_results']}
     assert reasons['Nope'] == 'unverified'
+    # Overlapping A/B remain attributable and contribute scores
+    assert 'A' in result['influence_scores'] or any(
+        r.get('focus') == 'A' and r.get('attributable') for r in result['ablation_results']
+    )
+    assert reasons.get('A') in (None, 'overlap')  # reason should be None when attributable
+    a_row = next(r for r in result['ablation_results'] if r['focus'] == 'A')
+    assert a_row['attributable'] is True
+    assert a_row.get('has_overlap') is True
 
 
 def test_stream_uses_same_pair_prompt(batch_service, mock_provider):

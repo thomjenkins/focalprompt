@@ -20,10 +20,10 @@ This pass implements strategy (a) from `CONFOUND_AUDIT.md`: strict span deletion
 
 1. **Alignment order.** Exact substring first; then whitespace collapse + curly/straight quote folding, mapped back to original offsets; then the same after stripping trailing `.!?,;:…` from the quote. After a hit, trailing punctuation in the original is included only if it is followed by end-of-string or whitespace (so `v1` does not swallow `.2` in `v1.2`). Duplicate quotes use the **first** occurrence.
 2. **Existing offsets.** If a focus already has in-range `char_start`/`char_end`, those offsets are trusted and not re-searched. Otherwise alignment runs from `prompt_section`. Invalid offsets are not accepted; alignment is retried from the quote.
-3. **`reason` strings.** Unaligned: `unverified`. Dynamic: `dynamic_slot` (as specified). Overlap: `overlap`, with `overlap_with` listing the other focus names. Adjacent half-open spans do not overlap; identical spans do (both refused).
+3. **`reason` strings.** Unaligned: `unverified`. Dynamic: `dynamic_slot`. Overlaps no longer refuse attribution: overlapping foci stay `attributable` with `has_overlap` / `overlap_with` / `overlap_details`, and ablations report `affected_overlapping_foci`. Legacy persisted `reason: overlap` remains explained in results copy for old exports. Adjacent half-open spans do not overlap; identical spans across two foci are valid.
 4. **Boundary collapse.** Both sides of the join must contribute at least one newline and the joined newline count must be ≥ 3; the join is then a single blank line (`\n\n`). Other blank lines are left alone. A mid-line deletion that produces a single `\n\n` is **not** collapsed.
 5. **Empty remainder.** The LLM is still called with `content: ""`. `prompt_empty: true` is set. Influence is still scored (a real intervention).
-6. **Scores.** `influence_scores` contains only attributable foci. Dynamic / unverified / overlapping foci appear in `ablation_results` (and `foci_list`) with flags and **no** similarity/influence. Normalisation is over attributable foci only.
+6. **Scores.** `influence_scores` contains only attributable foci (including overlapping ones). Dynamic / unverified foci appear in `ablation_results` (and `foci_list`) with flags and **no** similarity/influence. Normalisation is over attributable foci only. Overlap warnings ride on `affected_overlapping_foci`.
 7. **`inputs` on `run_ablation`.** Still accepted for API compatibility and ignored. Filling chat/RAG is out of scope.
 8. **Batch-wide noise.** Still computed once from pair 0’s prompt (now unstripped). Per-pair noise floors were not added.
 9. **`chat_content_influence`.** Omitted from pair results rather than returned as zeros. Aggregate stats no longer emit a `chat_content` series unless a legacy result still has that field.
@@ -54,7 +54,7 @@ This pass **replaces** the previous significance rule (pairwise cosine similarit
   \(p = (1 + \#\{T_{\mathrm{perm}} \ge T_{\mathrm{obs}}\})/(1+B)\).  
 The RNG seed, if provided, affects **only** these shuffles, never generation.
 
-**Multiple testing.** Raw p-values for **attributable** foci only (not `verified: false`, `dynamic_slot`, or `overlap`) are converted to Benjamini–Hochberg q-values.  
+**Multiple testing.** Raw p-values for **attributable** foci only (not `verified: false` or `dynamic_slot`) are converted to Benjamini–Hochberg q-values.  
 **`is_significant` now means \(q < \alpha\)** (default \(\alpha = 0.05\)).
 
 **Effect size (descriptive).** For each focus we also report \(T_{\mathrm{obs}}\), the null mean, the null 95th percentile, \((T_{\mathrm{obs}} - \mathrm{mean}(T_{\mathrm{null}}))/\mathrm{sd}(T_{\mathrm{null}})\), and null **deciles** (not the full permutation list). Normalized influence shares are \(T_{\mathrm{obs}}\) renormalised to 100% across attributable foci; they are not the test.
@@ -110,7 +110,7 @@ Canonical source: `utils/results_copy.py` (`COPY`), injected into `templates/ind
 | Near-threshold (α < q ≤ 2α) | Absent | `NEAR_THRESHOLD_HINT`: Near the threshold. Rerun with more ablated samples to resolve. |
 | `verified: false` / `reason: unverified` | Blank or a zero | `EXCLUDED_UNVERIFIED`: Couldn't locate this focus verbatim in your prompt, so it wasn't tested. The tagger may have paraphrased it. |
 | `reason: dynamic_slot` | Blank / chat treated as a scored arm | `EXCLUDED_DYNAMIC_SLOT`: This focus is a runtime slot (chat, retrieved context), not text in your prompt, so subtractive testing doesn't apply in this version. |
-| `reason: overlap` | Blank or ill-defined score | `EXCLUDED_OVERLAP` plus `Overlaps with: {names}.` |
+| `reason: overlap` (legacy) | Blank or ill-defined score | `EXCLUDED_OVERLAP` plus `Overlaps with: {names}.` (new runs keep overlaps attributable + warn) |
 | `prompt_empty: true` | Unremarked | `PROMPT_EMPTY_NOTE`: Ablating this focus left an empty prompt. Results reflect the model with no instructions at all. |
 | Power banner (when backend `power_warning` is present) | Raw backend sentence about min p vs α/n_foci | `POWER_BANNER_TEMPLATE`: With {n_baseline} baseline and {n_ablated} ablated samples, the smallest possible p-value is {min_p}. After correction across {n_foci} foci, real effects may be undetectable. Increase samples to resolve. `min_p` is computed in the presentation layer from the same `min_achievable_pvalue` helper; statistics are not changed. |
 | Methods | Short numbered list + “Key Insight” that treated share % as importance | Expandable **How this works** (`METHODS_PANEL`): both-arm sampling, centroid cosine distance, permutation null (exact at small n), p-value, BH / q < 0.05, embedding blindness, leave-one-out conditionality, locality. |

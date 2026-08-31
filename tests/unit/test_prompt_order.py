@@ -166,3 +166,46 @@ def test_inputs_chat_appended_once_when_missing():
         inputs={'chat_content': CHAT},
     )
     assert out.count(CHAT) == 1
+
+
+def test_noncontiguous_focus_not_movable_preserves_intervening_text():
+    """Multi-span semantic foci are fixed; intervening glue must not be swallowed."""
+    from utils.prompt_order import build_order_template, resolve_ordering_policies, ORDERING_FIXED
+
+    prompt = 'AAA middle BBB'
+    foci = [
+        {
+            'focus': 'Ends',
+            'verified': True,
+            'spans': [
+                {'char_start': 0, 'char_end': 3, 'text': 'AAA'},
+                {'char_start': 11, 'char_end': 14, 'text': 'BBB'},
+            ],
+        },
+        {
+            'focus': 'Mid',
+            'verified': True,
+            'prompt_section': 'middle',
+            'char_start': 4,
+            'char_end': 10,
+        },
+    ]
+    classified = classify_foci_for_ablation(prompt, foci)
+    policies = resolve_ordering_policies(classified)
+    ends_idx = next(i for i, f in enumerate(classified) if f['focus'] == 'Ends')
+    mid_idx = next(i for i, f in enumerate(classified) if f['focus'] == 'Mid')
+    assert policies[ends_idx] == ORDERING_FIXED
+    assert classified[ends_idx].get('is_contiguous') is False
+    template = build_order_template(prompt, classified, policies=policies)
+    assert ends_idx not in template['movable_focus_indices']
+    assert mid_idx in template['movable_focus_indices']
+    # Default assignment reconstructs exact prompt (intervening " middle " kept)
+    rebuilt = reassemble_from_assignment(
+        template, list(range(template['n_slots']))
+    )
+    assert rebuilt == prompt
+    # Fixed pieces for Ends are the two real spans, not the envelope
+    fixed_texts = [s['text'] for s in template['segments'] if s['type'] == 'fixed']
+    assert 'AAA' in fixed_texts
+    assert 'BBB' in fixed_texts
+    assert 'AAA middle BBB' not in fixed_texts
