@@ -2053,7 +2053,11 @@ function renderAssessment(data) {
     
     // Store for sliders and workspace export
     assessmentFoci = allFoci;
+    window.assessmentFoci = allFoci;
     window.lastAssessmentApiPayload = data;
+    if (window.FocalPromptReport && typeof window.FocalPromptReport.refresh === 'function') {
+        window.FocalPromptReport.refresh();
+    }
     
     let html = `
         <div class="assessment-summary">
@@ -2864,7 +2868,13 @@ function renderAblationResults(data, options) {
         ablationResults.innerHTML = '<p class="empty-state">Results renderer failed to load.</p>';
         return;
     }
-    ablationResults.innerHTML = window.FocalPromptResults.renderAblationResultsHtml(data);
+
+    // Insight-led report (Overview → Raw); classic diagnostic HTML lives under Raw.
+    if (window.FocalPromptReport && typeof window.FocalPromptReport.render === 'function') {
+        window.FocalPromptReport.render(data, ablationResults);
+    } else {
+        ablationResults.innerHTML = window.FocalPromptResults.renderAblationResultsHtml(data);
+    }
 
     refreshQualityEvalPreview();
 
@@ -2920,7 +2930,16 @@ function renderAblationResults(data, options) {
     bindShuffleRobustnessHandlers(data);
     bindAblationStabilityHandlers(data);
     if (!options || !options.skipExperimentCRefresh) {
-        refreshExperimentCComparison({ scroll: true });
+        refreshExperimentCComparison({ scroll: false }).then(function () {
+            if (window.FocalPromptReport && typeof window.FocalPromptReport.refresh === 'function') {
+                window.FocalPromptReport.refresh();
+            }
+            const report = document.getElementById('lab-results-report')
+                || document.getElementById('ablation-results');
+            if (report && report.scrollIntoView) {
+                report.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        }).catch(function () { /* refreshExperimentCComparison already surfaces errors */ });
     }
 }
 
@@ -3678,6 +3697,9 @@ async function refreshExperimentCComparison(options) {
         }
         window.experimentCComparison = data;
         paintExperimentCComparison(data, true);
+        if (window.FocalPromptReport && typeof window.FocalPromptReport.refresh === 'function') {
+            window.FocalPromptReport.refresh();
+        }
         if (explainBtn) {
             const nDis = (data.summary && data.summary.n_disagreements) || 0;
             explainBtn.disabled = nDis === 0;
@@ -3686,7 +3708,8 @@ async function refreshExperimentCComparison(options) {
                 : 'No disagreements to explain at the current thresholds';
         }
         if (scroll) {
-            const target = document.getElementById('experiment-c-section');
+            const target = document.getElementById('lab-results-report')
+                || document.getElementById('ablation-results');
             if (target && target.scrollIntoView) {
                 target.scrollIntoView({ behavior: 'smooth', block: 'start' });
             }
@@ -3704,6 +3727,8 @@ async function refreshExperimentCComparison(options) {
 function renderExperimentCComparison(data) {
     paintExperimentCComparison(data, true);
 }
+
+window.refreshExperimentCComparison = refreshExperimentCComparison;
 
 function formatExperimentCQ(q) {
     if (q === null || q === undefined) return 'n/a';
@@ -3790,9 +3815,14 @@ if (explainExperimentCBtn) {
             }
             window.experimentCExplanationHtml = renderExperimentCExplanation(data.explanation || data);
             renderExperimentCComparison(window.experimentCComparison);
-            const el = document.getElementById('experiment-c-explanation');
-            if (el && el.scrollIntoView) {
-                el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            if (window.FocalPromptReport && typeof window.FocalPromptReport.refresh === 'function') {
+                window.FocalPromptReport.refresh();
+            }
+            const el = document.getElementById('fp-concordance-explanation')
+                || document.getElementById('experiment-c-explanation');
+            if (el) {
+                el.innerHTML = window.experimentCExplanationHtml;
+                if (el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
             }
         } catch (err) {
             showError('Error explaining disagreements: ' + err.message);
@@ -4145,6 +4175,9 @@ if (runFocusOrderBtn) {
             if (focusOrderResults && window.FocalPromptResults) {
                 focusOrderResults.innerHTML =
                     window.FocalPromptResults.renderFocusOrderSensitivityHtml(data);
+            }
+            if (window.FocalPromptReport && typeof window.FocalPromptReport.refresh === 'function') {
+                window.FocalPromptReport.refresh();
             }
         } catch (err) {
             showError('Focus order sensitivity: ' + err.message);

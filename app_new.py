@@ -141,6 +141,7 @@ _EXAMPLES_DIR = Path(__file__).resolve().parent / 'examples' / 'canonical'
 
 
 def _list_canonical_experiments():
+    """List precomputed experiments with optional insight-derived cards."""
     items = []
     if not _EXAMPLES_DIR.is_dir():
         return items
@@ -149,11 +150,56 @@ def _list_canonical_experiments():
             data = json.loads(path.read_text(encoding='utf-8'))
         except (OSError, json.JSONDecodeError):
             continue
-        items.append({
+        meta = data.get('meta') or {}
+        item = {
             'id': data.get('id') or path.stem,
             'title': data.get('title') or path.stem,
             'description': data.get('description') or '',
-        })
+            'model': meta.get('model') or '',
+            'n_baseline': meta.get('n_baseline'),
+            'n_ablated': meta.get('n_ablated'),
+            'focus_count': len(data.get('foci') or []),
+            'principal_finding': '',
+            'signals': [],
+        }
+        try:
+            from utils.insight_metrics import (
+                build_focus_rows,
+                overview_headline,
+                status_strip,
+            )
+            reported = (data.get('reported_focus') or {}).get('foci') or []
+            influence = (data.get('perturbation') or {}).get('influence_scores') or []
+            # Skip dynamic / null influence rows for listing metrics
+            influence = [
+                row for row in influence
+                if row.get('normalized_influence') is not None
+                and not row.get('exclusion_reason')
+            ]
+            if influence:
+                rows = build_focus_rows(
+                    influence_scores=influence,
+                    assessment_foci=reported,
+                )
+                item['principal_finding'] = overview_headline(rows)
+                ranked = sorted(rows, key=lambda r: float(r.get('revealed') or 0), reverse=True)
+                top3 = sum(float(r.get('revealed') or 0) for r in ranked[:3]) / 100.0
+                gaps = [abs(float(r['gap'])) for r in rows if r.get('gap') is not None]
+                mean_gap = (sum(gaps) / len(gaps)) if gaps else None
+                status = status_strip(
+                    top3_revealed_share=top3 if rows else None,
+                    mean_abs_gap=mean_gap,
+                )
+                for key, label in (
+                    ('influence_concentration', 'Concentration'),
+                    ('reported_revealed_agreement', 'Agreement'),
+                ):
+                    band = (status.get(key) or {}).get('level')
+                    if band:
+                        item['signals'].append({'key': key, 'label': label, 'level': band})
+        except Exception:
+            pass
+        items.append(item)
     return items
 
 
