@@ -12,7 +12,13 @@ import random
 from typing import List, Dict, Optional
 from services.embedding_service import EmbeddingService
 from services.cost_calculator import CostCalculator
-from utils.span_alignment import classify_foci_for_ablation, delete_span, build_shuffled_remaining_prompt
+from utils.span_alignment import (
+    classify_foci_for_ablation,
+    delete_span,
+    build_shuffled_remaining_prompt,
+    compute_coverage_report,
+)
+from utils.focus_spans import delete_focus_spans, affected_overlapping_foci, normalize_focus
 from utils.gateway_chat import chat_completion as gateway_chat_completion
 from utils.permutation_test import (
     DEFAULT_ALPHA,
@@ -134,8 +140,8 @@ class AblationService:
                 'remaining_foci_shuffled_order': shuffled_order,
             }
         else:
-            ablated_prompt, prompt_empty, _collapsed = delete_span(
-                prompt, focus['char_start'], focus['char_end']
+            ablated_prompt, prompt_empty, _collapsed, ablated_ranges = delete_focus_spans(
+                prompt, focus
             )
             shuffle_meta = {'ablation_mode': 'subtractive'}
         result = dict(self._complete(ablated_prompt, temperature))
@@ -143,6 +149,10 @@ class AblationService:
         result['prompt_empty'] = prompt_empty
         result['focus'] = focus.get('focus')
         result['focus_index'] = idx
+        if shuffle_meta.get('ablation_mode') == 'subtractive':
+            result['ablated_ranges'] = [[s, e] for s, e in ablated_ranges]
+            result['affected_overlapping_foci'] = affected_overlapping_foci(focus, classified)
+            result['spans'] = focus.get('spans')
         result.update(shuffle_meta)
         return result
 
@@ -321,25 +331,33 @@ class AblationService:
             row = {
                 'focus_index': i,
                 'focus': focus_name,
+                'focus_id': focus.get('id'),
                 'prompt_section': focus.get('prompt_section', ''),
                 'verified': bool(focus.get('verified')),
                 'char_start': focus.get('char_start'),
                 'char_end': focus.get('char_end'),
+                'spans': focus.get('spans') or [],
+                'span_count': focus.get('span_count') or 0,
+                'is_multi_span': bool(focus.get('is_multi_span')),
                 'attributable': bool(focus.get('attributable')),
                 'reason': focus.get('reason'),
                 'overlap_with': list(focus.get('overlap_with') or []),
+                'overlap_details': list(focus.get('overlap_details') or []),
+                'has_overlap': bool(focus.get('has_overlap')),
                 'is_dynamic': bool(focus.get('is_dynamic')),
             }
             if not focus.get('attributable'):
                 ablation_results.append(row)
                 continue
 
-            ablated_prompt, prompt_empty, _collapsed = delete_span(
-                prompt, focus['char_start'], focus['char_end']
+            ablated_prompt, prompt_empty, _collapsed, ablated_ranges = delete_focus_spans(
+                prompt, focus
             )
             texts = ablated_map[i]
             row['ablated_prompt'] = ablated_prompt
             row['prompt_empty'] = prompt_empty
+            row['ablated_ranges'] = [[s, e] for s, e in ablated_ranges]
+            row['affected_overlapping_foci'] = affected_overlapping_foci(focus, classified)
             row['ablated_output'] = texts[0]
             row['ablated_outputs'] = texts
 
@@ -373,6 +391,16 @@ class AblationService:
                 'attributable': True,
                 'char_start': ablation['char_start'],
                 'char_end': ablation['char_end'],
+                'spans': ablation.get('spans') or [],
+                'span_count': ablation.get('span_count') or 0,
+                'is_multi_span': bool(ablation.get('is_multi_span')),
+                'ablated_ranges': ablation.get('ablated_ranges') or [],
+                'has_overlap': bool(ablation.get('has_overlap')),
+                'overlap_with': list(ablation.get('overlap_with') or []),
+                'overlap_details': list(ablation.get('overlap_details') or []),
+                'affected_overlapping_foci': list(
+                    ablation.get('affected_overlapping_foci') or []
+                ),
                 'ablated_prompt': ablation['ablated_prompt'],
                 'prompt_empty': ablation.get('prompt_empty', False),
                 'ablated_output': ablation.get('ablated_output'),
@@ -449,6 +477,7 @@ class AblationService:
         summary = {item['focus']: item['normalized_influence'] for item in influence_scores}
         stability_summary = build_stability_summary(influence_scores)
         stability_scatter = build_stability_scatter_points(influence_scores)
+        coverage = compute_coverage_report(prompt, classified)
         return {
             'baseline_output': baseline_outputs[0],
             'baseline_outputs': baseline_outputs,
@@ -457,6 +486,15 @@ class AblationService:
             'baseline_stability': baseline_stability,
             'stability_summary': stability_summary,
             'stability_scatter': stability_scatter,
+            'coverage': {
+                'unique_coverage_percent': coverage.get('unique_coverage_percent'),
+                'focus_density_percent': coverage.get('focus_density_percent'),
+                'coverage_percent': coverage.get('coverage_percent'),
+                'depth_histogram': coverage.get('depth_histogram'),
+                'overlap_matrix': coverage.get('overlap_matrix'),
+            },
+            'unique_coverage_percent': coverage.get('unique_coverage_percent'),
+            'focus_density_percent': coverage.get('focus_density_percent'),
             'interpretation_axes': {
                 'baseline_stability': (
                     'How much does the model vary when nothing changes?'
@@ -572,8 +610,8 @@ class AblationService:
             if not focus.get('attributable'):
                 continue
             focus_name = focus.get('focus', f'Focus {i + 1}')
-            ablated_prompt, _prompt_empty, _collapsed = delete_span(
-                prompt, focus['char_start'], focus['char_end']
+            ablated_prompt, _prompt_empty, _collapsed, ablated_ranges = delete_focus_spans(
+                prompt, focus
             )
             time.sleep(0.5)
             try:
@@ -637,8 +675,8 @@ class AblationService:
                 f"Focus '{focus.get('focus')}' is not attributable ({focus.get('reason')})"
             )
 
-        ablated_prompt, prompt_empty, _collapsed = delete_span(
-            prompt, focus['char_start'], focus['char_end']
+        ablated_prompt, prompt_empty, _collapsed, ablated_ranges = delete_focus_spans(
+            prompt, focus
         )
         new_texts, tin, tout = self._sample_outputs(
             ablated_prompt, n_additional, temperature

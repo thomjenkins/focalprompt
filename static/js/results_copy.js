@@ -127,6 +127,33 @@
         return names.join('; ');
     }
 
+    function formatAffectedOverlappingWarning(focus) {
+        var C = getCopy();
+        var affected = focus.affected_overlapping_foci || [];
+        if (!affected.length && !focus.has_overlap) return null;
+        var bits = [];
+        var extreme = false;
+        for (var i = 0; i < affected.length; i++) {
+            var item = affected[i];
+            if (!item || typeof item !== 'object') continue;
+            var name = item.focus || item.focus_name || 'another focus';
+            var pct = Number(item.overlap_removed_pct);
+            if (!Number.isFinite(pct) || pct <= 0) continue;
+            if (pct >= 80) extreme = true;
+            bits.push(name + ' (' + pct + '%)');
+        }
+        if (!bits.length && !focus.has_overlap) return null;
+        var warn = C.OVERLAP_ABLATION_WARNING || (
+            'This intervention also removed overlapping text from other foci. ' +
+            'Revealed influences should not be interpreted as independent or additive.'
+        );
+        if (extreme) {
+            warn = 'High overlap (>80% of a neighbouring focus was also removed). ' + warn;
+        }
+        if (bits.length) warn += ' Also removed: ' + bits.join('; ') + '.';
+        return warn;
+    }
+
     function excludedExplanation(focus) {
         var C = getCopy();
         var reason = focus.reason;
@@ -445,6 +472,10 @@
         }
 
         if (!excluded) {
+            var overlapWarn = formatAffectedOverlappingWarning(focus);
+            if (overlapWarn) {
+                body.push('<p class="focus-overlap-warning" role="status">' + escapeHtml(overlapWarn) + '</p>');
+            }
             body.push(renderFocusAblationStability(focus, data));
             body.push(renderShuffleRobustness(focus, data));
             body.push(renderEvidenceLenses(focus));

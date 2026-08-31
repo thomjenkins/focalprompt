@@ -122,7 +122,7 @@ def test_evidence_expands_to_larger_unique_section():
 
 
 
-def test_overlapping_proposed_foci_refused_for_ablation():
+def test_overlapping_proposed_foci_remain_attributable():
     prompt = 'The quick brown fox jumps.'
     foci = verify_foci(prompt, [
         {'focus': 'A', 'prompt_section': 'The quick brown fox'},
@@ -130,9 +130,10 @@ def test_overlapping_proposed_foci_refused_for_ablation():
     ])
     assert all(f['verified'] for f in foci)
     classified = classify_foci_for_ablation(prompt, foci)
-    assert classified[0]['reason'] == 'overlap'
-    assert classified[1]['reason'] == 'overlap'
-    assert classified[0]['attributable'] is False
+    assert classified[0]['attributable'] is True
+    assert classified[1]['attributable'] is True
+    assert classified[0].get('has_overlap') is True
+    assert 'B' in classified[0]['overlap_with']
 
 
 def test_source_substring_replacement_after_grounding():

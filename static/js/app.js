@@ -416,7 +416,9 @@ const promptVisualization = document.getElementById('prompt-visualization');
 const promptHighlighted = document.getElementById('prompt-highlighted');
 const coverageIndicator = document.getElementById('coverage-indicator');
 const coveragePercent = document.getElementById('coverage-percent');
+const coverageDensity = document.getElementById('coverage-density');
 const coverageWarning = document.getElementById('coverage-warning');
+const overlapMatrixEl = document.getElementById('overlap-matrix');
 const toggleVisualization = document.getElementById('toggle-visualization');
 const legendItems = document.getElementById('legend-items');
 const slidersContainer = document.getElementById('sliders-container');
@@ -1236,20 +1238,29 @@ function handleTextSelection() {
 
 // Tag selected text as focus
 if (tagSelectionBtn) {
-    tagSelectionBtn.addEventListener('click', () => {
+    tagSelectionBtn.addEventListener('click', (evt) => {
         if (!selectedText) {
             showErrorModal('Please select some text first.');
             return;
         }
-        
+        const promptText = promptInput.value;
+        // Shift+click (or selected focus + intentional add) appends a span
+        if ((evt && evt.shiftKey) && selectedFocusIndex != null) {
+            if (addSpanToFocus(selectedFocusIndex, selectedStart, selectedEnd, promptText)) {
+                renderFoci();
+            }
+            selectionToolbar.classList.add('hidden');
+            promptInput.setSelectionRange(0, 0);
+            return;
+        }
+
         const focusName = prompt('Enter a name for this focus point:', selectedText.substring(0, 50));
         if (!focusName) {
             selectionToolbar.classList.add('hidden');
             promptInput.setSelectionRange(0, 0);
             return;
         }
-        
-        // Check if this text is already tagged
+
         const alreadyTagged = foci.some(f => f.prompt_section === selectedText);
         if (alreadyTagged) {
             if (!confirm('This text is already tagged as a focus. Add it anyway?')) {
@@ -1258,8 +1269,8 @@ if (tagSelectionBtn) {
                 return;
             }
         }
-        
-        foci.push({
+
+        const created = normalizeFocusClient({
             focus: focusName.trim(),
             prompt_section: selectedText,
             description: '',
@@ -1270,11 +1281,51 @@ if (tagSelectionBtn) {
             char_end: selectedEnd,
             grounding_method: 'manual_selection',
             grounding_confidence: 1.0,
-        });
-        
+            provenance: 'manual',
+            spans: [{ char_start: selectedStart, char_end: selectedEnd, text: selectedText }]
+        }, promptText);
+        foci.push(created);
+        selectedFocusIndex = foci.length - 1;
+
         renderFoci();
         selectionToolbar.classList.add('hidden');
         promptInput.setSelectionRange(0, 0);
+    });
+}
+
+const addSpanToFocusBtn = document.getElementById('add-span-to-focus-btn');
+if (addSpanToFocusBtn) {
+    addSpanToFocusBtn.addEventListener('click', () => {
+        if (!selectedText) {
+            showErrorModal('Please select some text first.');
+            return;
+        }
+        if (selectedFocusIndex == null) {
+            showErrorModal('Select a focus first (click its name), then add another span.');
+            return;
+        }
+        if (addSpanToFocus(selectedFocusIndex, selectedStart, selectedEnd, promptInput.value)) {
+            renderFoci();
+        }
+        selectionToolbar.classList.add('hidden');
+        promptInput.setSelectionRange(0, 0);
+    });
+}
+
+const structureFociBtn = document.getElementById('structure-foci-btn');
+if (structureFociBtn) {
+    structureFociBtn.addEventListener('click', () => {
+        const promptText = promptInput.value;
+        const seeded = extractStructuredSectionFoci(promptText);
+        if (!seeded.length) {
+            showErrorModal('No XML-like tags or Markdown ## headings found to seed as foci.');
+            return;
+        }
+        if (!confirm('Add ' + seeded.length + ' structured section(s) as coarse foci? Existing foci are kept (overlaps allowed).')) {
+            return;
+        }
+        seeded.forEach(function (f) { foci.push(f); });
+        renderFoci();
     });
 }
 
@@ -1308,6 +1359,265 @@ const focusColors = [
 ];
 
 
+// ---- Multi-span focus helpers ----
+let selectedFocusIndex = null; // for "Add another span" / Shift-tag
+
+function focusSpansOf(focus) {
+    if (!focus) return [];
+    if (Array.isArray(focus.spans) && focus.spans.length) {
+        return focus.spans.map(function (s) {
+            return {
+                id: s.id || null,
+                char_start: Number(s.char_start != null ? s.char_start : s.start),
+                char_end: Number(s.char_end != null ? s.char_end : s.end),
+                text: s.text || s.text_snapshot || null
+            };
+        }).filter(function (s) {
+            return Number.isFinite(s.char_start) && Number.isFinite(s.char_end) && s.char_end > s.char_start;
+        });
+    }
+    if (Number.isInteger(focus.char_start) && Number.isInteger(focus.char_end)
+        && focus.char_end > focus.char_start) {
+        return [{
+            id: focus.span_id || null,
+            char_start: focus.char_start,
+            char_end: focus.char_end,
+            text: focus.prompt_section || null
+        }];
+    }
+    return [];
+}
+
+function normalizeFocusClient(focus, prompt) {
+    const f = Object.assign({}, focus);
+    let spans = focusSpansOf(f);
+    // Deduplicate identical ranges
+    const seen = {};
+    spans = spans.filter(function (s) {
+        const key = s.char_start + ':' + s.char_end;
+        if (seen[key]) return false;
+        seen[key] = true;
+        return true;
+    });
+    spans.sort(function (a, b) { return a.char_start - b.char_start; });
+    if (prompt) {
+        spans = spans.map(function (s) {
+            const text = prompt.substring(s.char_start, s.char_end);
+            return Object.assign({}, s, { text: text, text_snapshot: text });
+        });
+    }
+    f.spans = spans;
+    f.span_count = spans.length;
+    f.is_multi_span = spans.length > 1;
+    // Contiguous if single union interval
+    let union = [];
+    spans.forEach(function (s) {
+        if (!union.length || s.char_start > union[union.length - 1][1]) {
+            union.push([s.char_start, s.char_end]);
+        } else {
+            union[union.length - 1][1] = Math.max(union[union.length - 1][1], s.char_end);
+        }
+    });
+    f.is_contiguous = union.length <= 1;
+    f.total_span_length = spans.reduce(function (a, s) { return a + (s.char_end - s.char_start); }, 0);
+    f.unique_span_length = union.reduce(function (a, se) { return a + (se[1] - se[0]); }, 0);
+    if (spans.length) {
+        f.char_start = spans[0].char_start;
+        f.char_end = spans[spans.length - 1].char_end;
+        if (prompt) {
+            const texts = spans.map(function (s) { return prompt.substring(s.char_start, s.char_end); });
+            f.prompt_section = texts.length > 1 ? texts.join('\n…\n') : texts[0];
+        }
+    }
+    return f;
+}
+
+function addSpanToFocus(index, start, end, prompt) {
+    if (index == null || index < 0 || index >= foci.length) return false;
+    if (start == null || end == null || start >= end) return false;
+    const focus = normalizeFocusClient(foci[index], prompt);
+    const exists = (focus.spans || []).some(function (s) {
+        return s.char_start === start && s.char_end === end;
+    });
+    if (exists) {
+        showErrorModal('That exact span is already part of this focus.');
+        return false;
+    }
+    focus.spans.push({
+        char_start: start,
+        char_end: end,
+        text: prompt.substring(start, end),
+        text_snapshot: prompt.substring(start, end)
+    });
+    foci[index] = normalizeFocusClient(focus, prompt);
+    foci[index].verified = true;
+    foci[index].grounding_method = foci[index].grounding_method || 'manual_selection';
+    foci[index].reason = null;
+    return true;
+}
+
+window.removeSpanFromFocus = function removeSpanFromFocus(focusIndex, spanIndex) {
+    if (focusIndex < 0 || focusIndex >= foci.length) return;
+    const prompt = promptInput ? promptInput.value : '';
+    const focus = normalizeFocusClient(foci[focusIndex], prompt);
+    if (!focus.spans || spanIndex < 0 || spanIndex >= focus.spans.length) return;
+    focus.spans.splice(spanIndex, 1);
+    if (!focus.spans.length) {
+        if (!confirm('Remove the last span and delete this focus?')) return;
+        foci.splice(focusIndex, 1);
+        selectedFocusIndex = null;
+    } else {
+        foci[focusIndex] = normalizeFocusClient(focus, prompt);
+    }
+    renderFoci();
+}
+
+window.selectFocusForEditing = function selectFocusForEditing(index) {
+    selectedFocusIndex = index;
+    renderFoci();
+};
+
+function computeClientCoverage(prompt, focusList) {
+    const n = prompt.length;
+    const depth = new Array(n).fill(0);
+    (focusList || []).forEach(function (focus) {
+        if (focus.verified === false || focus.is_dynamic) return;
+        const nf = normalizeFocusClient(focus, prompt);
+        // Union per focus for unique-within-focus, but depth counts each focus once per char
+        const covered = {};
+        (nf.spans || []).forEach(function (s) {
+            for (let i = s.char_start; i < s.char_end && i < n; i++) {
+                if (i >= 0) covered[i] = true;
+            }
+        });
+        Object.keys(covered).forEach(function (k) {
+            depth[Number(k)] += 1;
+        });
+    });
+    let unique = 0;
+    let total = 0;
+    let once = 0, twice = 0, threePlus = 0;
+    for (let i = 0; i < n; i++) {
+        const d = depth[i];
+        total += d;
+        if (d > 0) unique += 1;
+        if (d === 1) once += 1;
+        else if (d === 2) twice += 1;
+        else if (d >= 3) threePlus += 1;
+    }
+    return {
+        uniquePct: n ? (100 * unique / n) : 0,
+        densityPct: n ? (100 * total / n) : 0,
+        depth: depth,
+        once: once,
+        twice: twice,
+        threePlus: threePlus,
+        uncovered: n - unique
+    };
+}
+
+function clientSpanUnion(focus, prompt) {
+    const nf = normalizeFocusClient(focus, prompt);
+    return (nf.spans || []).map(function (s) {
+        return [s.char_start, s.char_end];
+    });
+}
+
+function intervalsIntersectionLen(a, b) {
+    let i = 0, j = 0, total = 0;
+    const au = a.slice().sort(function (x, y) { return x[0] - y[0]; });
+    const bu = b.slice().sort(function (x, y) { return x[0] - y[0]; });
+    while (i < au.length && j < bu.length) {
+        const left = Math.max(au[i][0], bu[j][0]);
+        const right = Math.min(au[i][1], bu[j][1]);
+        if (left < right) total += right - left;
+        if (au[i][1] <= bu[j][1]) i += 1;
+        else j += 1;
+    }
+    return total;
+}
+
+function computeClientOverlaps(prompt, focusList) {
+    const list = focusList || [];
+    const pairs = [];
+    for (let i = 0; i < list.length; i++) {
+        if (list[i].verified === false || list[i].is_dynamic) continue;
+        const a = clientSpanUnion(list[i], prompt);
+        const lenA = a.reduce(function (s, se) { return s + (se[1] - se[0]); }, 0) || 1;
+        for (let j = i + 1; j < list.length; j++) {
+            if (list[j].verified === false || list[j].is_dynamic) continue;
+            const b = clientSpanUnion(list[j], prompt);
+            const inter = intervalsIntersectionLen(a, b);
+            if (inter <= 0) continue;
+            const lenB = b.reduce(function (s, se) { return s + (se[1] - se[0]); }, 0) || 1;
+            pairs.push({
+                a: list[i].focus,
+                b: list[j].focus,
+                aIndex: i,
+                bIndex: j,
+                pctOfA: Math.round(1000 * inter / lenA) / 10,
+                pctOfB: Math.round(1000 * inter / lenB) / 10,
+                inter: inter
+            });
+        }
+    }
+    return pairs;
+}
+
+function overlapsForFocusIndex(pairs, index) {
+    const out = [];
+    (pairs || []).forEach(function (p) {
+        if (p.aIndex === index) out.push({ name: p.b, pct: p.pctOfA });
+        else if (p.bIndex === index) out.push({ name: p.a, pct: p.pctOfB });
+    });
+    return out;
+}
+
+function extractStructuredSectionFoci(prompt) {
+    const found = [];
+    // XML-like blocks <tag>...</tag>
+    const xmlRe = /<([A-Za-z][\w:-]*)\b[^>]*>([\s\S]*?)<\/\1>/g;
+    let m;
+    while ((m = xmlRe.exec(prompt)) !== null) {
+        found.push({
+            focus: m[1],
+            char_start: m.index,
+            char_end: m.index + m[0].length,
+            prompt_section: m[0],
+            provenance: 'xml',
+            verified: true,
+            grounding_method: 'structured_section',
+            grounding_confidence: 1.0,
+            is_dynamic: false
+        });
+    }
+    // Markdown ## headings until next heading or end
+    const mdRe = /^(#{2,6})\s+(.+)$/gm;
+    const headings = [];
+    while ((m = mdRe.exec(prompt)) !== null) {
+        headings.push({ level: m[1].length, title: m[2].trim(), start: m.index });
+    }
+    for (let i = 0; i < headings.length; i++) {
+        const end = i + 1 < headings.length ? headings[i + 1].start : prompt.length;
+        const title = headings[i].title;
+        found.push({
+            focus: title,
+            char_start: headings[i].start,
+            char_end: end,
+            prompt_section: prompt.substring(headings[i].start, end),
+            provenance: 'markdown',
+            verified: true,
+            grounding_method: 'structured_section',
+            grounding_confidence: 1.0,
+            is_dynamic: false
+        });
+    }
+    return found.map(function (f) { return normalizeFocusClient(f, prompt); });
+}
+
+
+
+
 // Repair an unverified focus by binding the current prompt selection as its exact span.
 function repairFocusSpan(index) {
     const prompt = promptInput.value;
@@ -1330,6 +1640,8 @@ function repairFocusSpan(index) {
     focus.char_start = start;
     focus.char_end = end;
     focus.prompt_section = exact;
+    focus.spans = [{ char_start: start, char_end: end, text: exact, text_snapshot: exact }];
+    Object.assign(focus, normalizeFocusClient(focus, prompt));
     focus.verified = true;
     focus.grounding_method = 'manual_selection';
     focus.grounding_confidence = 1.0;
@@ -1350,6 +1662,10 @@ function renderFoci() {
         promptVisualization.classList.add('hidden');
         coverageIndicator.classList.add('hidden');
         coverageWarning.classList.add('hidden');
+        if (overlapMatrixEl) {
+            overlapMatrixEl.classList.add('hidden');
+            overlapMatrixEl.innerHTML = '';
+        }
         if (mergeFociBtn) mergeFociBtn.style.display = 'none';
         if (window.FocalPromptExperiment) window.FocalPromptExperiment.refreshAll();
         return;
@@ -1365,6 +1681,10 @@ function renderFoci() {
         const isDynamic = focus.is_dynamic || false;
         const dynamicType = focus.dynamic_type || '';
         const dynamicTypeOptions = ['chat', 'rag', 'tools', 'other'];
+        const promptText = promptInput ? promptInput.value : '';
+        const nf = normalizeFocusClient(focus, promptText);
+        const overlapPairs = computeClientOverlaps(promptText, foci);
+        const myOverlaps = overlapsForFocusIndex(overlapPairs, index);
         
         return `
         <div class="focus-item" data-focus-index="${index}" draggable="true" style="border-left: 4px solid ${focus.colorDark}; cursor: move;">
@@ -1372,7 +1692,7 @@ function renderFoci() {
                 <div class="focus-item-title" style="display: flex; align-items: center; gap: 8px;">
                     <span style="cursor: move; user-select: none;">☰</span>
                     <input type="checkbox" class="focus-select-checkbox" data-focus-index="${index}" onchange="updateMergeButton()" style="cursor: pointer;">
-                    <span>${index + 1}. ${escapeHtml(focus.focus)}</span>
+                    <span style="cursor:pointer;" onclick="event.stopPropagation(); selectFocusForEditing(${index})" title="Select this focus to add more spans">${index + 1}. ${escapeHtml(focus.focus)}</span>
                     ${isDynamic ? `<span style="margin-left: 8px; padding: 2px 6px; background: #fef3c7; border-radius: 4px; font-size: 0.75em; color: #92400e;">Dynamic: ${dynamicType}</span>` : ''}
                 </div>
                 <button class="focus-item-remove" onclick="removeFocus(${index})">×</button>
@@ -1389,10 +1709,35 @@ function renderFoci() {
                     </div>
                 </div>` : `
                 <div style="margin-bottom:6px;">
-                  <span style="display:inline-block;padding:2px 6px;border-radius:4px;font-size:0.75em;background:#dcfce7;color:#166534;">Verified span</span>
+                  <span style="display:inline-block;padding:2px 6px;border-radius:4px;font-size:0.75em;background:#dcfce7;color:#166534;">Verified</span>
                   ${focus.grounding_method ? `<span style="margin-left:6px;font-size:0.75em;color:#64748b;">${escapeHtml(focus.grounding_method)}</span>` : ''}
+                  ${focus.provenance ? `<span style="margin-left:6px;font-size:0.75em;color:#64748b;">· ${escapeHtml(focus.provenance)}</span>` : ''}
+                  ${nf.is_multi_span ? `<span style="margin-left:6px;padding:2px 6px;border-radius:4px;font-size:0.75em;background:#e0e7ff;color:#3730a3;">${nf.span_count} spans</span>` : ''}
+                  ${!nf.is_contiguous ? `<span style="margin-left:6px;padding:2px 6px;border-radius:4px;font-size:0.75em;background:#fee2e2;color:#991b1b;">non-contiguous</span>` : ''}
+                  ${selectedFocusIndex === index ? `<span style="margin-left:6px;padding:2px 6px;border-radius:4px;font-size:0.75em;background:#dbeafe;color:#1e3a5f;">Selected for add-span</span>` : ''}
                 </div>
-                <strong>Exact source span under test:</strong> ${escapeHtml(focus.prompt_section)}
+                <div style="font-size:0.8em;color:#64748b;margin-bottom:4px;">
+                  Total span length: ${nf.total_span_length || 0} · Unique within focus: ${nf.unique_span_length || 0}
+                  ${focus.parent_focus_id ? ` · Parent: ${escapeHtml(String(focus.parent_focus_id))}` : ''}
+                </div>
+                <strong>Source span(s):</strong>
+                <ol class="focus-span-list">
+                  ${(nf.spans || []).map((s, si) => {
+                    const excerpt = (s.text || (promptText.substring(s.char_start, s.char_end) || '')).slice(0, 80);
+                    return `<li><code>[${s.char_start}:${s.char_end}]</code> ${escapeHtml(excerpt)}${excerpt.length >= 80 ? '…' : ''}
+                      <span class="focus-span-actions">
+                        <button type="button" class="btn btn-outline btn-small" onclick="event.stopPropagation(); removeSpanFromFocus(${index}, ${si})">Remove span</button>
+                      </span>
+                    </li>`;
+                  }).join('') || `<li>${escapeHtml(focus.prompt_section || '')}</li>`}
+                </ol>
+                ${myOverlaps.length ? `<div style="margin-top:8px;"><strong>Overlaps:</strong> ${myOverlaps.map(o =>
+                    `<span class="focus-overlap-chip">${escapeHtml(o.name)} — ${o.pct}% of this focus</span>`
+                ).join('')}</div>` : ''}
+                <div style="margin-top:6px;">
+                  <button type="button" class="btn btn-outline btn-small" onclick="event.stopPropagation(); selectFocusForEditing(${index})">Select focus</button>
+                  <button type="button" class="btn btn-outline btn-small" onclick="event.stopPropagation(); selectFocusForEditing(${index}); document.getElementById('prompt-input').focus();">Add another span…</button>
+                </div>
                 `}
             </div>
             <div class="focus-item-controls" style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #e5e7eb; display: flex; align-items: center; gap: 12px;">
@@ -1535,29 +1880,24 @@ function mergeSelectedFoci() {
         .map(cb => parseInt(cb.dataset.focusIndex))
         .sort((a, b) => a - b); // Sort ascending
     
-    // Merge foci: combine focus names and prompt sections
-    const mergedFocus = {
-        focus: foci[selectedIndices[0]].focus, // Use first focus name as base
-        prompt_section: foci[selectedIndices[0]].prompt_section, // Use first prompt section as base
-        is_dynamic: foci[selectedIndices[0]].is_dynamic || false,
-        dynamic_type: foci[selectedIndices[0]].dynamic_type || ''
-    };
-    
-    // Combine all selected foci
+    // Merge into one multi-span focus (semantic unit with multiple ranges)
+    const promptText = promptInput ? promptInput.value : '';
     const allFocusNames = selectedIndices.map(i => foci[i].focus);
-    const allPromptSections = selectedIndices.map(i => foci[i].prompt_section);
-    
-    // Merge focus names (if different)
     const uniqueNames = [...new Set(allFocusNames)];
-    if (uniqueNames.length > 1) {
-        mergedFocus.focus = uniqueNames.join(' + ');
-    }
-    
-    // Merge prompt sections (if different)
-    const uniqueSections = [...new Set(allPromptSections)];
-    if (uniqueSections.length > 1) {
-        mergedFocus.prompt_section = uniqueSections.join(' | ');
-    }
+    let spans = [];
+    selectedIndices.forEach(function (i) {
+        const nf = normalizeFocusClient(foci[i], promptText);
+        (nf.spans || []).forEach(function (s) { spans.push(s); });
+    });
+    const mergedFocus = normalizeFocusClient({
+        focus: uniqueNames.length > 1 ? uniqueNames.join(' + ') : uniqueNames[0],
+        is_dynamic: false,
+        dynamic_type: '',
+        verified: true,
+        grounding_method: 'manual_selection',
+        provenance: 'manual',
+        spans: spans
+    }, promptText);
     
     // If any selected focus is dynamic, mark merged as dynamic
     const hasDynamic = selectedIndices.some(i => foci[i].is_dynamic);
@@ -1658,34 +1998,24 @@ function updateCoverageVisualization() {
     promptVisualization.classList.remove('hidden');
     if (toggleVisualization) toggleVisualization.textContent = 'Hide';
     
-    // Find all covered sections
+    // Find all covered sections (every span of every focus)
     const coveredRanges = [];
     foci.forEach((focus, index) => {
         if (focus.verified === false || focus.is_dynamic) {
             return;
         }
-        let startIndex = null;
-        let endIndex = null;
-        if (Number.isInteger(focus.char_start) && Number.isInteger(focus.char_end)
-            && focus.char_start >= 0 && focus.char_end <= prompt.length
-            && focus.char_start < focus.char_end) {
-            startIndex = focus.char_start;
-            endIndex = focus.char_end;
-        } else if (focus.prompt_section) {
-            const idx = prompt.indexOf(focus.prompt_section);
-            if (idx !== -1) {
-                startIndex = idx;
-                endIndex = idx + focus.prompt_section.length;
+        const nf = normalizeFocusClient(focus, prompt);
+        const spans = nf.spans && nf.spans.length ? nf.spans : [];
+        spans.forEach(function (span) {
+            if (span.char_start >= 0 && span.char_end <= prompt.length && span.char_start < span.char_end) {
+                coveredRanges.push({
+                    start: span.char_start,
+                    end: span.char_end,
+                    focusIndex: index,
+                    focus: focus
+                });
             }
-        }
-        if (startIndex !== null) {
-            coveredRanges.push({
-                start: startIndex,
-                end: endIndex,
-                focusIndex: index,
-                focus: focus
-            });
-        }
+        });
     });
     
     // Sort by start position
@@ -1725,7 +2055,13 @@ function updateCoverageVisualization() {
         const covered = prompt.substring(range.start, range.end);
         const focusNames = range.focusIndices.map(i => foci[i].focus).join(', ');
         const colors = range.focusIndices.map(i => foci[i].color).join(', ');
-        html += `<span class="highlight" style="background: ${foci[range.focusIndices[0]].color};" title="Focus: ${escapeHtml(focusNames)}">${escapeHtml(covered)}</span>`;
+        const overlap = range.focusIndices.length > 1;
+        const selected = selectedFocusIndex != null && range.focusIndices.includes(selectedFocusIndex);
+        const cls = 'highlight' + (overlap ? ' highlight-overlap' : '') + (selected ? ' highlight-selected' : '');
+        const bg = selected && selectedFocusIndex != null
+            ? (foci[selectedFocusIndex].color || foci[range.focusIndices[0]].color)
+            : foci[range.focusIndices[0]].color;
+        html += `<span class="${cls}" style="background: ${bg};" title="Focus: ${escapeHtml(focusNames)}${overlap ? ' (overlap)' : ''}" data-focus-indices="${range.focusIndices.join(',')}">${escapeHtml(covered)}</span>`;
         
         totalCovered += (range.end - range.start);
         lastIndex = range.end;
@@ -1760,53 +2096,75 @@ function updateLegend() {
 
 // Update coverage statistics
 function updateCoverageStats() {
-    const prompt = promptInput.value.trim();
+    const prompt = promptInput.value;
     
     if (!prompt || foci.length === 0) {
         coverageIndicator.classList.add('hidden');
         coverageWarning.classList.add('hidden');
         return;
     }
-    
-    // Calculate coverage
-    let totalCovered = 0;
-    const coveredPositions = new Set();
-    
-    foci.forEach(focus => {
-        const section = focus.prompt_section;
-        if (section) {
-            const startIndex = prompt.toLowerCase().indexOf(section.toLowerCase());
-            if (startIndex !== -1) {
-                for (let i = startIndex; i < startIndex + section.length; i++) {
-                    coveredPositions.add(i);
-                }
-            }
-        }
-    });
-    
-    totalCovered = coveredPositions.size;
-    const coverage = (totalCovered / prompt.length) * 100;
-    
+
+    const stats = computeClientCoverage(prompt, foci);
+    const coverage = stats.uniquePct;
+    const density = stats.densityPct;
+
     coverageIndicator.classList.remove('hidden');
-    coveragePercent.textContent = `${coverage.toFixed(1)}%`;
-    
-    // Update warning
+    if (coveragePercent) coveragePercent.textContent = `${coverage.toFixed(1)}%`;
+    if (coverageDensity) coverageDensity.textContent = `${density.toFixed(1)}%`;
+    coverageIndicator.title = (
+        'Unique coverage: how much of the prompt is represented by at least one focus.\n' +
+        'Focus density: total focus coverage including overlaps (may exceed 100%).\n' +
+        `Uncovered ${stats.uncovered} chars · once ${stats.once} · twice ${stats.twice} · 3+ ${stats.threePlus}`
+    );
+
+    // Density >100% is valid — only warn on low unique coverage
     if (coverage < 100) {
         coverageWarning.classList.remove('hidden');
+        if (coverageWarning) {
+            const oncePct = prompt.length ? (100 * stats.once / prompt.length).toFixed(1) : '0';
+            const twicePct = prompt.length ? (100 * stats.twice / prompt.length).toFixed(1) : '0';
+            const threePct = prompt.length ? (100 * stats.threePlus / prompt.length).toFixed(1) : '0';
+            const uncPct = (100 - coverage).toFixed(1);
+            coverageWarning.textContent = (
+                `Unique coverage ${coverage.toFixed(1)}% (uncovered ${uncPct}%). ` +
+                `Focus density ${density.toFixed(1)}%` +
+                (density > 100 ? ' — overlaps/nesting increase density above 100%.' : '.') +
+                ` Depth: once ${oncePct}% · twice ${twicePct}% · 3+ ${threePct}%.`
+            );
+        }
     } else {
         coverageWarning.classList.add('hidden');
     }
-    
-    // Update color based on coverage
+
+    const pairs = computeClientOverlaps(prompt, foci);
+    if (overlapMatrixEl) {
+        if (!pairs.length) {
+            overlapMatrixEl.classList.add('hidden');
+            overlapMatrixEl.innerHTML = '';
+        } else {
+            overlapMatrixEl.classList.remove('hidden');
+            overlapMatrixEl.innerHTML = (
+                '<strong>Focus overlaps</strong>' +
+                '<p class="info-text" style="margin:4px 0 8px;">Directional % of each focus covered by the other. Ablations of highly overlapping foci are not independent.</p>' +
+                '<ul class="overlap-matrix-list">' +
+                pairs.map(function (p) {
+                    return `<li><strong>${escapeHtml(p.a)}</strong> ↔ <strong>${escapeHtml(p.b)}</strong>: ` +
+                        `${p.pctOfA}% of ${escapeHtml(p.a)}, ${p.pctOfB}% of ${escapeHtml(p.b)}</li>`;
+                }).join('') +
+                '</ul>'
+            );
+        }
+    }
+
     if (coverage === 100) {
         coverageIndicator.style.background = '#d1fae5';
-        coveragePercent.style.color = '#059669';
+        if (coveragePercent) coveragePercent.style.color = '#059669';
     } else if (coverage >= 80) {
         coverageIndicator.style.background = '#fef3c7';
-        coveragePercent.style.color = '#d97706';
+        if (coveragePercent) coveragePercent.style.color = '#b45309';
     } else {
         coverageIndicator.style.background = '#fee2e2';
-        coveragePercent.style.color = '#dc2626';
+        if (coveragePercent) coveragePercent.style.color = '#b91c1c';
     }
 }
 
@@ -2722,7 +3080,12 @@ async function mapPool(items, limit, fn) {
 function isClientAttributableFocus(focus) {
     if (!focus || focus.is_dynamic) return false;
     if (focus.verified === false) return false;
-    if (focus.reason === 'overlap' || focus.reason === 'unverified' || focus.reason === 'dynamic_slot') {
+    // Overlaps remain attributable; backend records affected_overlapping_foci warnings.
+    if (focus.reason === 'unverified' || focus.reason === 'dynamic_slot') {
+        return false;
+    }
+    // Legacy persisted reason === 'overlap' with attributable === false
+    if (focus.reason === 'overlap' && focus.attributable === false) {
         return false;
     }
     return true;

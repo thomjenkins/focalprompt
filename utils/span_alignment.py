@@ -476,26 +476,29 @@ def compute_coverage_report(prompt: str, foci: List[Dict]) -> Dict:
     """
     Coverage of the prompt by verified static (non-dynamic) foci.
 
-    Boilerplate and dynamic slots may legitimately remain uncovered; this report
-    makes missing coverage visible without requiring 100%.
+    Returns unique coverage (≤100%) and focus density (may exceed 100% when
+    foci overlap or nest). Legacy key ``coverage_percent`` aliases unique coverage.
     """
+    from utils.focus_spans import (
+        compute_coverage_metrics,
+        focus_union_tuples,
+        normalize_focus,
+        overlap_matrix,
+        spans_overlap as _spans_overlap,
+    )
+
     n = len(prompt)
     covered = [False] * n
     verified_static = []
     unverified = []
-    overlaps = []
     dynamic = []
 
-    grounded = verify_foci(prompt, foci) if foci and not all(
-        'verified' in f for f in (foci or [])
-    ) else [dict(f) for f in (foci or [])]
-
-    # Prefer already-verified fields when present.
     items = []
     for f in (foci or []):
         item = dict(f)
         if 'verified' not in item:
             item = verify_focus(prompt, item)
+        item = normalize_focus(item, prompt=prompt)
         items.append(item)
 
     verified_spans: List[Tuple[int, int, str]] = []
@@ -512,23 +515,31 @@ def compute_coverage_report(prompt: str, foci: List[Dict]) -> Dict:
                 'grounding_failure': item.get('grounding_failure') or 'unverified',
             })
             continue
-        start, end = item['char_start'], item['char_end']
+        unions = focus_union_tuples(item)
         verified_static.append({
             'focus': name,
-            'char_start': start,
-            'char_end': end,
+            'id': item.get('id'),
+            'char_start': item.get('char_start'),
+            'char_end': item.get('char_end'),
+            'spans': item.get('spans'),
+            'span_count': item.get('span_count'),
+            'is_multi_span': item.get('is_multi_span'),
             'prompt_section': item.get('prompt_section'),
             'grounding_method': item.get('grounding_method'),
         })
-        verified_spans.append((start, end, name))
-        for i in range(start, end):
-            covered[i] = True
+        for start, end in unions:
+            verified_spans.append((start, end, name))
+            for i in range(max(0, start), min(n, end)):
+                covered[i] = True
 
+    overlaps = []
     for i in range(len(verified_spans)):
         a0, a1, an = verified_spans[i]
         for j in range(i + 1, len(verified_spans)):
             b0, b1, bn = verified_spans[j]
-            if spans_overlap(a0, a1, b0, b1):
+            if an == bn:
+                continue
+            if _spans_overlap(a0, a1, b0, b1):
                 overlaps.append({'a': an, 'b': bn, 'a_span': [a0, a1], 'b_span': [b0, b1]})
 
     uncovered_spans: List[Dict] = []
@@ -540,23 +551,26 @@ def compute_coverage_report(prompt: str, foci: List[Dict]) -> Dict:
         j = i + 1
         while j < n and not covered[j]:
             j += 1
-        text = prompt[i:j]
-        # Skip pure-whitespace microgaps in the uncovered list? Keep them for honesty.
-        uncovered_spans.append({'char_start': i, 'char_end': j, 'text': text})
+        uncovered_spans.append({'char_start': i, 'char_end': j, 'text': prompt[i:j]})
         i = j
 
-    covered_chars = sum(1 for c in covered if c)
-    pct = (100.0 * covered_chars / n) if n else 0.0
+    metrics = compute_coverage_metrics(prompt, items)
     return {
         'prompt_length': n,
-        'covered_chars': covered_chars,
-        'coverage_percent': round(pct, 2),
+        'covered_chars': metrics['covered_chars_unique'],
+        'coverage_percent': metrics['unique_coverage_percent'],
+        'unique_coverage_percent': metrics['unique_coverage_percent'],
+        'focus_density_percent': metrics['focus_density_percent'],
+        'depth_histogram': metrics['depth_histogram'],
+        'depth_percent': metrics['depth_percent'],
         'verified_static_foci': verified_static,
         'unverified_proposals': unverified,
         'overlaps': overlaps,
+        'overlap_matrix': overlap_matrix(items),
         'dynamic_foci': dynamic,
         'uncovered_spans': uncovered_spans,
     }
+
 
 
 def collapse_deletion_boundary(left: str, right: str) -> Tuple[str, bool]:
@@ -712,15 +726,25 @@ def build_shuffled_remaining_prompt(
 
 def classify_foci_for_ablation(prompt: str, foci: List[Dict]) -> List[Dict]:
     """
-    Verify spans, exclude dynamic foci, and refuse overlapping verified static foci.
+    Verify spans and exclude dynamic / unverified foci.
 
-    Each item is a copy of the input focus plus:
-      verified, char_start, char_end, attributable, reason, overlap_with
+    Overlapping foci remain attributable. Overlap is recorded on each focus
+    (``overlap_with``, ``overlap_details``) so ablations can warn that shared
+    text is not an independent intervention.
     """
+    from utils.focus_spans import (
+        focus_union_tuples,
+        normalize_focus,
+        pairwise_overlap,
+        spans_overlap as fs_spans_overlap,
+    )
+
     classified = []
     for focus in foci or []:
         item = verify_focus(prompt, focus)
+        item = normalize_focus(item, prompt=prompt)
         item['overlap_with'] = []
+        item['overlap_details'] = []
         if item.get('is_dynamic'):
             item['attributable'] = False
             item['reason'] = 'dynamic_slot'
@@ -737,20 +761,44 @@ def classify_foci_for_ablation(prompt: str, foci: List[Dict]) -> List[Dict]:
         a = classified[i]
         if not a.get('verified') or a.get('is_dynamic'):
             continue
+        a_spans = focus_union_tuples(a)
         for j in range(i + 1, n):
             b = classified[j]
             if not b.get('verified') or b.get('is_dynamic'):
                 continue
-            if spans_overlap(a['char_start'], a['char_end'], b['char_start'], b['char_end']):
-                a_name = a.get('focus') or f'Focus {i + 1}'
-                b_name = b.get('focus') or f'Focus {j + 1}'
-                a['attributable'] = False
-                a['reason'] = 'overlap'
-                if b_name not in a['overlap_with']:
-                    a['overlap_with'].append(b_name)
-                b['attributable'] = False
-                b['reason'] = 'overlap'
-                if a_name not in b['overlap_with']:
-                    b['overlap_with'].append(a_name)
+            intersects = False
+            for a0, a1 in a_spans:
+                for b0, b1 in focus_union_tuples(b):
+                    if fs_spans_overlap(a0, a1, b0, b1):
+                        intersects = True
+                        break
+                if intersects:
+                    break
+            if not intersects:
+                continue
+            a_name = a.get('focus') or f'Focus {i + 1}'
+            b_name = b.get('focus') or f'Focus {j + 1}'
+            detail = pairwise_overlap(a, b)
+            if b_name not in a['overlap_with']:
+                a['overlap_with'].append(b_name)
+            if a_name not in b['overlap_with']:
+                b['overlap_with'].append(a_name)
+            a['overlap_details'].append(detail)
+            b['overlap_details'].append({
+                **detail,
+                'overlap_pct_of_a': detail['overlap_pct_of_b'],
+                'overlap_pct_of_b': detail['overlap_pct_of_a'],
+                'a_name': detail['b_name'],
+                'b_name': detail['a_name'],
+                'a_id': detail['b_id'],
+                'b_id': detail['a_id'],
+                'relation': (
+                    'a_contains_b' if detail['relation'] == 'b_contains_a'
+                    else 'b_contains_a' if detail['relation'] == 'a_contains_b'
+                    else detail['relation']
+                ),
+            })
+            a['has_overlap'] = True
+            b['has_overlap'] = True
 
     return classified

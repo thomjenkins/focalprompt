@@ -111,7 +111,7 @@ def test_classify_dynamic_excluded():
     assert out[1]['reason'] == 'dynamic_slot'
 
 
-def test_classify_overlap_refused():
+def test_classify_overlap_allowed_with_metadata():
     prompt = "The quick brown fox jumps."
     foci = [
         {'focus': 'A', 'prompt_section': 'The quick brown fox'},
@@ -120,12 +120,13 @@ def test_classify_overlap_refused():
     out = classify_foci_for_ablation(prompt, foci)
     assert out[0]['verified'] is True
     assert out[1]['verified'] is True
-    assert out[0]['attributable'] is False
-    assert out[1]['attributable'] is False
-    assert out[0]['reason'] == 'overlap'
-    assert out[1]['reason'] == 'overlap'
+    assert out[0]['attributable'] is True
+    assert out[1]['attributable'] is True
+    assert out[0].get('has_overlap') is True
+    assert out[1].get('has_overlap') is True
     assert 'B' in out[0]['overlap_with']
     assert 'A' in out[1]['overlap_with']
+    assert out[0]['overlap_details']
 
 
 def test_adjacent_spans_do_not_overlap():
