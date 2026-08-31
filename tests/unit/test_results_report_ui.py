@@ -65,3 +65,21 @@ def test_experiment_index_shows_findings():
 def test_order_tab_conditionally_hidden_in_js():
     # Order nav is omitted when hasOrderData is false
     assert 'hasOrderData' in REPORT_JS
+
+
+def test_experiment_c_not_a_separate_lab_card():
+    assert 'lab-jump-nav' in HTML
+    assert 'href="#lab-results-report"' in HTML
+    # Visible Exp C card removed; hidden mounts remain for API paint/explain
+    assert 'id="experiment-c-section"' in HTML
+    assert 'Experiment C — Reported vs revealed</h2>' not in HTML
+    assert 'experiment-c-pointer' not in HTML
+    assert '7. Focus order sensitivity' in HTML
+    assert '8. Task quality evaluation' in HTML
+
+
+def test_report_owns_concordance():
+    assert 'renderConcordancePanel' in REPORT_JS or 'fp-concordance-panel' in REPORT_JS
+    assert 'refresh-concordance' in REPORT_JS
+    assert 'Full concordance table' in REPORT_JS or 'Concordance table' in REPORT_JS
+    assert 'window.refreshExperimentCComparison' in APP_JS

@@ -169,7 +169,9 @@
                             </p>
                             <p><strong>Experiment C — Reported vs revealed</strong></p>
                             <p>
-                                Compare Experiment A scores with Experiment B significance on the same foci. Disagreement is informative (e.g. citation rules that embeddings miss).
+                                After Experiments A and B, the <strong>Results report</strong> compares reported
+                                scores with revealed influence (dumbbell chart, focus map, concordance detail).
+                                There is no separate Experiment C step in the lab flow.
                             </p>
                             <p style="background: #e8f4f8; padding: 12px; border-radius: 6px; border-left: 4px solid #0c5460; margin: 16px 0;">
                                 FocalPrompt detects whether removing each focus shifts the model's behaviour in semantic embedding space. It does not measure correctness, quality, or safety, and it does not tell you what to delete.
@@ -219,8 +221,17 @@
             
             <!-- Prompt Analysis Tab Content -->
             <div id="prompt-analysis-tab" class="tab-content">
+            <nav class="lab-jump-nav" aria-label="Lab sections">
+                <a href="#lab-prompt">Prompt</a>
+                <a href="#lab-foci">Foci</a>
+                <a href="#lab-experiment-a">A · Reported</a>
+                <a href="#lab-experiment-b">B · Ablation</a>
+                <a href="#lab-results-report">Results</a>
+                <a href="#lab-focus-order">Order</a>
+                <a href="#lab-quality">Quality</a>
+            </nav>
             <!-- Prompt Section -->
-            <section class="card">
+            <section class="card" id="lab-prompt">
                     <div class="card-header">
                         <h2>1. Enter Your Prompt</h2>
                         <div style="display: flex; gap: 8px; align-items: center;">
@@ -268,7 +279,7 @@
             </section>
 
             <!-- Foci Section -->
-            <section class="card">
+            <section class="card" id="lab-foci">
                 <div class="card-header">
                     <h2>2. Define Foci</h2>
                     <div class="button-group">
@@ -317,7 +328,7 @@
             </section>
 
             <!-- Assessment Section -->
-            <section class="card">
+            <section class="card" id="lab-experiment-a">
                 <div class="card-header">
                     <h2>4. Experiment A — Reported focus</h2>
                     <div class="button-group">
@@ -335,6 +346,8 @@
                 <div class="card-body">
                     <p class="info-text">
                         Model self-assessment of one completion (behavioural report). This is not transformer attention.
+                        After ablation (B), reported scores feed the <a href="#lab-results-report">Results report</a> —
+                        you do not need a separate Experiment C step.
                     </p>
                     <div id="assessment-results" class="assessment-results">
                         <p class="empty-state">Click "Assess Focus" to see the results.</p>
@@ -388,7 +401,7 @@
             </section>
 
             <!-- Ablation Analysis Section -->
-            <section class="card">
+            <section class="card" id="lab-experiment-b">
                 <div class="card-header">
                     <h2>6. Experiment B — Perturbation sensitivity</h2>
                     <div class="button-group">
@@ -402,7 +415,7 @@
                 </div>
                 <div class="card-body">
                     <p class="info-text">
-                        Leave-one-focus-out ablation with permutation testing. Detects whether removing each focus shifts behaviour in embedding space — not correctness, quality, or safety, and not a delete recommendation. Compare with Experiment A for reported vs revealed (Experiment C). After results appear, use <strong>shuffle-order robustness</strong> on each focus card to check whether order of remaining spans affects the signal.
+                        Leave-one-focus-out ablation with permutation testing. Detects whether removing each focus shifts behaviour in embedding space — not correctness, quality, or safety, and not a delete recommendation. Reported vs revealed comparison appears in the <strong>Results report</strong> below (Overview + Focus map), not as a separate experiment step.
                     </p>
                     <div class="experiment-config" data-foci-source="ablation">
                         <h3 class="experiment-config-title">Experiment configuration</h3>
@@ -432,47 +445,25 @@
                             <p class="exp-permutation-disclosure"></p>
                         </details>
                     </div>
+                    <div id="lab-results-report" class="lab-results-anchor"></div>
                     <div id="ablation-results" class="ablation-results">
-                        <p class="empty-state">Click "Run Ablation Analysis" to test whether deleting each focus shifts the model's behaviour.</p>
+                        <p class="empty-state">Click "Run Ablation Analysis" to test whether deleting each focus shifts the model's behaviour. Results open as an insight report (Overview first).</p>
                     </div>
-                    <p class="info-text experiment-c-pointer" style="margin-top: 14px;">
-                        After ablation, <a href="#experiment-c-section">Experiment C — Reported vs revealed</a>
-                        compares each focus's Experiment A score with Experiment B signal (section 7 below).
-                    </p>
                 </div>
             </section>
 
-            <!-- Experiment C: Reported vs revealed -->
-            <section class="card" id="experiment-c-section">
-                <div class="card-header">
-                    <h2>7. Experiment C — Reported vs revealed</h2>
-                    <div class="button-group">
-                        <button id="refresh-experiment-c-btn" class="btn btn-outline" type="button">
-                            🔄 Refresh comparison
-                        </button>
-                        <button id="explain-experiment-c-btn" class="btn btn-primary" type="button" disabled>
-                            💬 Explain disagreements (LLM)
-                        </button>
-                    </div>
-                </div>
-                <div class="card-body">
-                    <p class="info-text">
-                        For <strong>each tagged focus</strong>, compare Experiment A’s assigned focus level
-                        (model self-assessment of the completion) with Experiment B’s measured signal
-                        strength (<em>T</em><sub>obs</sub>, normalized share, standardized effect, BH
-                        q-value). Highlights where reported and revealed sensitivity agree or disagree.
-                        Neither lens is ground truth.
-                    </p>
-                    <div id="experiment-c-results" class="experiment-c-results">
-                        <p class="empty-state">Tag foci, run Assess Focus Distribution and Ablation Analysis to compare A vs B per focus.</p>
-                    </div>
-                </div>
-            </section>
+            <!-- Experiment C mounts kept for API paint/explain — not a separate lab step.
+                 Concordance lives inside the Results report (Overview summary + Raw detail). -->
+            <div id="experiment-c-section" class="hidden" aria-hidden="true">
+                <button id="refresh-experiment-c-btn" type="button" tabindex="-1">Refresh comparison</button>
+                <button id="explain-experiment-c-btn" type="button" tabindex="-1" disabled>Explain disagreements</button>
+                <div id="experiment-c-results" class="experiment-c-results"></div>
+            </div>
 
             <!-- Focus order / position sensitivity -->
-            <section class="card" id="focus-order-section">
+            <section class="card" id="lab-focus-order">
                 <div class="card-header">
-                    <h2>8. Focus order sensitivity</h2>
+                    <h2>7. Focus order sensitivity</h2>
                     <div class="button-group">
                         <button id="run-focus-order-btn" class="btn btn-primary" type="button" disabled>
                             🔀 Run order sensitivity
@@ -523,9 +514,9 @@
             </section>
 
             <!-- Task quality evaluation (LLM judge) -->
-            <section class="card" id="quality-eval-section">
+            <section class="card" id="lab-quality">
                 <div class="card-header">
-                    <h2>9. Task quality evaluation (LLM)</h2>
+                    <h2>8. Task quality evaluation (LLM)</h2>
                     <div class="button-group">
                         <button id="run-quality-eval-btn" class="btn btn-primary" type="button">
                             🎯 Evaluate outputs on criteria

@@ -2940,3 +2940,69 @@ circle.fp-series-7 { fill: #8a8a8a; }
         grid-template-columns: 110px 1fr 70px;
     }
 }
+
+/* ===== Lab jump nav + concordance (nav cleanup) ===== */
+.lab-jump-nav {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 2px;
+    padding: 8px 10px;
+    margin: 0 0 14px;
+    background: rgba(244, 244, 241, 0.96);
+    backdrop-filter: blur(6px);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+}
+.lab-jump-nav a {
+    text-decoration: none;
+    color: var(--text-secondary);
+    font-size: 0.82rem;
+    padding: 6px 10px;
+    border-radius: 6px;
+}
+.lab-jump-nav a:hover,
+.lab-jump-nav a:focus-visible {
+    color: var(--primary-color);
+    background: #fff;
+    outline: none;
+}
+.lab-results-anchor {
+    scroll-margin-top: 64px;
+}
+#lab-experiment-a,
+#lab-experiment-b,
+#lab-focus-order,
+#lab-quality,
+#lab-prompt,
+#lab-foci {
+    scroll-margin-top: 64px;
+}
+.fp-concordance-panel {
+    margin: 16px 0;
+    padding: 12px 14px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: #fff;
+}
+.fp-concordance-summary {
+    margin: 0 0 8px;
+    font-size: 0.92rem;
+    line-height: 1.4;
+}
+.fp-concordance-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+}
+.fp-concordance-explanation {
+    margin-top: 12px;
+}
+.fp-raw-concordance {
+    margin-bottom: 18px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--border-color);
+}

@@ -2930,7 +2930,16 @@ function renderAblationResults(data, options) {
     bindShuffleRobustnessHandlers(data);
     bindAblationStabilityHandlers(data);
     if (!options || !options.skipExperimentCRefresh) {
-        refreshExperimentCComparison({ scroll: true });
+        refreshExperimentCComparison({ scroll: false }).then(function () {
+            if (window.FocalPromptReport && typeof window.FocalPromptReport.refresh === 'function') {
+                window.FocalPromptReport.refresh();
+            }
+            const report = document.getElementById('lab-results-report')
+                || document.getElementById('ablation-results');
+            if (report && report.scrollIntoView) {
+                report.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        }).catch(function () { /* refreshExperimentCComparison already surfaces errors */ });
     }
 }
 
@@ -3699,7 +3708,8 @@ async function refreshExperimentCComparison(options) {
                 : 'No disagreements to explain at the current thresholds';
         }
         if (scroll) {
-            const target = document.getElementById('experiment-c-section');
+            const target = document.getElementById('lab-results-report')
+                || document.getElementById('ablation-results');
             if (target && target.scrollIntoView) {
                 target.scrollIntoView({ behavior: 'smooth', block: 'start' });
             }
@@ -3717,6 +3727,8 @@ async function refreshExperimentCComparison(options) {
 function renderExperimentCComparison(data) {
     paintExperimentCComparison(data, true);
 }
+
+window.refreshExperimentCComparison = refreshExperimentCComparison;
 
 function formatExperimentCQ(q) {
     if (q === null || q === undefined) return 'n/a';
@@ -3803,9 +3815,14 @@ if (explainExperimentCBtn) {
             }
             window.experimentCExplanationHtml = renderExperimentCExplanation(data.explanation || data);
             renderExperimentCComparison(window.experimentCComparison);
-            const el = document.getElementById('experiment-c-explanation');
-            if (el && el.scrollIntoView) {
-                el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            if (window.FocalPromptReport && typeof window.FocalPromptReport.refresh === 'function') {
+                window.FocalPromptReport.refresh();
+            }
+            const el = document.getElementById('fp-concordance-explanation')
+                || document.getElementById('experiment-c-explanation');
+            if (el) {
+                el.innerHTML = window.experimentCExplanationHtml;
+                if (el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
             }
         } catch (err) {
             showError('Error explaining disagreements: ' + err.message);

@@ -538,6 +538,52 @@
         );
     }
 
+    function renderConcordancePanel() {
+        var cmp = global.experimentCComparison;
+        if (!cmp || !cmp.summary) {
+            return (
+                '<div class="fp-concordance-panel fp-concordance-empty">' +
+                '<p class="info-text">Run Experiment A (Assess Focus) before or after ablation to score reported↔revealed agreement. ' +
+                'The chart above already compares available scores; concordance stats appear here once both lenses are present.</p>' +
+                '<button type="button" class="btn btn-outline btn-small" data-action="refresh-concordance">Refresh concordance</button>' +
+                '</div>'
+            );
+        }
+        var summary = cmp.summary || {};
+        var rho = summary.spearman_reported_vs_normalized_influence;
+        var rhoTxt = (rho === null || rho === undefined || Number.isNaN(Number(rho)))
+            ? 'n/a'
+            : Number(rho).toFixed(2);
+        var nDis = summary.n_disagreements || 0;
+        var disagreements = (summary.disagreement_foci || []).slice(0, 4).join(', ');
+        var explainDisabled = nDis === 0 ? ' disabled' : '';
+        return (
+            '<div class="fp-concordance-panel">' +
+            '<h4 class="fp-section-title">Reported ↔ revealed concordance</h4>' +
+            '<p class="fp-concordance-summary">Compared ' +
+            escapeHtml(String(summary.n_foci_compared || (cmp.rows || []).length)) +
+            ' foci · Agree (high) ' + escapeHtml(String(summary.n_concordant_high || 0)) +
+            ' · Agree (quiet) ' + escapeHtml(String(summary.n_concordant_quiet || 0)) +
+            ' · Disagreements ' + escapeHtml(String(nDis)) +
+            (disagreements ? ' (' + escapeHtml(disagreements) + ')' : '') +
+            ' · ρ = ' + escapeHtml(rhoTxt) + '</p>' +
+            (summary.interpretation
+                ? '<p class="info-text">' + escapeHtml(summary.interpretation) + '</p>'
+                : '') +
+            '<div class="fp-concordance-actions">' +
+            '<button type="button" class="btn btn-outline btn-small" data-action="refresh-concordance">Refresh</button>' +
+            '<button type="button" class="btn btn-primary btn-small" data-action="explain-concordance"' +
+            explainDisabled + '>Explain disagreements</button>' +
+            '<button type="button" class="btn btn-outline btn-small" data-action="set-view" data-view="raw">Full concordance table → Raw</button>' +
+            '</div>' +
+            (global.experimentCExplanationHtml
+                ? '<div id="fp-concordance-explanation" class="fp-concordance-explanation">' +
+                  global.experimentCExplanationHtml + '</div>'
+                : '<div id="fp-concordance-explanation" class="fp-concordance-explanation"></div>') +
+            '</div>'
+        );
+    }
+
     function renderOverview() {
         return (
             '<section class="fp-overview">' +
@@ -546,8 +592,10 @@
             renderAnatomyBar() +
             '<div class="fp-dumbbell-section">' +
             '<h4 class="fp-section-title">Reported vs. revealed influence</h4>' +
+            '<p class="info-text">This is the Experiment C comparison — reported attention (A) vs behavioural influence (B). Use Focus map for the same data as a scatter.</p>' +
             renderDumbbellChart() +
             '</div>' +
+            renderConcordancePanel() +
             renderNextTests() +
             '</section>'
         );
@@ -866,15 +914,32 @@
             }
         }
 
+        var concordanceMount = document.getElementById('experiment-c-results');
+        var concordanceHtml = (concordanceMount && concordanceMount.innerHTML)
+            ? concordanceMount.innerHTML
+            : '<p class="fp-empty">No concordance table yet. Refresh from Overview after Experiments A and B.</p>';
+
+        var explainHtml = global.experimentCExplanationHtml || '';
+
         var jsonStr;
         try {
-            jsonStr = JSON.stringify(ablation, null, 2);
+            jsonStr = JSON.stringify({
+                ablation: ablation,
+                assessment: global.lastAssessmentApiPayload || null,
+                experiment_c: global.experimentCComparison || null
+            }, null, 2);
         } catch (e) {
             jsonStr = 'Unable to serialize results: ' + (e.message || String(e));
         }
 
         return (
             '<section class="fp-raw-wrap">' +
+            '<div class="fp-raw-concordance">' +
+            '<h4 class="fp-section-title">Concordance table (reported vs revealed)</h4>' +
+            '<p class="info-text">Full Experiment C detail — Overview keeps the chart; this is the forensic table.</p>' +
+            concordanceHtml +
+            (explainHtml ? '<div class="fp-raw-explain">' + explainHtml + '</div>' : '') +
+            '</div>' +
             '<div class="fp-raw-classic">' + classicHtml + '</div>' +
             '<div class="fp-raw-json">' +
             '<div class="fp-raw-json-header"><h4 class="fp-section-title">Raw JSON</h4>' +
@@ -1046,6 +1111,17 @@
         } else if (action === 'toggle-dumbbell-all') {
             STATE.dumbbellShowAll = !STATE.dumbbellShowAll;
             renderAll();
+        } else if (action === 'refresh-concordance') {
+            if (typeof global.refreshExperimentCComparison === 'function') {
+                Promise.resolve(global.refreshExperimentCComparison({ scroll: false })).then(function () {
+                    refresh();
+                });
+            }
+        } else if (action === 'explain-concordance') {
+            var hiddenExplain = document.getElementById('explain-experiment-c-btn');
+            if (hiddenExplain && !hiddenExplain.disabled) {
+                hiddenExplain.click();
+            }
         }
     }
 
