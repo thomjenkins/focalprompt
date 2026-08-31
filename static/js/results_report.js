@@ -592,7 +592,7 @@
             renderAnatomyBar() +
             '<div class="fp-dumbbell-section">' +
             '<h4 class="fp-section-title">Reported vs. revealed influence</h4>' +
-            '<p class="info-text">This is the Experiment C comparison — reported attention (A) vs behavioural influence (B). Use Focus map for the same data as a scatter.</p>' +
+            '<p class="info-text">Reported attention (A) vs behavioural influence when each focus is removed (B).</p>' +
             renderDumbbellChart() +
             '</div>' +
             renderConcordancePanel() +
