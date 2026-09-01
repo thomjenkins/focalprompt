@@ -7,6 +7,7 @@ from flask import Blueprint, request, jsonify
 from services.assessor_factory import get_assessor
 from services.optimization_service import OptimizationService
 from services.cost_calculator import CostCalculator
+from routes.http_errors import internal_error
 from utils.request_inference import request_inference_fields
 
 optimization_bp = Blueprint('optimization', __name__)
@@ -46,4 +47,4 @@ def analyze_prompt_optimization():
         return jsonify(result)
         
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return internal_error('optimization_analyze_prompt', e)

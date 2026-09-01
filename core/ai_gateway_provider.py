@@ -256,7 +256,7 @@ class AIGatewayProvider(LLMProvider):
                     print(f"Error details: {error_details}", file=sys.stderr)
                 print(f"Gateway URL: {self.base_url}", file=sys.stderr)
                 print(f"Model: {gateway_model} (provider={provider}, model={model})", file=sys.stderr)
-                print(f"API Key (first 20 chars): {self.gateway_api_key[:20] if self.gateway_api_key else 'None'}...", file=sys.stderr)
+                print(f"API Key: …{self.gateway_api_key[-4:] if self.gateway_api_key and len(self.gateway_api_key) >= 4 else (self.gateway_api_key or 'None')}", file=sys.stderr)
                 
                 # Provide user-friendly error messages (no technical details)
                 if error_code == 404:

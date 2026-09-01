@@ -8,6 +8,7 @@ from flask import Blueprint, jsonify, request
 from services.assessor_factory import get_assessor
 from services.cost_calculator import CostCalculator
 from services.output_evaluator_service import OutputQualityEvaluator
+from routes.http_errors import internal_error
 from utils.request_inference import request_inference_fields
 
 evaluation_bp = Blueprint('evaluation', __name__)
@@ -77,4 +78,4 @@ def evaluate_outputs_quality():
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return internal_error('evaluation_outputs_quality', e)

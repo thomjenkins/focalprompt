@@ -13,6 +13,7 @@ from services.embedding_service import EmbeddingService
 from services.cost_calculator import CostCalculator
 from services.checkpoint_service import CheckpointService
 from core.ai_gateway_provider import RateLimitError
+from routes.http_errors import internal_error
 from utils.json_safe import sanitize_non_finite
 from utils.request_inference import request_inference_fields
 
@@ -106,7 +107,7 @@ def ablation_analysis():
         msg = str(e)
         if 'rate limit' in msg.lower() or '429' in msg:
             return _rate_limit_response(e)
-        return jsonify({'error': msg}), 500
+        return internal_error('ablation_analysis', e)
 
 
 @ablation_bp.route('/api/ablation-sample', methods=['POST'])
@@ -136,7 +137,7 @@ def ablation_sample():
         msg = str(e)
         if 'rate limit' in msg.lower() or '429' in msg:
             return _rate_limit_response(e)
-        return jsonify({'error': msg}), 500
+        return internal_error('ablation_sample', e)
 
 
 @ablation_bp.route('/api/ablation-refine-stability', methods=['POST'])
@@ -190,7 +191,7 @@ def ablation_refine_stability():
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return internal_error('ablation_refine_stability', e)
 
 
 @ablation_bp.route('/api/ablation-behavioral-outcome-dispersion', methods=['POST'])
@@ -228,7 +229,7 @@ def ablation_behavioral_outcome_dispersion():
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return internal_error('ablation_behavioral_outcome_dispersion', e)
 
 
 @ablation_bp.route('/api/ablation-score', methods=['POST'])
@@ -278,7 +279,7 @@ def ablation_score():
         )
         return _analysis_json(result_data)
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return internal_error('ablation_score', e)
 
 
 @ablation_bp.route('/api/ablation-shuffle-robustness', methods=['POST'])
@@ -331,7 +332,7 @@ def ablation_shuffle_robustness():
         msg = str(e)
         if 'rate limit' in msg.lower() or '429' in msg:
             return _rate_limit_response(e)
-        return jsonify({'error': msg}), 500
+        return internal_error('ablation_shuffle_robustness', e)
 
 
 @ablation_bp.route('/api/ablation-reported-focus-dynamics', methods=['POST'])
@@ -383,4 +384,4 @@ def ablation_reported_focus_dynamics():
         msg = str(e)
         if 'rate limit' in msg.lower() or '429' in msg:
             return _rate_limit_response(e)
-        return jsonify({'error': msg}), 500
+        return internal_error('ablation_reported_focus_dynamics', e)

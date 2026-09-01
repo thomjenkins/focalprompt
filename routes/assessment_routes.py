@@ -19,6 +19,7 @@ from services.assessment_service import AssessmentService
 from services.prompt_rewrite_service import PromptRewriteService
 from services.checkpoint_service import CheckpointService
 from utils.prompt_builder import build_prompt_with_dynamic_foci
+from routes.http_errors import internal_error
 from utils.request_inference import request_inference_fields
 
 
@@ -41,17 +42,12 @@ def detect_foci():
         try:
             result = service.detect_foci(prompt)
         except (ValueError, json.JSONDecodeError) as e:
-            # JSON parsing or validation error
-            import sys
-            import traceback
-            print(f"Error parsing LLM response in detect_foci: {type(e).__name__}: {e}", file=sys.stderr)
-            traceback.print_exc(file=sys.stderr)
-            return jsonify({'error': f'Failed to parse LLM response: {str(e)}'}), 500
+            return internal_error('assessment_detect_foci_parse', e)
         
         return jsonify(result)
         
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return internal_error('assessment_detect_foci', e)
 
 
 @assessment_bp.route('/api/detect-dynamic-foci', methods=['POST'])
@@ -77,7 +73,7 @@ def detect_dynamic_foci():
         return jsonify(result)
         
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return internal_error('assessment_detect_dynamic_foci', e)
 
 
 @assessment_bp.route('/api/assess', methods=['POST'])
@@ -126,7 +122,7 @@ def assess():
         return jsonify(result)
         
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return internal_error('assessment_assess', e)
 
 
 @assessment_bp.route('/api/generate-output', methods=['POST', 'GET'])
@@ -173,10 +169,7 @@ def generate_output():
         return jsonify({'output': output})
         
     except Exception as e:
-        print(f"   ❌ Error in generate_output: {e}", file=sys.stderr)
-        import traceback
-        traceback.print_exc(file=sys.stderr)
-        return jsonify({'error': str(e)}), 500
+        return internal_error('assessment_generate_output', e)
 
 
 @assessment_bp.route('/api/rewrite-prompt', methods=['POST'])
@@ -200,7 +193,7 @@ def rewrite_prompt():
         return jsonify({'rewritten_prompt': rewritten})
         
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return internal_error('assessment_rewrite_prompt', e)
 
 
 @assessment_bp.route('/api/build-agent-prompt-from-inputs', methods=['POST'])
@@ -231,4 +224,4 @@ def build_agent_prompt_from_inputs():
         })
         
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return internal_error('assessment_build_agent_prompt', e)
