@@ -10,8 +10,10 @@ import pytest
 from services.prompt_rewrite_service import (
     PromptRewriteService,
     build_rewrite_instruction,
+    looks_like_rewrite_instruction_leak,
     looks_like_sample_completion,
     normalize_rewrite_weight,
+    protect_dynamic_spans,
     strip_rewrite_fences,
     weight_band,
 )
@@ -157,6 +159,16 @@ def test_looks_like_sample_completion_suggested_message():
     assert looks_like_sample_completion(original, good) is False
 
 
+def test_looks_like_rewrite_instruction_leak():
+    assert looks_like_rewrite_instruction_leak(
+        "You are editing INSTRUCTION TEXT (a system/developer prompt).\n\n"
+        "ORIGINAL PROMPT:\nYou are helpful.\n\nREWRITE WEIGHTS:\n- Role"
+    ) is True
+    assert looks_like_rewrite_instruction_leak(
+        "You are a veterinary assistant. Return JSON with suggestedMessage."
+    ) is False
+
+
 def test_rewrite_prompt_omits_zero_weight_focus_with_deterministic_mock():
     """Mock model deletes 0%-weight sections; service must surface that omission."""
     prompt = (
@@ -217,6 +229,161 @@ def test_rewrite_prompt_omits_zero_weight_focus_with_deterministic_mock():
     assert 'for low-weight foci (0-30%), mention' not in user
     assert 'mention them briefly or implicitly' not in user
     assert 'maintain the original structure and meaning' not in user
+
+
+def test_rewrite_prompt_restores_dynamic_span_from_marker():
+    prompt = (
+        "You are a clinic assistant.\n\n"
+        "Chat:\n"
+        "Owner: My pup needs a booster appointment please.\n\n"
+        "Return JSON."
+    )
+    chat_start = prompt.index("Owner:")
+    chat_end = prompt.index("\n\nReturn JSON")
+    foci = [
+        {
+            'focus': 'Role',
+            'prompt_section': 'You are a clinic assistant.',
+            'rewrite_weight': 70,
+        },
+        {
+            'focus': 'Chat',
+            'prompt_section': prompt[chat_start:chat_end],
+            'rewrite_weight': 50,
+            'is_dynamic': True,
+            'dynamic_type': 'chat',
+            'spans': [{'char_start': chat_start, 'char_end': chat_end}],
+        },
+    ]
+
+    def fake_chat_completion(**kwargs):
+        user = kwargs['messages'][1]['content']
+        assert 'Owner: My pup needs' not in user
+        assert '<<FOCALPROMPT_DYNAMIC_0_CHAT>>' in user
+        return {
+            'content': (
+                "You are a concise veterinary assistant.\n\n"
+                "Chat:\n"
+                "<<FOCALPROMPT_DYNAMIC_0_CHAT>>\n\n"
+                "Return valid JSON."
+            )
+        }
+
+    provider = MagicMock()
+    provider.chat_completion.side_effect = fake_chat_completion
+    assessor = SimpleNamespace(provider=provider, model='mock-model', provider_name='openai')
+    service = PromptRewriteService(assessor)
+
+    rewritten = service.rewrite_prompt(prompt, foci)
+
+    assert 'Owner: My pup needs a booster appointment please.' in rewritten
+    assert '<<FOCALPROMPT_DYNAMIC_0_CHAT>>' not in rewritten
+
+
+def test_rewrite_prompt_restores_dynamic_span_between_rewritten_neighbors():
+    prompt = (
+        "Role: You are a clinic assistant.\n\n"
+        "Chat:\n"
+        "Owner: My pup needs a booster appointment please.\n\n"
+        "Format: Return JSON."
+    )
+    chat_start = prompt.index("Owner:")
+    chat_end = prompt.index("\n\nFormat:")
+    foci = [
+        {
+            'focus': 'Role',
+            'prompt_section': 'Role: You are a clinic assistant.',
+            'rewrite_weight': 70,
+        },
+        {
+            'focus': 'Chat',
+            'prompt_section': prompt[chat_start:chat_end],
+            'rewrite_weight': 50,
+            'is_dynamic': True,
+            'dynamic_type': 'chat',
+            'spans': [{'char_start': chat_start, 'char_end': chat_end}],
+        },
+        {
+            'focus': 'Format',
+            'prompt_section': 'Format: Return JSON.',
+            'rewrite_weight': 70,
+        },
+    ]
+
+    provider = MagicMock()
+    provider.chat_completion.return_value = {
+        'content': (
+            "Role: You are a concise clinic assistant.\n\n"
+            "Chat:\n"
+            "<<FOCALPROMPT_DYNAMIC_0_CHAT>>\n\n"
+            "Format: Return valid JSON."
+        )
+    }
+    assessor = SimpleNamespace(provider=provider, model='mock-model', provider_name='openai')
+    service = PromptRewriteService(assessor)
+
+    rewritten = service.rewrite_prompt(prompt, foci)
+
+    role_pos = rewritten.index("Role: You are a concise clinic assistant.")
+    chat_pos = rewritten.index("Owner: My pup needs a booster appointment please.")
+    format_pos = rewritten.index("Format: Return valid JSON.")
+    assert role_pos < chat_pos < format_pos
+
+
+def test_rewrite_prompt_retries_when_model_copies_control_prompt():
+    prompt = "You are a clinic assistant.\n\nReturn JSON."
+    foci = [{'focus': 'Role', 'prompt_section': 'You are a clinic assistant.', 'rewrite_weight': 70}]
+    responses = [
+        {
+            'content': (
+                "You are editing INSTRUCTION TEXT (a system/developer prompt).\n\n"
+                "ORIGINAL PROMPT:\nYou are a clinic assistant."
+            )
+        },
+        {'content': 'You are a concise clinic assistant.\n\nReturn valid JSON.'},
+    ]
+
+    provider = MagicMock()
+    provider.chat_completion.side_effect = lambda **kwargs: responses.pop(0)
+    assessor = SimpleNamespace(provider=provider, model='mock-model', provider_name='openai')
+    service = PromptRewriteService(assessor)
+
+    rewritten = service.rewrite_prompt(prompt, foci)
+
+    assert rewritten.startswith('You are a concise clinic assistant.')
+    assert provider.chat_completion.call_count == 2
+    second_user = provider.chat_completion.call_args_list[1].kwargs['messages'][1]['content']
+    assert 'You are editing INSTRUCTION TEXT' in second_user
+    assert provider.chat_completion.call_args_list[0].kwargs['max_tokens'] == 4096
+
+
+def test_protect_dynamic_spans_orders_markers_by_original_position():
+    prompt = "Role.\n\nChat: hello\n\nContext: record\n\nReturn JSON."
+    chat_start = prompt.index("hello")
+    chat_end = chat_start + len("hello")
+    context_start = prompt.index("record")
+    context_end = context_start + len("record")
+    foci = [
+        {
+            'focus': 'Context',
+            'is_dynamic': True,
+            'dynamic_type': 'rag',
+            'spans': [{'char_start': context_start, 'char_end': context_end}],
+        },
+        {
+            'focus': 'Chat',
+            'is_dynamic': True,
+            'dynamic_type': 'chat',
+            'spans': [{'char_start': chat_start, 'char_end': chat_end}],
+        },
+    ]
+
+    protected_prompt, protected = protect_dynamic_spans(prompt, foci)
+
+    assert [item['text'] for item in protected] == ['hello', 'record']
+    assert protected_prompt.index('<<FOCALPROMPT_DYNAMIC_0_CHAT>>') < protected_prompt.index(
+        '<<FOCALPROMPT_DYNAMIC_1_RAG>>'
+    )
 
 
 def test_rewrite_retries_when_model_returns_sample_completion():

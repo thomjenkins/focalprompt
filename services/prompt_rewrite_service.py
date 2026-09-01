@@ -12,7 +12,7 @@ from __future__ import annotations
 import inspect
 import json
 import re
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 from core.focal_assessor import FocalAssessor
 
@@ -41,6 +41,124 @@ _COMPLETION_KEYS = frozenset({
     'email',
     'sms',
 })
+
+
+def _dynamic_marker(index: int, dynamic_type: str) -> str:
+    slug = re.sub(r'[^A-Za-z0-9]+', '_', dynamic_type or 'dynamic').strip('_')
+    return f"<<FOCALPROMPT_DYNAMIC_{index}_{(slug or 'dynamic').upper()}>>"
+
+
+def _span_from_focus(focus: Dict) -> List[Tuple[int, int]]:
+    spans = focus.get('spans')
+    if isinstance(spans, list) and spans:
+        out = []
+        for span in spans:
+            if not isinstance(span, dict):
+                continue
+            start = span.get('char_start', span.get('start'))
+            end = span.get('char_end', span.get('end'))
+            try:
+                start_i = int(start)
+                end_i = int(end)
+            except (TypeError, ValueError):
+                continue
+            if end_i > start_i:
+                out.append((start_i, end_i))
+        return out
+
+    start = focus.get('char_start')
+    end = focus.get('char_end')
+    try:
+        start_i = int(start)
+        end_i = int(end)
+    except (TypeError, ValueError):
+        return []
+    if end_i > start_i:
+        return [(start_i, end_i)]
+    return []
+
+
+def protect_dynamic_spans(prompt: str, foci_weights: List[Dict]) -> Tuple[str, List[Dict]]:
+    """Replace tagged dynamic source spans with stable markers before rewrite."""
+    candidates = []
+    prompt_len = len(prompt)
+    seen = set()
+    for focus in foci_weights or []:
+        if not focus.get('is_dynamic'):
+            continue
+        dynamic_type = str(focus.get('dynamic_type') or 'dynamic')
+        for start, end in _span_from_focus(focus):
+            if start < 0 or end > prompt_len or end <= start:
+                continue
+            key = (start, end)
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append({
+                'start': start,
+                'end': end,
+                'text': prompt[start:end],
+                'dynamic_type': dynamic_type,
+                'focus': _focus_label(focus),
+            })
+
+    candidates.sort(key=lambda item: (item['start'], item['end']))
+    protected = []
+    last_end = -1
+    for item in candidates:
+        if item['start'] < last_end:
+            continue
+        item['marker'] = _dynamic_marker(len(protected), item['dynamic_type'])
+        protected.append(item)
+        last_end = item['end']
+
+    protected_prompt = prompt
+    for item in reversed(protected):
+        protected_prompt = (
+            protected_prompt[:item['start']]
+            + item['marker']
+            + protected_prompt[item['end']:]
+        )
+    return protected_prompt, protected
+
+
+def restore_dynamic_spans(rewritten: str, protected: List[Dict]) -> str:
+    """Restore exact dynamic text, appending any marker the model dropped."""
+    output = rewritten or ''
+    missing = []
+    for item in protected:
+        marker = item['marker']
+        text = item['text']
+        if marker in output:
+            output = output.replace(marker, text, 1)
+            output = output.replace(marker, '')
+        else:
+            missing.append(item)
+
+    if missing:
+        blocks = []
+        for item in missing:
+            label = str(item.get('dynamic_type') or 'dynamic').replace('_', ' ').title()
+            blocks.append(f"{label}:\n{item['text']}")
+        output = output.rstrip() + "\n\n" + "\n\n".join(blocks)
+    return output
+
+
+def foci_with_dynamic_markers(foci_weights: List[Dict], protected: List[Dict]) -> List[Dict]:
+    """Replace dynamic focus source summaries with their markers for the LLM."""
+    markers_by_focus: Dict[str, List[str]] = {}
+    for item in protected:
+        markers_by_focus.setdefault(str(item.get('focus') or ''), []).append(item['marker'])
+
+    out = []
+    for focus in foci_weights or []:
+        next_focus = dict(focus)
+        if next_focus.get('is_dynamic'):
+            markers = markers_by_focus.get(_focus_label(next_focus)) or []
+            if markers:
+                next_focus['prompt_section'] = '\n'.join(markers)
+        out.append(next_focus)
+    return out
 
 
 def normalize_rewrite_weight(raw) -> float:
@@ -140,6 +258,26 @@ def looks_like_sample_completion(original: str, rewritten: str) -> bool:
     return False
 
 
+def looks_like_rewrite_instruction_leak(rewritten: str) -> bool:
+    """True when the model copied the meta rewrite instructions into output."""
+    text = strip_rewrite_fences(rewritten or '')
+    if not text:
+        return False
+    head = text[:400].lower()
+    if head.startswith('you are editing instruction text'):
+        return True
+    if head.startswith('rewrite the following prompt using the user-specified rewrite weights'):
+        return True
+    control_markers = (
+        'original prompt:',
+        'rewrite weights',
+        'weight band rules',
+        'foci to omit',
+        'critical retry',
+    )
+    return sum(1 for marker in control_markers if marker in head) >= 2
+
+
 def build_rewrite_instruction(
     prompt: str,
     foci_weights: List[Dict],
@@ -163,6 +301,7 @@ def build_rewrite_instruction(
 
     for item in foci_weights or []:
         name = _focus_label(item)
+        is_dynamic = bool(item.get('is_dynamic'))
         # Prefer explicit rewrite_weight; fall back to weight (UI legacy field).
         raw = item.get('rewrite_weight', item.get('weight', 0))
         weight = normalize_rewrite_weight(raw)
@@ -171,11 +310,20 @@ def build_rewrite_instruction(
         if len(section) > 160:
             snippet += '...'
         band = weight_band(weight)
+        display_band = 'protected_dynamic' if is_dynamic else band
+        dynamic_note = ''
+        if is_dynamic:
+            dynamic_note = (
+                f" protected_dynamic={item.get('dynamic_type') or 'dynamic'};"
+                " preserve this marker/content exactly once"
+            )
         lines.append(
-            f"- {name}: rewrite_weight={weight:.1f}% [{band}] "
-            f"(source span: {snippet or '(no section provided)'})"
+            f"- {name}: rewrite_weight={weight:.1f}% [{display_band}]"
+            f"{dynamic_note} (source span: {snippet or '(no section provided)'})"
         )
-        if band == 'omit':
+        if is_dynamic:
+            retain.append(name)
+        elif band == 'omit':
             omit.append(name)
         elif band == 'minimize':
             minimize.append(name)
@@ -202,6 +350,9 @@ def build_rewrite_instruction(
 CRITICAL RETRY — previous attempt FAILED:
 - You previously returned a sample assistant reply, example message, or JSON
   completion instance (e.g. {"suggestedMessage": "..."}). That is wrong.
+- You may also have copied these rewrite-control instructions into the output.
+  That is wrong. Do not copy text such as "You are editing INSTRUCTION TEXT",
+  "ORIGINAL PROMPT", "REWRITE WEIGHTS", or "WEIGHT BAND RULES".
 - Output the rewritten INSTRUCTION PROMPT only — the text a developer would
   paste as a system/user prompt — never an example of what that prompt produces.
 """
@@ -223,6 +374,10 @@ DO:
 - Return the full rewritten prompt text, same genre as ORIGINAL PROMPT (instructions)
 - If ORIGINAL PROMPT tells a model how to format outputs, keep/adjust those *rules*
   as instructions — do not execute them
+- Preserve any <<FOCALPROMPT_DYNAMIC_*>> marker exactly once in the rewritten
+  prompt. These markers stand for user-tagged dynamic content such as chat,
+  RAG context, or tool results; do not delete, paraphrase, summarize, or
+  duplicate them.
 
 ORIGINAL PROMPT:
 {prompt}
@@ -278,6 +433,12 @@ class PromptRewriteService:
             sig = inspect.signature(llm.chat_completion)
             if 'provider' in sig.parameters:
                 kwargs['provider'] = provider_name
+            supports_kwargs = any(
+                p.kind == inspect.Parameter.VAR_KEYWORD
+                for p in sig.parameters.values()
+            )
+            if 'max_tokens' in sig.parameters or supports_kwargs:
+                kwargs['max_tokens'] = 4096
         response = llm.chat_completion(**kwargs)
         return strip_rewrite_fences(response.get('content') or '')
 
@@ -296,24 +457,38 @@ class PromptRewriteService:
 
         Does not mutate the original prompt; returns a new string only.
         """
-        original = (prompt or '').strip()
-        if not original:
+        original = prompt or ''
+        if not original.strip():
             raise ValueError('Prompt is required')
+        protected_prompt, protected_dynamic = protect_dynamic_spans(
+            original, foci_weights
+        )
+        protected_foci = foci_with_dynamic_markers(foci_weights, protected_dynamic)
 
         rewritten = self._chat_rewrite(
-            build_rewrite_instruction(original, foci_weights)
+            build_rewrite_instruction(protected_prompt, protected_foci)
         )
 
-        if looks_like_sample_completion(original, rewritten):
+        if (
+            looks_like_sample_completion(original, rewritten)
+            or looks_like_rewrite_instruction_leak(rewritten)
+        ):
             rewritten = self._chat_rewrite(
                 build_rewrite_instruction(
-                    original, foci_weights, retry_harden=True
+                    protected_prompt, protected_foci, retry_harden=True
                 )
             )
 
         if not rewritten.strip():
             raise ValueError(
                 'Rewrite returned empty text. Try again or adjust focus weights.'
+            )
+
+        if looks_like_rewrite_instruction_leak(rewritten):
+            raise ValueError(
+                'Rewrite copied internal rewrite instructions instead of '
+                'returning only the rewritten prompt. Try again or use a model '
+                'that follows instructions more reliably.'
             )
 
         if looks_like_sample_completion(original, rewritten):
@@ -323,7 +498,7 @@ class PromptRewriteService:
                 'model that follows instructions more reliably.'
             )
 
-        return rewritten
+        return restore_dynamic_spans(rewritten, protected_dynamic)
 
     @staticmethod
     def partition_by_band(
