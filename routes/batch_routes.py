@@ -52,6 +52,8 @@ def list_checkpoints():
         checkpoint_service = CheckpointService()
         checkpoints = checkpoint_service.list_checkpoints(checkpoint_type)
         return jsonify({'checkpoints': checkpoints})
+    except ValueError:
+        return jsonify({'error': 'invalid session_id or type'}), 400
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -81,6 +83,8 @@ def get_checkpoint():
             return jsonify(checkpoint)
         else:
             return jsonify({'error': 'Checkpoint not found'}), 404
+    except ValueError:
+        return jsonify({'error': 'invalid session_id or type'}), 400
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
