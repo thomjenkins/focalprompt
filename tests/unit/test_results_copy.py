@@ -136,6 +136,20 @@ def test_effect_size_qualifier_bands():
     assert effect_size_qualifier(2.0) == "moderate effect (z = 2.0)"
     assert effect_size_qualifier(5.0) == "moderate effect (z = 5.0)"
     assert effect_size_qualifier(5.1) == "large effect (z = 5.1)"
+    assert effect_size_qualifier(None) is None
+
+
+def test_degenerate_standardized_effect_note_in_card():
+    from utils.permutation_test import STANDARDIZED_EFFECT_DEGENERATE_NOTE
+
+    html = render_focus_card(_significant_focus(
+        standardized_effect=None,
+        standardized_effect_note=STANDARDIZED_EFFECT_DEGENERATE_NOTE,
+    ))
+    assert 'effect size = n/a' in html
+    assert STANDARDIZED_EFFECT_DEGENERATE_NOTE in html
+    assert 'focus-effect-degenerate' in html
+    assert 'large effect' not in html
 
 
 def test_significant_verdict_card_copy():

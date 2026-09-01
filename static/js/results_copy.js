@@ -59,14 +59,15 @@
     function formatEffectSize(z) {
         if (z === null || z === undefined || Number.isNaN(Number(z))) return 'n/a';
         var n = Number(z);
-        if (!Number.isFinite(n)) return 'inf';
+        if (!Number.isFinite(n)) return 'n/a';
         return n.toFixed(1);
     }
 
     function effectSizeBand(z) {
         if (z === null || z === undefined || Number.isNaN(Number(z))) return null;
-        var absZ = Math.abs(Number(z));
-        if (!Number.isFinite(absZ)) absZ = Infinity;
+        var n = Number(z);
+        if (!Number.isFinite(n)) return null;
+        var absZ = Math.abs(n);
         if (absZ > 5) return 'large';
         if (absZ >= 2) return 'moderate';
         return 'small';
@@ -432,6 +433,13 @@
         );
     }
 
+    function renderStandardizedEffectNote(focus) {
+        var note = focus && focus.standardized_effect_note;
+        if (!note) return '';
+        return '<p class="focus-effect-degenerate" title="' + escapeHtml(note) + '">' +
+            escapeHtml(note) + '</p>';
+    }
+
     function renderFocusCard(focus, alpha, data) {
         var C = getCopy();
         alpha = alpha == null ? DEFAULT_ALPHA : alpha;
@@ -452,6 +460,10 @@
             var qualifier = effectSizeQualifier(z);
             if (qualifier) {
                 body.push('<p class="focus-effect-qualifier">' + escapeHtml(qualifier) + '</p>');
+            }
+            var effectNote = renderStandardizedEffectNote(focus);
+            if (effectNote) {
+                body.push(effectNote);
             }
             if (promptEmpty) {
                 body.push('<p class="focus-prompt-empty">' + escapeHtml(C.PROMPT_EMPTY_NOTE) + '</p>');

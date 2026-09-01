@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 from utils.permutation_test import (
     DEFAULT_ALPHA,
     DEFAULT_N_PERMUTATIONS,
+    STANDARDIZED_EFFECT_DEGENERATE_NOTE,
     min_achievable_pvalue,
     design_test_type,
 )
@@ -189,6 +190,7 @@ COPY = {
     'EXCLUDED_OVERLAP': EXCLUDED_OVERLAP,
     'OVERLAP_ABLATION_WARNING': OVERLAP_ABLATION_WARNING,
     'PROMPT_EMPTY_NOTE': PROMPT_EMPTY_NOTE,
+    'STANDARDIZED_EFFECT_DEGENERATE_NOTE': STANDARDIZED_EFFECT_DEGENERATE_NOTE,
     'NEAR_THRESHOLD_HINT': NEAR_THRESHOLD_HINT,
     'POWER_BANNER_TEMPLATE': POWER_BANNER_TEMPLATE,
     'METHODS_PANEL_TITLE': METHODS_PANEL_TITLE,
@@ -213,10 +215,8 @@ def format_effect_size(standardized_effect: Optional[float]) -> str:
     if standardized_effect is None:
         return 'n/a'
     z = float(standardized_effect)
-    if math.isnan(z):
+    if math.isnan(z) or math.isinf(z):
         return 'n/a'
-    if math.isinf(z):
-        return 'inf'
     return f'{z:.1f}'
 
 
@@ -225,9 +225,9 @@ def effect_size_band(standardized_effect: Optional[float]) -> Optional[str]:
     if standardized_effect is None:
         return None
     z = float(standardized_effect)
-    if math.isnan(z):
+    if math.isnan(z) or math.isinf(z):
         return None
-    abs_z = abs(z) if math.isfinite(z) else float('inf')
+    abs_z = abs(z)
     if abs_z > 5:
         return 'large'
     if abs_z >= 2:
@@ -429,6 +429,16 @@ def _null_deciles_html(deciles: Any) -> str:
     return f'<pre>{_esc(deciles)}</pre>'
 
 
+def render_standardized_effect_note(focus: Mapping[str, Any]) -> str:
+    """Inline caution when a standardised effect is undefined (degenerate null)."""
+    note = focus.get('standardized_effect_note')
+    if not note:
+        return ''
+    return (
+        f'<p class="focus-effect-degenerate" title="{_esc(note)}">{_esc(note)}</p>'
+    )
+
+
 def render_statistical_detail(focus: Mapping[str, Any]) -> str:
     t_obs = focus.get('t_obs', focus.get('influence'))
     parts = [
@@ -562,6 +572,9 @@ def render_focus_card(focus: Mapping[str, Any], alpha: float = DEFAULT_ALPHA) ->
         qualifier = effect_size_qualifier(z)
         if qualifier:
             body.append(f'<p class="focus-effect-qualifier">{_esc(qualifier)}</p>')
+        effect_note = render_standardized_effect_note(focus)
+        if effect_note:
+            body.append(effect_note)
         if prompt_empty:
             body.append(f'<p class="focus-prompt-empty">{_esc(PROMPT_EMPTY_NOTE)}</p>')
         body.append(render_statistical_detail(focus))
