@@ -229,6 +229,11 @@
                 <a href="#lab-results-report">Results</a>
                 <a href="#lab-focus-order">Order</a>
                 <a href="#lab-quality">Quality</a>
+                <button type="button" id="model-status-change-btn" class="lab-model-status" title="Change model" aria-live="polite">
+                    <span class="status-dot" aria-hidden="true"></span>
+                    <span class="model-status-label">Selected model</span>
+                    <span id="model-status-value" class="model-status-value">Model</span>
+                </button>
             </nav>
             <!-- Prompt Section -->
             <section class="card" id="lab-prompt">
@@ -960,4 +965,3 @@
     <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
 </html>
-

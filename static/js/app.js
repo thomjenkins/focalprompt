@@ -297,9 +297,7 @@ function persistModelSelection(provider, model) {
         modelSelectHidden.value = model;
     }
     updateModelSearchValue();
-    if (typeof updateModelChipLabel === 'function') {
-        updateModelChipLabel();
-    }
+    updateModelDisplay();
 }
 
 function selectModel(modelValue, modelProvider) {
@@ -380,6 +378,26 @@ function handleModelSearchKeydown(e) {
 function updateModelSelector(provider) {
     // This is now handled by the searchable input
     updateModelSearchValue();
+}
+
+function formattedModelSelection() {
+    const provider = (userProvider || 'openai').trim();
+    const model = (userModel || '').trim();
+    return model ? `${provider}/${model}` : 'Model';
+}
+
+function updateModelDisplay() {
+    const displayText = formattedModelSelection();
+    const chipLabel = document.getElementById('model-chip-label');
+    if (chipLabel) {
+        chipLabel.textContent = displayText;
+        chipLabel.title = displayText;
+    }
+    const statusValue = document.getElementById('model-status-value');
+    if (statusValue) {
+        statusValue.textContent = displayText;
+        statusValue.title = displayText;
+    }
 }
 
 // Helper function to get API request headers
@@ -748,11 +766,13 @@ window.addEventListener('DOMContentLoaded', async () => {
     if (modelsLoaded) {
         // Update the model search input with current selection
         updateModelSearchValue();
+        updateModelDisplay();
         console.log('Model selector updated with gateway models');
     }
     
     // Load model pricing
     await loadModelPricing();
+    updateModelDisplay();
     
     // Also add direct listeners as backup
     const buttons = document.querySelectorAll('.tab-btn');
@@ -823,6 +843,8 @@ window.addEventListener('DOMContentLoaded', async () => {
     const saveSettingsBtn = document.getElementById('save-settings-btn');
     const testApiKeyBtn = document.getElementById('test-api-key-btn');
     const toggleSettingsBtn = document.getElementById('toggle-settings-btn');
+    const modelStatusChangeBtn = document.getElementById('model-status-change-btn');
+    const settingsSection = document.getElementById('settings-section');
     const settingsContent = document.getElementById('settings-content');
     const apiKeyStatus = document.getElementById('api-key-status');
     
@@ -861,9 +883,10 @@ window.addEventListener('DOMContentLoaded', async () => {
     }
     
     // Toggle settings visibility (preserve model-chip markup)
-    if (toggleSettingsBtn && settingsContent) {
+    if (toggleSettingsBtn && settingsContent && settingsSection) {
         const chipAction = toggleSettingsBtn.querySelector('.chip-action');
         const setExpanded = (expanded) => {
+            settingsSection.style.display = expanded ? 'block' : 'none';
             settingsContent.style.display = expanded ? 'block' : 'none';
             if (chipAction) {
                 chipAction.textContent = expanded ? 'Close' : 'Change';
@@ -881,16 +904,18 @@ window.addEventListener('DOMContentLoaded', async () => {
             isExpanded = !isExpanded;
             setExpanded(isExpanded);
         });
-    }
 
-    const updateModelChipLabel = () => {
-        const label = document.getElementById('model-chip-label');
-        if (!label) return;
-        const provider = (userProvider || 'openai');
-        const model = (userModel || '').trim();
-        label.textContent = model ? `${provider} · ${model}` : 'Model';
-    };
-    updateModelChipLabel();
+        if (modelStatusChangeBtn) {
+            modelStatusChangeBtn.addEventListener('click', () => {
+                isExpanded = true;
+                setExpanded(true);
+                if (modelSearchInput) {
+                    modelSearchInput.focus();
+                }
+            });
+        }
+    }
+    updateModelDisplay();
     
     // Save settings — use searchable picker state, not stale hidden <select>
     if (saveSettingsBtn) {
@@ -905,6 +930,7 @@ window.addEventListener('DOMContentLoaded', async () => {
                 return;
             }
             persistModelSelection(sel.provider, sel.model);
+            updateModelDisplay();
             
             apiKeyStatus.textContent = '✓ Model selection saved';
             apiKeyStatus.style.color = '#28a745';
@@ -920,14 +946,14 @@ window.addEventListener('DOMContentLoaded', async () => {
     if (providerSelect) {
         providerSelect.addEventListener('change', async () => {
             await updateModelSelector(providerSelect.value);
-            updateModelChipLabel();
+            updateModelDisplay();
         });
     }
     
     if (modelSelect) {
         modelSelect.addEventListener('change', () => {
             updateCostDisplay();
-            updateModelChipLabel();
+            updateModelDisplay();
         });
     }
     
