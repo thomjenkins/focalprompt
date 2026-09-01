@@ -7,9 +7,40 @@ Handles saving, loading, and listing checkpoints for batch operations.
 
 import os
 import json
+import re
 import sys
+from pathlib import Path
 from typing import Optional, Dict, List
 from datetime import datetime
+
+
+# Filename components for checkpoint paths. Anything outside this charset can
+# introduce separators or ``..`` segments and escape the checkpoint directory.
+_CHECKPOINT_COMPONENT_RE = re.compile(r'^[A-Za-z0-9_-]{1,64}$')
+
+# Whitelist of checkpoint kinds (must match get_checkpoint_path docstring).
+ALLOWED_CHECKPOINT_TYPES = frozenset({
+    'batch_analysis',
+    'batch_agents',
+    'single_ablation',
+    'single_assessment',
+})
+
+
+def validate_checkpoint_identifiers(session_id: str, checkpoint_type: str) -> None:
+    """
+    Reject session_id / checkpoint_type values that are unsafe as path components.
+
+    Both must match ``^[A-Za-z0-9_-]{1,64}$``. ``checkpoint_type`` must also be
+    in ``ALLOWED_CHECKPOINT_TYPES``. Raises ``ValueError`` without echoing the
+    rejected value.
+    """
+    if not isinstance(session_id, str) or not _CHECKPOINT_COMPONENT_RE.fullmatch(session_id):
+        raise ValueError('Invalid session_id')
+    if not isinstance(checkpoint_type, str) or not _CHECKPOINT_COMPONENT_RE.fullmatch(checkpoint_type):
+        raise ValueError('Invalid checkpoint_type')
+    if checkpoint_type not in ALLOWED_CHECKPOINT_TYPES:
+        raise ValueError('Invalid checkpoint_type')
 
 
 class CheckpointService:
@@ -49,11 +80,28 @@ class CheckpointService:
             
         Returns:
             Full path to checkpoint file
+
+        Raises:
+            ValueError: If session_id or checkpoint_type is invalid, or if the
+                resolved path would escape the checkpoint directory.
         """
+        validate_checkpoint_identifiers(session_id, checkpoint_type)
+
         if self.checkpoint_dir is None:
             # Return a dummy path if checkpoint directory is not available
-            return os.path.join('/tmp', f"{checkpoint_type}_{session_id}.json")
-        return os.path.join(self.checkpoint_dir, f"{checkpoint_type}_{session_id}.json")
+            base_dir = '/tmp'
+        else:
+            base_dir = self.checkpoint_dir
+
+        checkpoint_path = os.path.join(base_dir, f"{checkpoint_type}_{session_id}.json")
+
+        # Defence in depth: after join, the resolved path must stay inside base_dir.
+        base_resolved = Path(base_dir).resolve()
+        path_resolved = Path(checkpoint_path).resolve()
+        if not path_resolved.is_relative_to(base_resolved):
+            raise ValueError('Invalid checkpoint path')
+
+        return str(path_resolved)
     
     def save_checkpoint(
         self,
@@ -157,8 +205,12 @@ class CheckpointService:
         Returns:
             List of checkpoint info dicts
         """
+        # Validate type up front (no session_id yet). Using a dummy legal session_id
+        # keeps a single validator as the source of truth for type rules.
+        validate_checkpoint_identifiers('_', checkpoint_type)
+
         checkpoints = []
-        if os.path.exists(self.checkpoint_dir):
+        if self.checkpoint_dir is not None and os.path.exists(self.checkpoint_dir):
             # Map checkpoint types to their file prefixes
             prefix_map = {
                 'batch_analysis': 'batch_analysis_',
@@ -166,12 +218,16 @@ class CheckpointService:
                 'single_ablation': 'single_ablation_',
                 'single_assessment': 'single_assessment_'
             }
-            prefix = prefix_map.get(checkpoint_type, 'batch_analysis_')
+            prefix = prefix_map[checkpoint_type]
             
             for filename in os.listdir(self.checkpoint_dir):
                 if filename.startswith(prefix) and filename.endswith('.json'):
                     session_id = filename.replace(prefix, '').replace('.json', '')
-                    checkpoint_path = self.get_checkpoint_path(session_id, checkpoint_type)
+                    try:
+                        checkpoint_path = self.get_checkpoint_path(session_id, checkpoint_type)
+                    except ValueError:
+                        # Skip foreign/malformed filenames that are not legal session ids.
+                        continue
                     try:
                         stat = os.stat(checkpoint_path)
                         checkpoint = self.load_checkpoint(session_id, checkpoint_type)
