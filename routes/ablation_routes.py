@@ -13,10 +13,15 @@ from services.embedding_service import EmbeddingService
 from services.cost_calculator import CostCalculator
 from services.checkpoint_service import CheckpointService
 from core.ai_gateway_provider import RateLimitError
+from utils.json_safe import sanitize_non_finite
 from utils.request_inference import request_inference_fields
 
 
 ablation_bp = Blueprint('ablation', __name__)
+
+
+def _analysis_json(data):
+    return jsonify(sanitize_non_finite(data))
 
 
 def _ablation_service(data):
@@ -93,7 +98,7 @@ def ablation_analysis():
         }
         checkpoint_service.save_checkpoint(session_id, checkpoint_data, 'single_ablation')
         
-        return jsonify(result_data)
+        return _analysis_json(result_data)
         
     except RateLimitError as e:
         return _rate_limit_response(e)
@@ -124,7 +129,7 @@ def ablation_sample():
             temperature=temperature,
             focus_index=focus_index,
         )
-        return jsonify(result)
+        return _analysis_json(result)
     except RateLimitError as e:
         return _rate_limit_response(e)
     except Exception as e:
@@ -179,7 +184,7 @@ def ablation_refine_stability():
             task_context=data.get('task_context') or '',
             run_behavioral_judge=run_behavioral_judge,
         )
-        return jsonify(result)
+        return _analysis_json(result)
     except RateLimitError as e:
         return _rate_limit_response(e)
     except ValueError as e:
@@ -213,7 +218,7 @@ def ablation_behavioral_outcome_dispersion():
             task_context=data.get('task_context') or '',
             temperature=float(data.get('temperature') or 0.2),
         )
-        return jsonify({
+        return _analysis_json({
             'by_focus_index': by_focus,
             'disclaimer': (
                 'Task-specific behavioural outcome distributions — complementary to '
@@ -271,7 +276,7 @@ def ablation_score():
             },
             'single_ablation',
         )
-        return jsonify(result_data)
+        return _analysis_json(result_data)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -319,7 +324,7 @@ def ablation_shuffle_robustness():
             temperature=float(temperature),
             inputs=inputs or None,
         )
-        return jsonify(result)
+        return _analysis_json(result)
     except RateLimitError as e:
         return _rate_limit_response(e)
     except Exception as e:
@@ -371,7 +376,7 @@ def ablation_reported_focus_dynamics():
             behavior_labels=behavior_labels,
             association_focus=association_focus,
         )
-        return jsonify(result)
+        return _analysis_json(result)
     except RateLimitError as e:
         return _rate_limit_response(e)
     except Exception as e:
