@@ -257,6 +257,7 @@ class AblationService:
             'q_value': None,
             'alpha': float(alpha),
             'standardized_effect': perm['standardized_effect'],
+            'standardized_effect_note': perm.get('standardized_effect_note'),
             'null_mean': perm['null_mean'],
             'null_p95': perm['null_p95'],
             'null_deciles': perm['null_deciles'],
@@ -416,6 +417,7 @@ class AblationService:
                 'null_mean': perm['null_mean'],
                 'null_p95': perm['null_p95'],
                 'standardized_effect': perm['standardized_effect'],
+                'standardized_effect_note': perm.get('standardized_effect_note'),
                 'null_deciles': perm['null_deciles'],
             })
 
@@ -747,6 +749,7 @@ class AblationService:
             'q_value': bh['q_value'],
             'is_significant': bh['significant'],
             'standardized_effect': perm.get('standardized_effect'),
+            'standardized_effect_note': perm.get('standardized_effect_note'),
             'ablation_stability': stab,
             'behavioral_outcome': behavioral_outcome,
         })
@@ -769,6 +772,7 @@ class AblationService:
                 'q_value': bh['q_value'],
                 'is_significant': bh['significant'],
                 'standardized_effect': perm.get('standardized_effect'),
+                'standardized_effect_note': perm.get('standardized_effect_note'),
                 'n_permutations': perm.get('n_permutations'),
             },
             'behavioral_outcome': behavioral_outcome,

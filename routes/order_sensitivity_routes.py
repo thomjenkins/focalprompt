@@ -7,9 +7,14 @@ from flask import Blueprint, jsonify, request
 
 from services.assessor_factory import get_assessor
 from services.order_sensitivity_service import OrderSensitivityService
+from utils.json_safe import sanitize_non_finite
 from utils.request_inference import request_inference_fields
 
 order_sensitivity_bp = Blueprint('order_sensitivity', __name__)
+
+
+def _analysis_json(data):
+    return jsonify(sanitize_non_finite(data))
 
 
 @order_sensitivity_bp.route('/api/focus-order-sensitivity/estimate-cost', methods=['POST'])
@@ -89,8 +94,8 @@ def run_focus_order_sensitivity():
             run_reported_focus=bool(data.get('run_reported_focus')),
         )
         if not result.get('ok'):
-            return jsonify(result), 400
-        return jsonify(result)
+            return _analysis_json(result), 400
+        return _analysis_json(result)
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
     except Exception as e:

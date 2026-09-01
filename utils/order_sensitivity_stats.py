@@ -66,6 +66,7 @@ def compare_condition_to_baseline(
             'null_mean': perm['null_mean'],
             'null_p95': perm['null_p95'],
             'standardized_effect': perm['standardized_effect'],
+            'standardized_effect_note': perm.get('standardized_effect_note'),
         },
         'condition_dispersion': {
             'mean_pairwise_cosine_distance': float(np.mean(cond_pairwise))

@@ -9,6 +9,7 @@ significance. Any classification thresholds below are labeled heuristics.
 
 from __future__ import annotations
 
+import math
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 import numpy as np
@@ -269,7 +270,8 @@ def signal_to_noise_ratio(
     """
     if baseline_dispersion is None:
         return None
-    return float(observed_shift) / max(float(baseline_dispersion), eps)
+    ratio = float(observed_shift) / max(float(baseline_dispersion), eps)
+    return ratio if math.isfinite(ratio) else None
 
 
 def attach_signal_to_noise(
