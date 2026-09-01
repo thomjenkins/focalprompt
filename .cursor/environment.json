@@ -1,0 +1,11 @@
+{
+  "name": "Focal Prompt",
+  "install": "bash .cursor/install.sh",
+  "terminals": [
+    {
+      "name": "web",
+      "command": "source venv/bin/activate && PORT=5001 HOST=127.0.0.1 python app_new.py"
+    }
+  ],
+  "ports": [5001]
+}

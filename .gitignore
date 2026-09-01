@@ -31,6 +31,7 @@ __pycache__/
 !openapi/v1.json
 !examples/**/*.json
 !CITATION.cff
+!.cursor/environment.json
 
 # Coverage
 htmlcov/
