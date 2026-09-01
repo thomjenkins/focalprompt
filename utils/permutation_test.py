@@ -19,6 +19,11 @@ DEFAULT_N_PERMUTATIONS = 10_000
 DEFAULT_ALPHA = 0.05
 DECILES = (0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100)
 
+STANDARDIZED_EFFECT_DEGENERATE_NOTE = (
+    'The permutation null distribution had zero variance; '
+    'a standardised effect (z-score) is undefined.'
+)
+
 
 def cosine_distance_centroids(
     baseline_embeddings: np.ndarray,
@@ -129,8 +134,13 @@ def permutation_test(
 
     summary = _null_summary(stats)
     std = summary['std']
+    effect_note: Optional[str] = None
     if std == 0.0:
-        standardized = 0.0 if abs(t_obs - summary['mean']) < 1e-15 else float('inf')
+        if abs(t_obs - summary['mean']) < 1e-15:
+            standardized: Optional[float] = 0.0
+        else:
+            standardized = None
+            effect_note = STANDARDIZED_EFFECT_DEGENERATE_NOTE
     else:
         standardized = (t_obs - summary['mean']) / std
 
@@ -143,7 +153,10 @@ def permutation_test(
         'null_std': std,
         'null_p95': summary['p95'],
         'null_deciles': summary['deciles'],
-        'standardized_effect': float(standardized),
+        'standardized_effect': (
+            float(standardized) if standardized is not None else None
+        ),
+        'standardized_effect_note': effect_note,
     }
 
 

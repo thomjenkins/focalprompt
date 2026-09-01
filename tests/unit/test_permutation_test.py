@@ -121,3 +121,30 @@ def test_null_deciles_present():
     assert set(out['null_deciles']) == {str(d) for d in (0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100)}
     assert 't_obs' in out and 'null_mean' in out and 'null_p95' in out
     assert 'standardized_effect' in out
+    assert out.get('standardized_effect_note') is None
+
+
+def test_zero_variance_degenerate_standardized_effect():
+    import json
+
+    from utils.permutation_test import STANDARDIZED_EFFECT_DEGENERATE_NOTE
+
+    rng = np.random.default_rng(0)
+    a = rng.normal(size=(1, 4))
+    b = rng.normal(size=(2, 4))
+    out = permutation_test(a, b, n_permutations=1, rng=0)
+    assert out['null_std'] == 0.0
+    assert abs(out['t_obs'] - out['null_mean']) > 1e-12
+    assert out['standardized_effect'] is None
+    assert out['standardized_effect_note'] == STANDARDIZED_EFFECT_DEGENERATE_NOTE
+
+    def reject_non_finite(constant: str):
+        if constant in ('Infinity', '-Infinity', 'NaN'):
+            raise ValueError(constant)
+        return float(constant)
+
+    payload = json.dumps(out)
+    assert 'Infinity' not in payload
+    assert 'NaN' not in payload
+    parsed = json.loads(payload, parse_constant=reject_non_finite)
+    assert parsed['standardized_effect'] is None
