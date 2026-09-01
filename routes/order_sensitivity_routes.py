@@ -7,6 +7,7 @@ from flask import Blueprint, jsonify, request
 
 from services.assessor_factory import get_assessor
 from services.order_sensitivity_service import OrderSensitivityService
+from routes.http_errors import internal_error
 from utils.json_safe import sanitize_non_finite
 from utils.request_inference import request_inference_fields
 
@@ -99,4 +100,4 @@ def run_focus_order_sensitivity():
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return internal_error('order_sensitivity_run', e)

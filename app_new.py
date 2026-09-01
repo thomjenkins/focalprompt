@@ -14,8 +14,10 @@ from utils.experiment_config import EXPERIMENT_COPY
 from utils.hosted_mode import (
     allow_live_inference,
     check_live_allowed,
+    hosted_cors_origins,
     is_hosted_mode,
     path_requires_live,
+    resolve_client_ip,
 )
 from utils.results_copy import COPY
 
@@ -37,13 +39,14 @@ except Exception as e:
 # Initialize Flask app first
 app = Flask(__name__)
 
-# Set secret key for sessions (before any routes)
-app.secret_key = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
-
 # Import CORS and enable it
 try:
     from flask_cors import CORS
-    CORS(app)
+    _origins = hosted_cors_origins()
+    if _origins is None:
+        CORS(app)
+    else:
+        CORS(app, origins=_origins)
 except ImportError as e:
     print(f"Warning: flask-cors not available: {e}", file=sys.stderr)
 
@@ -225,7 +228,7 @@ def _load_experiment(experiment_id: str):
 def _hosted_live_gate():
     if not path_requires_live(request.path):
         return None
-    ok, err = check_live_allowed(request.headers.get('X-Forwarded-For', request.remote_addr or 'unknown'))
+    ok, err = check_live_allowed(resolve_client_ip(request))
     if ok:
         return None
     return jsonify(err), 503

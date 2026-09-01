@@ -14,6 +14,7 @@ from utils.data_processing import (
     calculate_statistics_from_results,
     calculate_focus_distribution_statistics,
 )
+from routes.http_errors import internal_error
 from utils.request_inference import request_inference_fields
 
 
@@ -41,7 +42,11 @@ def parse_batch_csv():
         body, status = parse_result_to_response(result)
         return jsonify(body), status
     except Exception as e:
-        return jsonify({'error': str(e), 'errors': [str(e)], 'pairs': []}), 500
+        return internal_error(
+            'batch_parse_csv',
+            e,
+            extra={'errors': [], 'pairs': []},
+        )
 
 
 @batch_bp.route('/api/list-checkpoints', methods=['GET'])
@@ -55,7 +60,7 @@ def list_checkpoints():
     except ValueError:
         return jsonify({'error': 'invalid session_id or type'}), 400
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return internal_error('batch_list_checkpoints', e)
 
 
 @batch_bp.route('/api/get-checkpoint', methods=['GET'])
@@ -86,7 +91,7 @@ def get_checkpoint():
     except ValueError:
         return jsonify({'error': 'invalid session_id or type'}), 400
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return internal_error('batch_get_checkpoint', e)
 
 
 @batch_bp.route('/api/batch-aggregate', methods=['POST'])
@@ -113,7 +118,7 @@ def batch_aggregate():
             'results': pair_results,
         })
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return internal_error('batch_aggregate', e)
 
 
 @batch_bp.route('/api/batch-analysis-stream', methods=['POST'])
@@ -218,4 +223,4 @@ def test_api_key():
             return jsonify({'valid': False, 'error': str(e)}), 400
 
     except Exception as e:
-        return jsonify({'valid': False, 'error': str(e)}), 500
+        return internal_error('batch_test_api_key', e, extra={'valid': False})

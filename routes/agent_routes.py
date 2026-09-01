@@ -12,6 +12,7 @@ from services.assessor_factory import get_assessor
 from services.agent_builder_service import AgentBuilderService
 from services.cost_calculator import CostCalculator
 from services.checkpoint_service import CheckpointService
+from routes.http_errors import internal_error
 from utils.request_inference import request_inference_fields
 
 agent_bp = Blueprint('agent', __name__)
@@ -48,7 +49,7 @@ def assess_chat_foci():
         return jsonify(result)
         
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return internal_error('agent_assess_chat_foci', e)
 
 
 @agent_bp.route('/api/build-agent-prompt', methods=['POST'])
@@ -97,11 +98,7 @@ def build_agent_prompt():
         })
         
     except Exception as e:
-        import sys
-        import traceback
-        print(f"Error building agent prompt: {type(e).__name__}: {e}", file=sys.stderr)
-        traceback.print_exc(file=sys.stderr)
-        return jsonify({'error': str(e)}), 500
+        return internal_error('agent_build_prompt', e)
 
 
 @agent_bp.route('/api/generate-agent-response', methods=['POST'])
@@ -124,7 +121,7 @@ def generate_agent_response():
         return jsonify({'output': output})
         
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return internal_error('agent_generate_response', e)
 
 
 @agent_bp.route('/api/build-batch-agents-stream', methods=['POST'])

@@ -101,7 +101,10 @@ See [docs/methodology/IMPLEMENTATION_NOTES.md](docs/methodology/IMPLEMENTATION_N
 | `FOCALPROMPT_HOSTED_MODE=1` | Landing at `/`; lab at `/lab` |
 | `FOCALPROMPT_ALLOW_LIVE_INFERENCE=0` (default when hosted) | Analytical `/api/*` returns 503 — use `/experiments` |
 | `FOCALPROMPT_ALLOW_LIVE_INFERENCE=1` | Optional capped live demo |
-| `FOCALPROMPT_DEMO_RPM` / `FOCALPROMPT_DEMO_DAILY_BUDGET_USD` | Soft caps when live is on |
+| `FOCALPROMPT_DEMO_RPM` / `FOCALPROMPT_DEMO_DAILY_BUDGET_USD` | Soft caps when live is on (see below) |
+| `FOCALPROMPT_ALLOWED_ORIGINS` | Comma-separated browser origins for CORS when hosted (default `https://focalprompt.com`) |
+
+**Spend and rate limits on hosted:** RPM and daily-budget counters are stored in **in-process memory**. On serverless each instance has its own counters; they reset on cold start and **do not aggregate** across instances. Treat them as best-effort per-instance caps, not a hard global ceiling. The **authoritative spend control** is the AI gateway budget limit on your gateway key.
 
 ## Regression checklist (analytical workflows)
 

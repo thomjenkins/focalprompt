@@ -20,6 +20,7 @@ from services.behavioral_difference_service import (
     recommend_behavioral_review,
     select_foci_for_behavioral_review,
 )
+from routes.http_errors import internal_error
 from utils.request_inference import request_inference_fields
 
 
@@ -105,7 +106,7 @@ def llm_judge():
         result['provider'] = fields['provider']
         return jsonify(result), (200 if result.get('status') == 'complete' else 422)
     except Exception as e:
-        return jsonify({'error': str(e), 'status': 'failed'}), 500
+        return internal_error('behavioral_llm_judge', e, extra={'status': 'failed'})
 
 
 @behavioral_difference_bp.route('/api/behavioral-difference/human-review', methods=['POST'])
@@ -116,7 +117,7 @@ def human_review():
         record = HumanBehavioralDifferenceRecord().evaluate(data)
         return jsonify(record)
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return internal_error('behavioral_human_review', e)
 
 
 @behavioral_difference_bp.route('/api/behavioral-difference/batch-aggregate', methods=['POST'])

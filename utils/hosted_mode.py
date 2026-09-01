@@ -10,6 +10,13 @@ Environment:
   FOCALPROMPT_ALLOW_LIVE_INFERENCE=1 Enable live calls with optional budget/rate caps
   FOCALPROMPT_DEMO_DAILY_BUDGET_USD  Soft daily USD estimate cap (0 = unlimited)
   FOCALPROMPT_DEMO_RPM               Max analytical requests per minute per IP (0 = off)
+  FOCALPROMPT_ALLOWED_ORIGINS        Comma-separated browser origins when hosted (CORS)
+
+Rate and budget guards (_rpm, _spend_usd) live in **in-process memory** only.
+On serverless each instance has its own counters; they reset on cold start and
+**do not aggregate** across instances. Treat RPM and daily budget as best-effort
+per-instance caps, not a hard global spend ceiling. The authoritative spend
+control is the AI gateway's own budget limit on your gateway key.
 """
 
 from __future__ import annotations
@@ -18,7 +25,7 @@ import os
 import threading
 import time
 from collections import defaultdict, deque
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Deque, Dict, List, Optional, Tuple
 
 
 def _truthy(name: str, default: str = '0') -> bool:
@@ -27,6 +34,44 @@ def _truthy(name: str, default: str = '0') -> bool:
 
 def is_hosted_mode() -> bool:
     return _truthy('FOCALPROMPT_HOSTED_MODE')
+
+
+def _first_header_value(value: Optional[str]) -> str:
+    if not value:
+        return ''
+    return value.split(',')[0].strip()
+
+
+def resolve_client_ip(request) -> str:
+    """
+    Client IP for hosted demo rate limiting.
+
+    When ``FOCALPROMPT_HOSTED_MODE=1``, trust Vercel edge headers
+    (``x-vercel-forwarded-for``, then ``X-Forwarded-For``). Otherwise use
+    ``request.remote_addr`` only — do not trust client-supplied forward headers.
+    """
+    if is_hosted_mode():
+        vercel = request.headers.get('x-vercel-forwarded-for') or request.headers.get(
+            'X-Vercel-Forwarded-For'
+        )
+        ip = _first_header_value(vercel)
+        if ip:
+            return ip
+        xff = request.headers.get('X-Forwarded-For') or request.headers.get('x-forwarded-for')
+        ip = _first_header_value(xff)
+        if ip:
+            return ip
+    return request.remote_addr or 'unknown'
+
+
+def hosted_cors_origins() -> Optional[List[str]]:
+    """
+    Allowed browser origins when hosted; ``None`` means unrestricted (local dev).
+    """
+    if not is_hosted_mode():
+        return None
+    raw = os.getenv('FOCALPROMPT_ALLOWED_ORIGINS', 'https://focalprompt.com')
+    return [origin.strip() for origin in raw.split(',') if origin.strip()]
 
 
 def allow_live_inference() -> bool:

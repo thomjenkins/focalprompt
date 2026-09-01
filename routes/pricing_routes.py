@@ -9,6 +9,8 @@ from flask import Blueprint, request, jsonify
 from services.cost_calculator import CostCalculator
 import os
 
+from routes.http_errors import internal_error
+
 pricing_bp = Blueprint('pricing', __name__)
 
 
@@ -42,7 +44,7 @@ def get_cost_estimate():
             'provider': provider,
         })
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return internal_error('pricing_estimate', e)
 
 
 @pricing_bp.route('/api/pricing/models', methods=['GET'])
@@ -71,7 +73,7 @@ def get_models_pricing():
             }
         return jsonify(result)
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return internal_error('pricing_models', e)
 
 
 @pricing_bp.route('/api/models', methods=['GET'])
@@ -132,8 +134,4 @@ def get_models():
         })
         
     except Exception as e:
-        import sys
-        import traceback
-        print(f"Error fetching models from gateway: {e}", file=sys.stderr)
-        traceback.print_exc(file=sys.stderr)
-        return jsonify({'error': str(e), 'models': {}, 'source': 'error'}), 500
+        return internal_error('pricing_gateway_models', e, extra={'models': {}, 'source': 'error'})
