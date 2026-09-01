@@ -60,6 +60,8 @@ def main(argv: list[str] | None = None) -> int:
     p_analyze.add_argument('--skip-ablation', action='store_true')
     _add_inference_args(p_analyze)
 
+    sub.add_parser('mcp', help='Start the Model Context Protocol server (stdio)')
+
     args = parser.parse_args(argv)
 
     if args.cmd == 'ui':
@@ -70,6 +72,18 @@ def main(argv: list[str] | None = None) -> int:
         from waitress import serve
         print(f'Focal Prompt UI → http://{args.host}:{args.port}/', file=sys.stderr)
         serve(app, host=args.host, port=args.port)
+        return 0
+
+    if args.cmd == 'mcp':
+        try:
+            from focalprompt.mcp_server import run_stdio
+        except ImportError:
+            print(
+                'MCP support is not installed. Run: pip install focalprompt[mcp]',
+                file=sys.stderr,
+            )
+            return 1
+        run_stdio()
         return 0
 
     from focalprompt.api import analyze, assess_focus, detect_foci, ablate, save_result
