@@ -16,6 +16,50 @@ import json
 from utils.inference_scenario import ProviderCapabilityError
 
 
+def _openai_model_id(model: str) -> str:
+    model_id = str(model or '').strip().lower()
+    if '/' in model_id and not model_id.startswith('ft:'):
+        model_id = model_id.split('/', 1)[1]
+    return model_id
+
+
+def _is_gpt_5_6_model(model: str) -> bool:
+    model_id = _openai_model_id(model)
+    return model_id == 'gpt-5.6' or model_id.startswith('gpt-5.6-')
+
+
+def openai_temperature_parameters(
+    model: str,
+    temperature: float,
+) -> tuple[Dict[str, float], Dict[str, Any]]:
+    """Build OpenAI sampling parameters without sending unsupported values."""
+    if _is_gpt_5_6_model(model):
+        return {}, {
+            'requested_temperature': temperature,
+            'effective_temperature': 1.0,
+            'temperature_parameter': 'omitted_model_default',
+        }
+    return {'temperature': temperature}, {
+        'requested_temperature': temperature,
+        'effective_temperature': temperature,
+        'temperature_parameter': 'forwarded',
+    }
+
+
+def openai_max_token_parameters(
+    model: str,
+    max_tokens: Optional[int],
+) -> tuple[Dict[str, int], Optional[Dict[str, Any]]]:
+    """Translate the provider-neutral output limit to the model's API field."""
+    if max_tokens is None:
+        return {}, None
+    parameter = 'max_completion_tokens' if _is_gpt_5_6_model(model) else 'max_tokens'
+    return {parameter: max_tokens}, {
+        'requested_max_tokens': max_tokens,
+        'parameter': parameter,
+    }
+
+
 def _structured_schema(response_format: Optional[Dict]) -> Optional[Dict[str, Any]]:
     """Extract a JSON Schema from the OpenAI-compatible boundary shape."""
     if not response_format or response_format.get('type') != 'json_schema':
@@ -96,17 +140,21 @@ class OpenAIProvider(LLMProvider):
         response_format: Optional[Dict] = None,
         max_tokens: Optional[int] = None,
     ) -> Dict[str, Any]:
+        temperature_kwargs, sampling_metadata = openai_temperature_parameters(
+            model, temperature
+        )
+        max_token_kwargs, token_limit_metadata = openai_max_token_parameters(
+            model, max_tokens
+        )
         kwargs = {
             'model': model,
             'messages': messages,
-            'temperature': temperature
+            **temperature_kwargs,
+            **max_token_kwargs,
         }
         
         if response_format:
             kwargs['response_format'] = response_format
-        if max_tokens is not None:
-            kwargs['max_tokens'] = max_tokens
-        
         response = self.client.chat.completions.create(**kwargs)
 
         choice = response.choices[0]
@@ -119,6 +167,8 @@ class OpenAIProvider(LLMProvider):
             'provider_metadata': {
                 'provider_translation': 'openai_chat',
                 'role_merges': [],
+                'sampling': sampling_metadata,
+                'token_limit': token_limit_metadata,
             },
             'usage': {
                 'prompt_tokens': response.usage.prompt_tokens,
@@ -129,6 +179,9 @@ class OpenAIProvider(LLMProvider):
     
     def list_models(self) -> List[str]:
         return [
+            'gpt-5.6-sol',
+            'gpt-5.6-terra',
+            'gpt-5.6-luna',
             'gpt-4o-mini',
             'gpt-4o',
             'gpt-4-turbo',

@@ -13,7 +13,11 @@ import os
 import json
 import time
 from typing import List, Dict, Any, Optional
-from core.llm_providers import LLMProvider
+from core.llm_providers import (
+    LLMProvider,
+    openai_max_token_parameters,
+    openai_temperature_parameters,
+)
 from utils.inference_scenario import ProviderCapabilityError
 
 # Lazy import - only import requests when actually needed
@@ -135,13 +139,31 @@ class AIGatewayProvider(LLMProvider):
         gateway_model = f"{gateway_provider}/{model}"
         
         # Build request payload (OpenAI-compatible format)
+        temperature_payload = {'temperature': temperature}
+        sampling_metadata = {
+            'requested_temperature': temperature,
+            'effective_temperature': temperature,
+            'temperature_parameter': 'forwarded',
+        }
+        if gateway_provider == 'openai':
+            temperature_payload, sampling_metadata = openai_temperature_parameters(
+                model, temperature
+            )
+            max_token_payload, token_limit_metadata = openai_max_token_parameters(
+                model, max_tokens
+            )
+        else:
+            max_token_payload = {'max_tokens': max_tokens} if max_tokens is not None else {}
+            token_limit_metadata = (
+                {'requested_max_tokens': max_tokens, 'parameter': 'max_tokens'}
+                if max_tokens is not None else None
+            )
         payload = {
             'model': gateway_model,
             'messages': messages,
-            'temperature': temperature
+            **temperature_payload,
+            **max_token_payload,
         }
-        if max_tokens is not None:
-            payload['max_tokens'] = max_tokens
         
         # Structured output is experimental configuration, not a best-effort
         # hint. Always forward it and let the gateway/provider reject clearly.
@@ -194,6 +216,8 @@ class AIGatewayProvider(LLMProvider):
                     'provider_metadata': {
                         'provider_translation': 'vercel_ai_gateway_openai_chat',
                         'role_merges': [],
+                        'sampling': sampling_metadata,
+                        'token_limit': token_limit_metadata,
                     },
                     'usage': {
                         'prompt_tokens': data['usage']['prompt_tokens'],

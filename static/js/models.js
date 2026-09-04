@@ -3,6 +3,7 @@
 
 export const allModels = {
     openai: [
+        'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna',
         'gpt-5.2', 'gpt-5.1-instant', 'gpt-5.1-thinking', 'gpt-5.1-codex', 'gpt-5.1-codex-mini', 'gpt-5.1-codex-max',
         'gpt-5.2-pro', 'gpt-5.2-chat', 'gpt-5', 'gpt-5-mini', 'gpt-5-nano', 'gpt-5-pro', 'gpt-5-chat', 'gpt-5-codex',
         'gpt-4.1', 'gpt-4.1-mini', 'gpt-4.1-nano', 'gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo', 'gpt-3.5-turbo-instruct',
@@ -123,4 +124,3 @@ export const allModelsFlat = Object.entries(allModels).flatMap(([provider, model
         searchText: `${provider} ${model} ${provider}/${model}`.toLowerCase()
     }))
 ).sort((a, b) => a.label.localeCompare(b.label));
-
