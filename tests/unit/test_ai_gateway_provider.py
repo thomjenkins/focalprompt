@@ -10,6 +10,7 @@ from core.ai_gateway_provider import (
     RateLimitError,
     retry_after_seconds,
 )
+from core.llm_providers import OpenAIProvider
 from services.ablation_service import AblationService
 from services.embedding_service import EmbeddingService
 
@@ -111,6 +112,25 @@ def test_retry_after_seconds_prefers_ms_header():
     response = Mock()
     response.headers = {'retry-after-ms': '7000', 'retry-after': '1'}
     assert retry_after_seconds(response, fallback=5) == 7.0
+
+
+def test_direct_openai_provider_forwards_max_tokens():
+    provider = OpenAIProvider.__new__(OpenAIProvider)
+    usage = Mock(prompt_tokens=1, completion_tokens=2, total_tokens=3)
+    choice = Mock()
+    choice.message.content = 'hello'
+    response = Mock(choices=[choice], usage=usage)
+    provider.client = Mock()
+    provider.client.chat.completions.create.return_value = response
+
+    out = provider.chat_completion(
+        [{'role': 'user', 'content': 'hi'}],
+        model='gpt-4o-mini',
+        max_tokens=4096,
+    )
+
+    assert out['content'] == 'hello'
+    assert provider.client.chat.completions.create.call_args.kwargs['max_tokens'] == 4096
 
 
 @patch('core.ai_gateway_provider.time.sleep', return_value=None)

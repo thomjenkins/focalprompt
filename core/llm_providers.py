@@ -23,7 +23,8 @@ class LLMProvider(ABC):
         messages: List[Dict[str, str]],
         model: str,
         temperature: float = 0.7,
-        response_format: Optional[Dict] = None
+        response_format: Optional[Dict] = None,
+        max_tokens: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Generate a chat completion.
@@ -33,6 +34,7 @@ class LLMProvider(ABC):
             model: Model name to use
             temperature: Sampling temperature
             response_format: Optional response format specification
+            max_tokens: Optional completion token limit
             
         Returns:
             Dict with 'content' (str) and 'usage' (dict with token counts)
@@ -60,7 +62,8 @@ class OpenAIProvider(LLMProvider):
         messages: List[Dict[str, str]],
         model: str,
         temperature: float = 0.7,
-        response_format: Optional[Dict] = None
+        response_format: Optional[Dict] = None,
+        max_tokens: Optional[int] = None,
     ) -> Dict[str, Any]:
         kwargs = {
             'model': model,
@@ -70,6 +73,8 @@ class OpenAIProvider(LLMProvider):
         
         if response_format:
             kwargs['response_format'] = response_format
+        if max_tokens is not None:
+            kwargs['max_tokens'] = max_tokens
         
         response = self.client.chat.completions.create(**kwargs)
         
@@ -106,7 +111,8 @@ class AnthropicProvider(LLMProvider):
         messages: List[Dict[str, str]],
         model: str,
         temperature: float = 0.7,
-        response_format: Optional[Dict] = None
+        response_format: Optional[Dict] = None,
+        max_tokens: Optional[int] = None,
     ) -> Dict[str, Any]:
         # Convert messages format (Anthropic uses different format)
         # Anthropic expects system message separately and messages array
@@ -128,7 +134,7 @@ class AnthropicProvider(LLMProvider):
             'model': model,
             'messages': anthropic_messages,
             'temperature': temperature,
-            'max_tokens': 4096
+            'max_tokens': max_tokens or 4096
         }
         
         if system_message:
@@ -187,7 +193,8 @@ class GoogleProvider(LLMProvider):
         messages: List[Dict[str, str]],
         model: str,
         temperature: float = 0.7,
-        response_format: Optional[Dict] = None
+        response_format: Optional[Dict] = None,
+        max_tokens: Optional[int] = None,
     ) -> Dict[str, Any]:
         # Convert messages format for Gemini
         # Gemini uses a different message format
@@ -215,6 +222,8 @@ class GoogleProvider(LLMProvider):
         generation_config = {
             'temperature': temperature,
         }
+        if max_tokens is not None:
+            generation_config['max_output_tokens'] = max_tokens
         
         if response_format and response_format.get('type') == 'json_object':
             generation_config['response_mime_type'] = 'application/json'
@@ -284,7 +293,8 @@ class GrokProvider(LLMProvider):
         messages: List[Dict[str, str]],
         model: str,
         temperature: float = 0.7,
-        response_format: Optional[Dict] = None
+        response_format: Optional[Dict] = None,
+        max_tokens: Optional[int] = None,
     ) -> Dict[str, Any]:
         kwargs = {
             'model': model,
@@ -294,6 +304,8 @@ class GrokProvider(LLMProvider):
         
         if response_format:
             kwargs['response_format'] = response_format
+        if max_tokens is not None:
+            kwargs['max_tokens'] = max_tokens
         
         response = self.client.chat.completions.create(**kwargs)
         
@@ -335,6 +347,7 @@ class OpenAICompatibleProvider(LLMProvider):
         model: str,
         temperature: float = 0.7,
         response_format: Optional[Dict] = None,
+        max_tokens: Optional[int] = None,
         **kwargs: Any,
     ) -> Dict[str, Any]:
         if self.client is not None:
@@ -345,6 +358,8 @@ class OpenAICompatibleProvider(LLMProvider):
             }
             if response_format:
                 call_kw['response_format'] = response_format
+            if max_tokens is not None:
+                call_kw['max_tokens'] = max_tokens
             response = self.client.chat.completions.create(**call_kw)
             return {
                 'content': response.choices[0].message.content,
@@ -362,6 +377,8 @@ class OpenAICompatibleProvider(LLMProvider):
         }
         if response_format:
             payload['response_format'] = response_format
+        if max_tokens is not None:
+            payload['max_tokens'] = max_tokens
         headers = {
             'Authorization': f'Bearer {self.api_key or "ollama"}',
             'Content-Type': 'application/json',
@@ -442,4 +459,3 @@ defaultModels = {
     'google': 'gemini-2.5-flash',  # More commonly available than gemini-1.5-pro
     'grok': 'grok-beta'
 }
-
