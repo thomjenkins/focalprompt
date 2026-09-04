@@ -2383,6 +2383,7 @@ function renderAssessment(data) {
         if (matched) {
             // Use the matched assessment result, but keep original focus name and section
             allFoci.push({
+                ...originalFocus,
                 focus: originalFocus.focus,
                 prompt_section: originalFocus.prompt_section,
                 score: matched.score || 0,
@@ -2391,6 +2392,7 @@ function renderAssessment(data) {
         } else {
             // No match found - this focus wasn't assessed (got 0 points)
             allFoci.push({
+                ...originalFocus,
                 focus: originalFocus.focus,
                 prompt_section: originalFocus.prompt_section,
                 score: 0,
@@ -2723,6 +2725,11 @@ if (rewritePromptBtn) {
             return {
                 focus: focus.focus,
                 prompt_section: focus.prompt_section,
+                is_dynamic: !!focus.is_dynamic,
+                dynamic_type: focus.dynamic_type || null,
+                char_start: focus.char_start,
+                char_end: focus.char_end,
+                spans: focus.spans || [],
                 reported_focus_score: (typeof focus.reported_focus_score === 'number')
                     ? focus.reported_focus_score
                     : (focus.score || 0),
