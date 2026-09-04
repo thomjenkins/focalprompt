@@ -134,7 +134,7 @@ body {
     background: var(--surface-muted) !important;
     border: 1px solid var(--border-color) !important;
     border-radius: var(--radius-md) !important;
-    margin: 0 0 16px !important;
+    margin: 0 !important;
 }
 
 #settings-section h3 {
@@ -2968,6 +2968,50 @@ circle.fp-series-7 { fill: #8a8a8a; }
     color: var(--primary-color);
     background: #fff;
     outline: none;
+}
+.lab-model-status {
+    display: inline-flex;
+    align-items: center;
+    min-width: 0;
+    max-width: min(420px, 100%);
+    gap: 8px;
+    margin-left: auto;
+    padding: 6px 10px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-family: var(--font-sans);
+}
+.lab-model-status:hover,
+.lab-model-status:focus-visible {
+    background: #fff;
+    color: var(--primary-color);
+    outline: none;
+}
+.lab-model-status .status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #3d9a6a;
+    flex-shrink: 0;
+}
+.model-status-label {
+    flex-shrink: 0;
+    color: var(--text-secondary);
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+.model-status-value {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--primary-color);
+    font-size: 0.86rem;
+    font-weight: 700;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 .lab-results-anchor {
     scroll-margin-top: 64px;
