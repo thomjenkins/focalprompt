@@ -7,7 +7,7 @@ Per-pair subtractive ablation with a permutation test.
 
 import json
 import time
-from typing import List, Dict, Optional, Generator
+from typing import Any, List, Dict, Mapping, Optional, Generator
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from services.embedding_service import EmbeddingService
@@ -25,6 +25,15 @@ from utils.permutation_test import (
     DEFAULT_ALPHA,
     DEFAULT_N_PERMUTATIONS,
     require_stochastic_temperature,
+)
+from utils.inference_scenario import (
+    ProviderCapabilityError,
+    StructuredOutputError,
+    ablate_scenario,
+    bind_scenario_inputs,
+    normalize_scenario_foci,
+    scenario_analysis_document,
+    validate_scenario,
 )
 
 
@@ -116,6 +125,7 @@ class BatchAnalysisService:
         alpha: float = DEFAULT_ALPHA,
         permutation_seed: Optional[int] = None,
         temperature: float = 0.7,
+        scenario: Optional[Mapping[str, Any]] = None,
     ) -> Dict:
         """
         Process one pair.
@@ -127,7 +137,7 @@ class BatchAnalysisService:
         try:
             require_stochastic_temperature(temperature)
             prompt = pair_data.get('prompt', '')
-            if not (prompt or '').strip():
+            if scenario is None and not (prompt or '').strip():
                 return {
                     'success': False,
                     'pair_index': pair_idx,
@@ -136,11 +146,32 @@ class BatchAnalysisService:
                         'include a per-row prompt in the CSV, or ensure foci cover the source text.'
                     ),
                 }
-            classified = classify_foci_for_ablation(prompt, foci_list)
-
-            baseline_outputs, input_tokens, output_tokens = self._sample_outputs(
-                prompt, n_baseline, temperature
+            scorer = AblationService(
+                self.provider,
+                self.model,
+                api_key=self.api_key,
+                embedding_service=self.embedding_service,
+                cost_calculator=self.cost_calculator,
+                provider_name=self.provider_name,
             )
+            bound_scenario = None
+            binding = None
+            if scenario is not None:
+                bound_scenario, binding = bind_scenario_inputs(
+                    scenario, pair_data.get('inputs') or {}
+                )
+                classified = normalize_scenario_foci(bound_scenario, foci_list)
+                baseline_outputs, input_tokens, output_tokens, baseline_metadata = (
+                    scorer._sample_scenario_outputs(
+                        bound_scenario, n_baseline, temperature
+                    )
+                )
+            else:
+                classified = classify_foci_for_ablation(prompt, foci_list)
+                baseline_outputs, input_tokens, output_tokens = self._sample_outputs(
+                    prompt, n_baseline, temperature
+                )
+                baseline_metadata = []
             baseline_output = baseline_outputs[0]
 
             focus_distribution_assessment = None
@@ -155,7 +186,9 @@ class BatchAnalysisService:
                 ]
                 try:
                     fd = self.assessment_service.assess_focus(
-                        prompt, output_for_assessment, user_foci=user_foci_for_assess
+                        scenario_analysis_document(bound_scenario) if bound_scenario else prompt,
+                        output_for_assessment,
+                        user_foci=user_foci_for_assess,
                     )
                     usage_fd = fd.pop('usage', None)
                     focus_distribution_assessment = {
@@ -170,15 +203,26 @@ class BatchAnalysisService:
                     assessment_error = str(ex)
 
             ablated_by_index: Dict[int, List[str]] = {}
+            ablated_metadata: Dict[str, Any] = {}
             for i, focus in enumerate(classified):
                 if not focus.get('attributable'):
                     continue
-                ablated_prompt, _prompt_empty, _collapsed = delete_span(
-                    prompt, focus['char_start'], focus['char_end']
-                )
-                texts, tin, tout = self._sample_outputs(
-                    ablated_prompt, n_ablated, temperature
-                )
+                if bound_scenario is not None:
+                    ablated, deletion = ablate_scenario(bound_scenario, focus)
+                    texts, tin, tout, metadata = scorer._sample_scenario_outputs(
+                        ablated, n_ablated, temperature
+                    )
+                    ablated_metadata[str(i)] = {
+                        'scenario_metadata': metadata,
+                        **deletion,
+                    }
+                else:
+                    ablated_prompt, _prompt_empty, _collapsed = delete_span(
+                        prompt, focus['char_start'], focus['char_end']
+                    )
+                    texts, tin, tout = self._sample_outputs(
+                        ablated_prompt, n_ablated, temperature
+                    )
                 input_tokens += tin
                 output_tokens += tout
                 ablated_by_index[i] = texts
@@ -186,26 +230,30 @@ class BatchAnalysisService:
             pair_seed = (
                 None if permutation_seed is None else int(permutation_seed) + int(pair_idx)
             )
-            scorer = AblationService(
-                self.provider,
-                self.model,
-                api_key=self.api_key,
-                embedding_service=self.embedding_service,
-                cost_calculator=self.cost_calculator,
-                provider_name=self.provider_name,
-            )
-            scored = scorer.score_from_samples(
-                prompt,
-                foci_list,
-                baseline_outputs,
-                ablated_by_index,
-                n_permutations=n_permutations,
-                alpha=alpha,
-                permutation_seed=pair_seed,
-                temperature=temperature,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-            )
+            score_kwargs = {
+                'n_permutations': n_permutations,
+                'alpha': alpha,
+                'permutation_seed': pair_seed,
+                'temperature': temperature,
+                'input_tokens': input_tokens,
+                'output_tokens': output_tokens,
+            }
+            if bound_scenario is not None:
+                scored = scorer.score_scenario_from_samples(
+                    bound_scenario,
+                    classified,
+                    baseline_outputs,
+                    ablated_by_index,
+                    **score_kwargs,
+                )
+            else:
+                scored = scorer.score_from_samples(
+                    prompt,
+                    foci_list,
+                    baseline_outputs,
+                    ablated_by_index,
+                    **score_kwargs,
+                )
 
             # Batch aggregate helpers expect a focus-name -> metrics dict.
             influence_scores = {}
@@ -244,7 +292,19 @@ class BatchAnalysisService:
                 out['focus_distribution_assessment'] = focus_distribution_assessment
             if assessment_error is not None:
                 out['focus_distribution_assessment_error'] = assessment_error
+            if bound_scenario is not None:
+                out['scenario'] = bound_scenario
+                out['scenario_metadata'] = {
+                    'input_binding': binding,
+                    'baseline': baseline_metadata,
+                    'ablated_arms': ablated_metadata,
+                }
+                out['reproducibility'] = scored.get('reproducibility')
             return out
+        except (StructuredOutputError, ProviderCapabilityError):
+            # A required contract failure invalidates the experiment. Let the
+            # stream abort instead of silently continuing with incomparable arms.
+            raise
         except Exception as e:
             return {
                 'success': False,
@@ -265,9 +325,11 @@ class BatchAnalysisService:
         alpha: float = DEFAULT_ALPHA,
         permutation_seed: Optional[int] = None,
         temperature: float = 0.7,
+        scenario: Optional[Mapping[str, Any]] = None,
     ) -> Generator[str, None, None]:
         """Stream batch analysis. Each pair is its own permutation experiment."""
         require_stochastic_temperature(temperature)
+        normalized_scenario = validate_scenario(scenario) if scenario is not None else None
         if num_samples is not None:
             n_baseline = int(num_samples)
         if not session_id:
@@ -307,6 +369,7 @@ class BatchAnalysisService:
                 alpha,
                 permutation_seed,
                 temperature,
+                normalized_scenario,
             )
             futures[future] = pair_idx
         
@@ -329,6 +392,9 @@ class BatchAnalysisService:
                 'pair_results': pair_results,
                 'complete': completed_count >= total_pairs
             }
+            if normalized_scenario is not None:
+                checkpoint_data['scenario'] = normalized_scenario
+                checkpoint_data['workspace_version'] = 2
             self.checkpoint_service.save_checkpoint(session_id, checkpoint_data, 'batch_analysis')
             
             progress_event = {
@@ -387,6 +453,9 @@ class BatchAnalysisService:
             'cost_breakdown': cost_breakdown,
             'complete': True
         }
+        if normalized_scenario is not None:
+            checkpoint_data['scenario'] = normalized_scenario
+            checkpoint_data['workspace_version'] = 2
         self.checkpoint_service.save_checkpoint(session_id, checkpoint_data, 'batch_analysis')
         
         safe_pairs = [_sse_safe_pair_result(r) for r in pair_results]
@@ -405,5 +474,8 @@ class BatchAnalysisService:
             'n_ablated': n_ablated,
             'alpha': alpha,
         }
+        if normalized_scenario is not None:
+            final_result['scenario'] = normalized_scenario
+            final_result['workspace_version'] = 2
 
         yield f"data: {json.dumps(final_result)}\n\n"

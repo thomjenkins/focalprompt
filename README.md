@@ -71,12 +71,26 @@ Open `http://127.0.0.1:5001` (local toolkit). On a hosted deploy with `FOCALPROM
 ```bash
 focalprompt foci prompt.txt --model gpt-4o-mini
 focalprompt analyze prompt.txt --completion out.txt -o result.json
+focalprompt analyze --scenario examples/scenarios/veterinary.json --completion out.txt -o result.json
 ```
 
 ```python
 from focalprompt import analyze
 result = analyze("You are…", output="…", model="gpt-4o-mini")
+
+# Ordered roles, retained inputs, and structured output are kept in every arm.
+result = analyze(
+    scenario="examples/scenarios/rag.json",
+    inputs={"question": "When is the booster due?", "retrieved_context": "…"},
+    output='{"answer":"…","citations":[]}',
+)
 ```
+
+## Ordered inference scenarios
+
+A scenario is the canonical model-under-test request: versioned messages in role order, with each message marked `analyse` or `retain`. Foci use message-relative spans, named retained inputs are replaced per batch row, and an optional strict JSON Schema is forwarded and validated without downgrade. HTTP and Python calls accept exactly one of `scenario` or the legacy `prompt`; the CLI uses mutually exclusive `--scenario FILE`.
+
+See [the scenario reference](docs/inference-scenarios.md), [the veterinary example](examples/scenarios/veterinary.json), and [the RAG example](examples/scenarios/rag.json). The HTTP schema is available at `/api/v1/openapi.json`.
 
 ## Precomputed experiment
 
@@ -86,7 +100,7 @@ Browse [examples/canonical](examples/canonical) or, with the server running, `/e
 
 Full practitioner text lives in `utils/results_copy.py` (in-app **How this works** panel).
 
-- **Both arms sampled.** Baseline = original prompt; ablated = prompt with one verified span deleted.
+- **Both arms sampled.** Baseline = the ordered scenario; each ablated arm clones it and deletes only one focus's verified Analyse spans.
 - **Statistic.** Cosine distance between embedding centroids (\(T_{\mathrm{obs}}\)).
 - **Null.** Exact or Monte Carlo permutation of group labels.
 - **Correction.** Benjamini–Hochberg q-values; significant means \(q < \alpha\) (default 0.05).
@@ -112,7 +126,7 @@ Preserve all of these when changing code:
 
 1. Auto-detect foci + span verify  
 2. Manual add/edit/merge foci  
-3. Dynamic focus detect / exclude from ablation  
+3. Retained messages / named batch inputs excluded from ablation
 4. Generate output  
 5. Assess Focus (reported distribution)  
 6. Rewrite / slider emphasis  

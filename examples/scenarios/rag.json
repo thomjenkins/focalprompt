@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "messages": [
+    {
+      "id": "rag-rules",
+      "role": "system",
+      "content": "Answer only from the retrieved context. Say when the context is insufficient. Cite the supporting source IDs.",
+      "analysis_mode": "analyse"
+    },
+    {
+      "id": "retrieved-context",
+      "role": "developer",
+      "content": "",
+      "analysis_mode": "retain",
+      "input_name": "retrieved_context"
+    },
+    {
+      "id": "question",
+      "role": "user",
+      "content": "",
+      "analysis_mode": "retain",
+      "input_name": "question"
+    }
+  ],
+  "output_contract": {
+    "type": "json_schema",
+    "name": "grounded_answer",
+    "strict": true,
+    "schema": {
+      "type": "object",
+      "properties": {
+        "answer": {"type": "string"},
+        "citations": {"type": "array", "items": {"type": "string"}}
+      },
+      "required": ["answer", "citations"],
+      "additionalProperties": false
+    }
+  }
+}

@@ -14,6 +14,7 @@ import json
 import time
 from typing import List, Dict, Any, Optional
 from core.llm_providers import LLMProvider
+from utils.inference_scenario import ProviderCapabilityError
 
 # Lazy import - only import requests when actually needed
 _requests_available = None
@@ -142,16 +143,10 @@ class AIGatewayProvider(LLMProvider):
         if max_tokens is not None:
             payload['max_tokens'] = max_tokens
         
-        # Only include response_format for models that support it
-        # gpt-4o-mini doesn't support response_format via AI Gateway
-        # Only include for full gpt-4o, gpt-4-turbo, etc.
+        # Structured output is experimental configuration, not a best-effort
+        # hint. Always forward it and let the gateway/provider reject clearly.
         if response_format:
-            model_lower = model.lower()
-            # Check if this is a model that supports response_format
-            # Exclude mini models and only include full models
-            if 'mini' not in model_lower and any(supported in model_lower for supported in ['gpt-4o', 'gpt-4-turbo', 'gpt-4', 'gpt-3.5-turbo']):
-                payload['response_format'] = response_format
-            # For mini models or others, skip response_format - prompt will request JSON
+            payload['response_format'] = response_format
         
         # Make direct HTTP request to gateway with retry logic
         requests = _check_requests()  # Lazy import
@@ -191,8 +186,15 @@ class AIGatewayProvider(LLMProvider):
                 # Parse response
                 data = response.json()
                 
+                choice = data['choices'][0]
                 return {
-                    'content': data['choices'][0]['message']['content'],
+                    'content': choice['message']['content'],
+                    'refusal': choice['message'].get('refusal'),
+                    'finish_reason': choice.get('finish_reason'),
+                    'provider_metadata': {
+                        'provider_translation': 'vercel_ai_gateway_openai_chat',
+                        'role_merges': [],
+                    },
                     'usage': {
                         'prompt_tokens': data['usage']['prompt_tokens'],
                         'completion_tokens': data['usage']['completion_tokens'],
@@ -257,6 +259,20 @@ class AIGatewayProvider(LLMProvider):
                 print(f"Gateway URL: {self.base_url}", file=sys.stderr)
                 print(f"Model: {gateway_model} (provider={provider}, model={model})", file=sys.stderr)
                 print(f"API Key: …{self.gateway_api_key[-4:] if self.gateway_api_key and len(self.gateway_api_key) >= 4 else (self.gateway_api_key or 'None')}", file=sys.stderr)
+
+                contract_markers = (
+                    'response_format', 'response format', 'json_schema',
+                    'json schema', 'structured output',
+                )
+                if (
+                    response_format
+                    and error_code in (400, 404, 422)
+                    and any(marker in error_msg.lower() for marker in contract_markers)
+                ):
+                    raise ProviderCapabilityError(
+                        f"Gateway model '{gateway_model}' rejected the required "
+                        f"structured output contract: {error_msg}"
+                    )
                 
                 # Provide user-friendly error messages (no technical details)
                 if error_code == 404:
@@ -320,7 +336,7 @@ class AIGatewayProvider(LLMProvider):
                     raise Exception("Service temporarily unavailable. Please try again in a moment. If the problem persists, please contact support.")
                     
             except Exception as e:
-                if isinstance(e, RateLimitError):
+                if isinstance(e, (RateLimitError, ProviderCapabilityError)):
                     raise
                 import sys
                 print(f"AI Gateway Unexpected Error: {str(e)}", file=sys.stderr)
@@ -428,4 +444,3 @@ class AIGatewayProvider(LLMProvider):
         
         # Fallback: return empty list if fetch fails
         return []
-

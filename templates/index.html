@@ -177,27 +177,22 @@
                             
                             <h3 style="margin-top: 0; color: var(--primary-color);">Getting Started</h3>
                             
-                            <p><strong>1. Tag Your Prompt into Foci</strong></p>
+                            <p><strong>1. Build an ordered inference scenario</strong></p>
                             <p>
-                                Start by tagging your prompt into points of focus or "foci". You want to aim for as close to <strong>100% coverage</strong> as possible for a comprehensive analysis. Our model can help you detect foci in your prompt but is unlikely to take you to full coverage.
+                                Add system, developer, user, and assistant message cards in the exact order sent to the model. Instruction messages must come first and at least one user message is required.
                             </p>
                             
-                            <p><strong>2. Define Dynamic Inputs</strong></p>
+                            <p><strong>2. Choose Analyse and Retain messages</strong></p>
                             <p>
-                                Dynamic parts of your prompt, where the input will vary, can be tagged as "dynamic" in section 2 "Define Foci". Dynamic inputs include:
+                                Foci are grounded only in <strong>Analyse</strong> messages. <strong>Retain</strong> messages stay unchanged across experimental arms and can have a unique input name for batch substitution.
                             </p>
-                            <ul style="margin-left: 24px; margin-bottom: 20px;">
-                                <li><strong>Chat inputs</strong> - Variable conversation content</li>
-                                <li><strong>RAG</strong> - Retrieval-Augmented Generation context</li>
-                                <li><strong>Tools</strong> - Tool execution results</li>
-                            </ul>
                             <p>
-                                This will allow you to provide matched inputs and outputs in the batch analysis section.
+                                Tag the Analyse content into points of focus or "foci" and aim for close to <strong>100% coverage</strong>. The model can propose foci, but review the exact message-relative spans before running experiments.
                             </p>
                             
                             <p><strong>3. Generate Output</strong></p>
                             <p>
-                                You can then generate a single output for the prompt as provided. This will use the individual instance of any dynamic inputs currently provided in the prompt.
+                                Generate a single output with the ordered roles intact. If a strict JSON Schema output contract is enabled, every result is parsed and validated locally before the experiment continues.
                             </p>
                             
                             <h3 style="margin-top: 32px; color: var(--primary-color);">Experiments A / B / C</h3>
@@ -240,10 +235,10 @@
                             
                             <p><strong>7. Batch Analysis</strong></p>
                             <p>
-                                In the Batch Analysis tab we can assess dynamic inputs and outputs, and how the different parts of the prompt input are influencing the output.
+                                Batch fields are generated from retained messages with <code>input_name</code>. Every row must supply every named input; Analyse messages and the output contract are shared unchanged.
                             </p>
                             <p>
-                                You can manually add dynamic input, output combinations or upload in bulk in a CSV file with the appropriate format.
+                                Add rows manually or upload a CSV containing <code>output</code> plus one column for every named input.
                             </p>
                             
                             <h3 style="margin-top: 32px; color: var(--primary-color);">Agent Builder</h3>
@@ -257,7 +252,7 @@
                             
                             <ul style="margin-left: 24px;">
                                 <li>Aim for <strong>100% coverage</strong> of your prompt with foci whose text matches the prompt verbatim</li>
-                                <li>Tag dynamic inputs appropriately so they are reported as slots, not treated as prompt text</li>
+                                <li>Mark varying input messages as <strong>Retain</strong> and give each one a unique <code>input_name</code></li>
                                 <li>Use ablation analysis to test which deletions produce a detectable behavioural shift</li>
                                 <li>Treat non-significant foci as undetected, not as unused</li>
                                 <li>Test prompt adjustments with the focus sliders before finalizing</li>
@@ -287,7 +282,7 @@
             <!-- Prompt Section -->
             <section class="card" id="lab-prompt">
                     <div class="card-header">
-                        <h2>1. Enter Your Prompt</h2>
+                        <h2>1. Build the inference scenario</h2>
                         <div style="display: flex; gap: 8px; align-items: center;">
                             <div id="coverage-indicator" class="coverage-indicator hidden" title="Unique coverage: how much of the prompt is represented by at least one focus. Focus density: total focus coverage including overlaps (may exceed 100%).">
                                 <span id="coverage-text">Unique <strong id="coverage-percent">0%</strong> · Density <strong id="coverage-density">0%</strong></span>
@@ -301,7 +296,7 @@
                         </div>
                     </div>
                 <div class="card-body">
-                    <div class="prompt-input-wrapper">
+                    <div class="prompt-input-wrapper scenario-editor" id="scenario-editor">
                         <div class="selection-toolbar hidden" id="selection-toolbar">
                             <button id="tag-selection-btn" class="btn btn-primary btn-small">
                                 ➕ Tag as Focus
@@ -314,12 +309,72 @@
                             </button>
                             <span id="selection-text" class="selection-text"></span>
                         </div>
-                        <textarea 
-                            id="prompt-input" 
-                            class="textarea-large" 
-                            placeholder="Enter your prompt here..."
-                            rows="8"
-                        ></textarea>
+                        <p class="info-text scenario-help">Messages are sent in this order. Analyse messages can contain foci; Retain messages remain unchanged in every experimental arm.</p>
+                        <div id="scenario-messages" class="scenario-messages">
+                            <article class="scenario-message-card" data-message-id="instructions">
+                                <div class="scenario-order-rail" aria-hidden="true">1</div>
+                                <div class="scenario-message-body">
+                                    <div class="scenario-message-controls">
+                                        <input class="scenario-message-id" value="instructions" aria-label="Message ID">
+                                        <select class="scenario-role" aria-label="Message role">
+                                            <option value="system" selected>System</option>
+                                            <option value="developer">Developer</option>
+                                            <option value="user">User</option>
+                                            <option value="assistant">Assistant</option>
+                                        </select>
+                                        <select class="scenario-analysis-mode" aria-label="Analysis mode">
+                                            <option value="analyse" selected>Analyse</option>
+                                            <option value="retain">Retain</option>
+                                        </select>
+                                        <input class="scenario-input-name hidden" placeholder="Input name" aria-label="Named batch input">
+                                        <button type="button" class="scenario-move-up btn btn-outline btn-small" aria-label="Move message up">↑</button>
+                                        <button type="button" class="scenario-move-down btn btn-outline btn-small" aria-label="Move message down">↓</button>
+                                        <button type="button" class="scenario-delete btn btn-outline btn-small">Delete</button>
+                                    </div>
+                                    <textarea id="prompt-input" class="textarea-large scenario-content" placeholder="Instructions to analyse…" rows="6"></textarea>
+                                </div>
+                            </article>
+                            <article class="scenario-message-card" data-message-id="user-input">
+                                <div class="scenario-order-rail" aria-hidden="true">2</div>
+                                <div class="scenario-message-body">
+                                    <div class="scenario-message-controls">
+                                        <input class="scenario-message-id" value="user-input" aria-label="Message ID">
+                                        <select class="scenario-role" aria-label="Message role">
+                                            <option value="system">System</option>
+                                            <option value="developer">Developer</option>
+                                            <option value="user" selected>User</option>
+                                            <option value="assistant">Assistant</option>
+                                        </select>
+                                        <select class="scenario-analysis-mode" aria-label="Analysis mode">
+                                            <option value="analyse">Analyse</option>
+                                            <option value="retain" selected>Retain</option>
+                                        </select>
+                                        <input class="scenario-input-name" placeholder="Input name (optional)" aria-label="Named batch input">
+                                        <button type="button" class="scenario-move-up btn btn-outline btn-small" aria-label="Move message up">↑</button>
+                                        <button type="button" class="scenario-move-down btn btn-outline btn-small" aria-label="Move message down">↓</button>
+                                        <button type="button" class="scenario-delete btn btn-outline btn-small">Delete</button>
+                                    </div>
+                                    <textarea class="textarea-large scenario-content" placeholder="A retained user message or batch input…" rows="4"></textarea>
+                                </div>
+                            </article>
+                        </div>
+                        <button type="button" id="scenario-add-message" class="btn btn-outline btn-small">Add message</button>
+                        <section class="scenario-output-contract" id="scenario-output-contract">
+                            <div class="scenario-contract-heading">
+                                <div>
+                                    <strong>Output contract</strong>
+                                    <span>Optional strict JSON Schema; preserved across every arm.</span>
+                                </div>
+                                <label><input type="checkbox" id="scenario-contract-enabled"> Enable</label>
+                            </div>
+                            <div id="scenario-contract-fields" class="hidden">
+                                <label>Schema name <input id="scenario-contract-name" value="model_output" pattern="[A-Za-z0-9_-]+"></label>
+                                <label>JSON Schema
+                                    <textarea id="scenario-contract-schema" class="textarea-large" rows="7">{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"],"additionalProperties":false}</textarea>
+                                </label>
+                                <p id="scenario-contract-error" class="scenario-contract-error hidden" role="alert"></p>
+                            </div>
+                        </section>
                     </div>
                     <div id="prompt-visualization" class="prompt-visualization hidden">
                         <div class="prompt-visualization-header">
@@ -536,7 +591,7 @@
                 <div class="card-body">
                     <p class="info-text">
                         Measures behavioural sensitivity to <strong>focus ordering</strong> while keeping
-                        semantic content constant (glue, dynamic chat, and fixed sections preserved).
+                        semantic content constant (other messages, roles, and the output contract preserved).
                         Reuses Experiment B baseline samples. Distinct from LOO ablation (content removal)
                         and from shuffle-order robustness on each focus card (LOO + remaining reorder).
                         Not mechanistic attention.
@@ -646,25 +701,27 @@
                     </div>
                     <div class="card-body">
                         <p class="info-text" style="margin-bottom: 16px;">
-                            CSV format (case-insensitive headers): required <code>output</code> (aliases: <code>suggested_message</code>, <code>response</code>) plus at least one of <code>input</code>/<code>chat_content</code>, <code>rag_context</code>, <code>tool_results</code>, <code>other_input</code>, and/or per-row <code>prompt</code>. Shared prompt above applies when a row has no <code>prompt</code> column. UTF-8 (BOM OK). Prompt text is preserved exactly.
+                            CSV format: <code>output</code> and each named Retain input are expected. Any non-reserved column is treated as a named input; <code>prompt</code> remains reserved for legacy files. Missing, blank, and unused columns are reported explicitly.
                         </p>
                         
                         <!-- Manual Entry Form -->
                         <div class="manual-entry-form" style="margin-bottom: 24px; padding: 16px; background: #f8fafc; border-radius: 6px;">
                             <h3 style="margin-bottom: 12px;">Add Pair Manually</h3>
                             <p class="info-text" style="margin-bottom: 12px; font-size: 0.9em;">
-                                Enter the variable <strong>input</strong> for this row (e.g. user message or chat turn) and the model <strong>output</strong> you want to analyze. The shared system prompt is set below.
+                                Named Retain inputs from the scenario appear below. Enter every value for this row and the model <strong>output</strong> you want to analyze.
                             </p>
-                            <label for="manual-pair-input" style="display: block; font-weight: 600; margin-bottom: 6px;">Input</label>
-                            <textarea 
-                                id="manual-pair-input" 
-                                class="textarea-large" 
-                                placeholder="Input for this pair (e.g. chat content / user message)..."
-                                rows="4"
-                                style="margin-bottom: 16px;"
-                            ></textarea>
+                            <div id="manual-primary-input-group">
+                                <label id="manual-primary-input-label" for="manual-pair-input" style="display: block; font-weight: 600; margin-bottom: 6px;">Input</label>
+                                <textarea
+                                    id="manual-pair-input"
+                                    class="textarea-large"
+                                    placeholder="Input for this pair (e.g. chat content / user message)..."
+                                    rows="4"
+                                    style="margin-bottom: 16px;"
+                                ></textarea>
+                            </div>
                             <div id="manual-input-fields" style="display: flex; flex-direction: column; gap: 12px;">
-                                <!-- Extra dynamic fields (RAG, tools, …) inserted here when foci need them -->
+                                <!-- Additional named Retain inputs are inserted here. -->
                             </div>
                             <label for="manual-output" style="display: block; font-weight: 600; margin-bottom: 6px; margin-top: 8px;">Output</label>
                             <textarea 
@@ -708,9 +765,6 @@
                         <div class="button-group">
                         <button id="batch-detect-foci-btn" class="btn btn-primary">
                             🤖 Auto-Detect from First Prompt
-                        </button>
-                        <button id="batch-detect-dynamic-foci-btn" class="btn btn-primary" style="background: #f59e0b;">
-                            🔍 Auto-Detect Dynamic Foci
                         </button>
                         <button id="batch-import-foci-btn" class="btn btn-outline">
                             📥 Import from Prompt Analysis
@@ -756,7 +810,7 @@
                             <p id="batch-progress-text">Processing...</p>
                         </div>
                         <p class="info-text">
-                            Each pair is its own permutation experiment: the pair prompt is sampled, then each locatable focus is deleted and sampled. Dynamic slots are excluded. This may take a while.
+                            Each pair is its own permutation experiment: the scenario is sampled, then each grounded Analyse focus is deleted and sampled. Retain messages are never ablated. This may take a while.
                         </p>
                         <div class="experiment-config" data-foci-source="batch">
                             <h3 class="experiment-config-title">Experiment configuration</h3>

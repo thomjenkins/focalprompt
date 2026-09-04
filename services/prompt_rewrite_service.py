@@ -12,7 +12,7 @@ from __future__ import annotations
 import inspect
 import json
 import re
-from typing import Dict, List
+from typing import Any, Dict, List, Mapping
 
 from core.focal_assessor import FocalAssessor
 
@@ -324,6 +324,42 @@ class PromptRewriteService:
             )
 
         return rewritten
+
+    def rewrite_scenario(
+        self,
+        scenario: Mapping[str, Any],
+        foci_weights: List[Dict],
+    ) -> Dict[str, Any]:
+        """Rewrite Analyse messages only; preserve roles, retained bytes and contract."""
+        from utils.inference_scenario import (
+            rewrite_analysed_messages,
+            scenario_analysis_messages,
+            validate_scenario,
+        )
+
+        normalized = validate_scenario(scenario)
+        rewritten: Dict[str, str] = {}
+        for message in scenario_analysis_messages(normalized):
+            message_weights = []
+            for item in foci_weights or []:
+                ids = item.get('message_ids') or []
+                message_id = item.get('message_id')
+                if message_id == message['id'] or message['id'] in ids:
+                    message_weights.append(item)
+                    continue
+                if any(
+                    span.get('message_id') == message['id']
+                    for span in (item.get('spans') or [])
+                    if isinstance(span, dict)
+                ):
+                    message_weights.append(item)
+            # If no foci target this message, byte preservation is safer than an
+            # unconstrained rewrite.
+            if message_weights:
+                rewritten[message['id']] = self.rewrite_prompt(
+                    message['content'], message_weights
+                )
+        return rewrite_analysed_messages(normalized, rewritten)
 
     @staticmethod
     def partition_by_band(

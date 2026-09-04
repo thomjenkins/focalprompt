@@ -55,7 +55,7 @@ def test_api_payload_includes_model_roles():
     assert "function selectedModelPayload(role = 'analysis')" in js
     assert 'mut_model: mut.model' in js
     assert 'analysis_model: anm.model' in js
-    assert "getApiBody({ prompt }, 'mut')" in js
+    assert "getApiBody({ scenario: scenario }, 'mut')" in js
 
 
 def test_rewrite_prompt_route_logs_model_context():

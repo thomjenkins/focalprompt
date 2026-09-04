@@ -302,6 +302,7 @@
     }
 
     function renderShuffleRobustness(focus, data) {
+        if (data && data.scenario) return '';
         if (excludedExplanation(focus)) return '';
         if (focus.attributable === false) return '';
         var C = getCopy();
@@ -916,8 +917,10 @@
             renderAblationStabilitySection(data)
         ];
         var records = enrichFocusRecords(collectFocusRecords(data), data);
-        parts.push('<p class="info-text shuffle-robustness-hint">Each tested focus below includes a ' +
-            '<strong>shuffle-order robustness</strong> check — re-run ablation with remaining spans in shuffled order.</p>');
+        if (!data.scenario) {
+            parts.push('<p class="info-text shuffle-robustness-hint">Each tested focus below includes a ' +
+                '<strong>shuffle-order robustness</strong> check — re-run ablation with remaining spans in shuffled order.</p>');
+        }
         parts.push('<div class="focus-verdict-list">');
         records.forEach(function (rec) {
             parts.push(renderFocusCard(rec, alpha, data));

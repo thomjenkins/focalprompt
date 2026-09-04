@@ -548,7 +548,7 @@ function getApiBody(additionalData = {}, role = 'analysis') {
 }
 
 // DOM Elements
-const promptInput = document.getElementById('prompt-input');
+let promptInput = document.getElementById('prompt-input');
 const outputInput = document.getElementById('output-input');
 const detectFociBtn = document.getElementById('detect-foci-btn');
 const addFocusBtn = document.getElementById('add-focus-btn');
@@ -613,6 +613,9 @@ function adjustFociForPromptEdit(fociList, previousText, nextText) {
             return nextFocus;
         }
         const nextSpans = spans.map(function (span) {
+            if (span.message_id && span.message_id !== activeScenarioMessageId) {
+                return { span: span, changed: false, needsReview: false };
+            }
             const result = promptEdit.adjustSpanForPromptEdit(span, edit);
             changed = changed || result.changed;
             focusNeedsReview = focusNeedsReview || result.needsReview;
@@ -623,6 +626,7 @@ function adjustFociForPromptEdit(fociList, previousText, nextText) {
         });
 
         nextFocus.spans = nextSpans.map(function (span) {
+            if (span.message_id && span.message_id !== activeScenarioMessageId) return span;
             const text = nextText.substring(span.char_start, span.char_end);
             return { ...span, text, text_snapshot: text };
         });
@@ -645,6 +649,40 @@ function adjustFociForPromptEdit(fociList, previousText, nextText) {
     });
 
     return { foci: adjusted, changed, needsReview };
+}
+
+function remapFocusMessageId(previousId, nextId) {
+    if (!previousId || previousId === nextId) return;
+    foci = foci.map(function (focus) {
+        const updated = { ...focus };
+        if (updated.message_id === previousId) updated.message_id = nextId;
+        if (Array.isArray(updated.message_ids)) {
+            updated.message_ids = updated.message_ids.map(function (id) {
+                return id === previousId ? nextId : id;
+            });
+        }
+        if (Array.isArray(updated.spans)) {
+            updated.spans = updated.spans.map(function (span) {
+                return span.message_id === previousId
+                    ? { ...span, message_id: nextId }
+                    : span;
+            });
+        }
+        return updated;
+    });
+    if (activeScenarioMessageId === previousId) activeScenarioMessageId = nextId;
+}
+
+function removeFocusSpansForMessage(messageId) {
+    foci = foci.map(function (focus) {
+        const spans = focusSpansOf(focus).filter(function (span) {
+            return span.message_id !== messageId;
+        });
+        if (!spans.length) return null;
+        return normalizeFocusClient({ ...focus, spans: spans }, promptInput ? promptInput.value : '');
+    }).filter(Boolean);
+    selectedFocusIndex = null;
+    renderFoci();
 }
 
 function syncPromptSpanTracking() {
@@ -699,7 +737,6 @@ const addPairBtn = document.getElementById('add-pair-btn');
 const pairsContainer = document.getElementById('pairs-container');
 const batchFociContainer = document.getElementById('batch-foci-container');
 const batchDetectFociBtn = document.getElementById('batch-detect-foci-btn');
-const batchDetectDynamicFociBtn = document.getElementById('batch-detect-dynamic-foci-btn');
 const batchImportFociBtn = document.getElementById('batch-import-foci-btn');
 const batchClearFociBtn = document.getElementById('batch-clear-foci-btn');
 const runBatchAnalysisBtn = document.getElementById('run-batch-analysis-btn');
@@ -733,12 +770,297 @@ let batchAgentResultsData = []; // Store generated agent results
 
 let focusWeights = {}; // Store slider values for each focus
 let rewrittenPromptText = '';
+let rewrittenScenario = null;
 let intendedDistribution = {}; // Store intended distribution for comparison
 let assessmentFoci = []; // Store assessment results
 let singleAblationResults = null; // Store single ablation analysis results
 let selectedText = ''; // Currently selected text
 let selectedStart = 0; // Start position of selection
 let selectedEnd = 0; // End position of selection
+let activeScenarioMessageId = 'instructions';
+
+function escapeScenarioAttribute(value) {
+    return escapeHtml(String(value == null ? '' : value)).replace(/`/g, '&#96;');
+}
+
+function defaultInferenceScenario() {
+    return {
+        version: 1,
+        messages: [
+            { id: 'instructions', role: 'system', content: '', analysis_mode: 'analyse' },
+            { id: 'user-input', role: 'user', content: '', analysis_mode: 'retain' }
+        ]
+    };
+}
+
+function legacyPromptScenario(prompt) {
+    return {
+        version: 1,
+        messages: [{
+            id: 'legacy-prompt', role: 'user', content: String(prompt || ''), analysis_mode: 'analyse'
+        }]
+    };
+}
+
+function scenarioMessageCardHtml(message, index) {
+    const roles = ['system', 'developer', 'user', 'assistant'];
+    const modes = ['analyse', 'retain'];
+    const inputName = message.input_name || '';
+    return `<article class="scenario-message-card" data-message-id="${escapeScenarioAttribute(message.id)}">
+        <div class="scenario-order-rail" aria-hidden="true">${index + 1}</div>
+        <div class="scenario-message-body">
+            <div class="scenario-message-controls">
+                <input class="scenario-message-id" value="${escapeScenarioAttribute(message.id)}" aria-label="Message ID">
+                <select class="scenario-role" aria-label="Message role">${roles.map(function (role) {
+                    return `<option value="${role}"${role === message.role ? ' selected' : ''}>${role[0].toUpperCase() + role.slice(1)}</option>`;
+                }).join('')}</select>
+                <select class="scenario-analysis-mode" aria-label="Analysis mode">${modes.map(function (mode) {
+                    return `<option value="${mode}"${mode === message.analysis_mode ? ' selected' : ''}>${mode[0].toUpperCase() + mode.slice(1)}</option>`;
+                }).join('')}</select>
+                <input class="scenario-input-name${message.analysis_mode === 'analyse' ? ' hidden' : ''}" value="${escapeScenarioAttribute(inputName)}" placeholder="Input name" aria-label="Named batch input">
+                <button type="button" class="scenario-move-up btn btn-outline btn-small" aria-label="Move message up">↑</button>
+                <button type="button" class="scenario-move-down btn btn-outline btn-small" aria-label="Move message down">↓</button>
+                <button type="button" class="scenario-delete btn btn-outline btn-small">Delete</button>
+            </div>
+            <textarea${index === 0 ? ' id="prompt-input"' : ''} class="textarea-large scenario-content" rows="${message.analysis_mode === 'analyse' ? 6 : 4}">${escapeHtml(message.content || '')}</textarea>
+        </div>
+    </article>`;
+}
+
+function setMainScenario(scenario) {
+    const normalized = scenario && Array.isArray(scenario.messages) ? scenario : defaultInferenceScenario();
+    const container = document.getElementById('scenario-messages');
+    if (!container) return;
+    container.innerHTML = normalized.messages.map(scenarioMessageCardHtml).join('');
+    const enabled = document.getElementById('scenario-contract-enabled');
+    const fields = document.getElementById('scenario-contract-fields');
+    const name = document.getElementById('scenario-contract-name');
+    const schema = document.getElementById('scenario-contract-schema');
+    if (enabled) enabled.checked = !!normalized.output_contract;
+    if (fields) fields.classList.toggle('hidden', !normalized.output_contract);
+    if (normalized.output_contract) {
+        if (name) name.value = normalized.output_contract.name || 'model_output';
+        if (schema) schema.value = JSON.stringify(normalized.output_contract.schema || {}, null, 2);
+    }
+    promptInput = container.querySelector('.scenario-message-card[data-message-id="' + CSS.escape(activeScenarioMessageId) + '"] .scenario-content')
+        || container.querySelector('.scenario-message-card .scenario-content');
+    if (promptInput) {
+        activeScenarioMessageId = promptInput.closest('.scenario-message-card').dataset.messageId;
+        syncPromptSpanTracking();
+    }
+    updateScenarioOrderRails();
+    updateManualInputFields();
+}
+
+function readMainScenario(options) {
+    const config = options || {};
+    const cards = Array.from(document.querySelectorAll('#scenario-messages .scenario-message-card'));
+    const messages = cards.map(function (card, index) {
+        const id = card.querySelector('.scenario-message-id').value.trim();
+        const role = card.querySelector('.scenario-role').value;
+        const analysisMode = card.querySelector('.scenario-analysis-mode').value;
+        const content = card.querySelector('.scenario-content').value;
+        if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(id)) {
+            throw new Error('Message ' + (index + 1) + ' needs a portable ID.');
+        }
+        const message = { id: id, role: role, content: content, analysis_mode: analysisMode };
+        const inputName = card.querySelector('.scenario-input-name').value.trim();
+        if (analysisMode === 'retain' && inputName) message.input_name = inputName;
+        return message;
+    });
+    if (!messages.length) throw new Error('Add at least one message.');
+    if (new Set(messages.map(function (message) { return message.id; })).size !== messages.length) {
+        throw new Error('Message IDs must be unique.');
+    }
+    const inputNames = messages.map(function (message) { return message.input_name; }).filter(Boolean);
+    if (new Set(inputNames).size !== inputNames.length) {
+        throw new Error('Named inputs must be unique.');
+    }
+    if (!messages.some(function (message) { return message.role === 'user'; })) {
+        throw new Error('At least one user message is required.');
+    }
+    let conversationStarted = false;
+    messages.forEach(function (message) {
+        const instruction = message.role === 'system' || message.role === 'developer';
+        if (instruction && conversationStarted) {
+            throw new Error('System and developer messages must come before conversation messages.');
+        }
+        if (!instruction) conversationStarted = true;
+        if (message.input_name && !/^[A-Za-z_][A-Za-z0-9_.-]{0,127}$/.test(message.input_name)) {
+            throw new Error('Named inputs must start with a letter or underscore.');
+        }
+    });
+    const scenario = { version: 1, messages: messages };
+    const enabled = document.getElementById('scenario-contract-enabled');
+    if (enabled && enabled.checked) {
+        const errorEl = document.getElementById('scenario-contract-error');
+        try {
+            const schema = JSON.parse(document.getElementById('scenario-contract-schema').value);
+            const name = document.getElementById('scenario-contract-name').value.trim();
+            if (!/^[A-Za-z0-9_-]{1,64}$/.test(name)) throw new Error('Schema name is invalid.');
+            if (!schema || typeof schema !== 'object' || Array.isArray(schema)) throw new Error('Schema must be a JSON object.');
+            scenario.output_contract = { type: 'json_schema', name: name, strict: true, schema: schema };
+            if (errorEl) errorEl.classList.add('hidden');
+        } catch (error) {
+            if (errorEl) {
+                errorEl.textContent = error.message;
+                errorEl.classList.remove('hidden');
+            }
+            if (config.allowInvalidContract) return scenario;
+            throw new Error('Output contract: ' + error.message);
+        }
+    }
+    return scenario;
+}
+
+function scenarioRequestPayload(extra) {
+    return Object.assign({ scenario: readMainScenario() }, extra || {});
+}
+
+function scenarioInputNames() {
+    try {
+        return readMainScenario({ allowInvalidContract: true }).messages
+            .filter(function (message) { return message.analysis_mode === 'retain' && message.input_name; })
+            .map(function (message) { return message.input_name; });
+    } catch (_error) {
+        return [];
+    }
+}
+
+function getBatchScenario() {
+    const scenario = JSON.parse(JSON.stringify(readMainScenario()));
+    const batchText = batchPromptInput ? batchPromptInput.value : '';
+    if (batchText && batchText.trim()) {
+        const firstAnalysed = scenario.messages.find(function (message) {
+            return message.analysis_mode === 'analyse';
+        });
+        if (firstAnalysed) firstAnalysed.content = batchText;
+    }
+    return scenario;
+}
+
+function scenarioWithAgentInput(chatContent) {
+    const scenario = JSON.parse(JSON.stringify(readMainScenario()));
+    const target = scenario.messages.slice().reverse().find(function (message) {
+        return message.role === 'user' && message.analysis_mode === 'retain';
+    });
+    if (!target) {
+        throw new Error('Agent Builder needs a retained user message for the current input.');
+    }
+    target.content = chatContent;
+    return scenario;
+}
+
+function updateScenarioOrderRails() {
+    document.querySelectorAll('#scenario-messages .scenario-message-card').forEach(function (card, index) {
+        card.querySelector('.scenario-order-rail').textContent = String(index + 1);
+        card.dataset.messageId = card.querySelector('.scenario-message-id').value.trim();
+    });
+}
+
+const scenarioEditor = document.getElementById('scenario-editor');
+if (scenarioEditor) {
+    scenarioEditor.addEventListener('focusin', function (event) {
+        const textarea = event.target.closest('.scenario-content');
+        const card = textarea && textarea.closest('.scenario-message-card');
+        if (!textarea || !card || card.querySelector('.scenario-analysis-mode').value !== 'analyse') return;
+        promptInput = textarea;
+        activeScenarioMessageId = card.dataset.messageId;
+        lastPromptTextForSpanTracking = textarea.value;
+    });
+    scenarioEditor.addEventListener('mouseup', function (event) {
+        if (event.target.matches('.scenario-content')) handleTextSelection();
+    });
+    scenarioEditor.addEventListener('keyup', function (event) {
+        if (event.target.matches('.scenario-content')) handleTextSelection();
+    });
+    scenarioEditor.addEventListener('input', function (event) {
+        const card = event.target.closest('.scenario-message-card');
+        if (!card) return;
+        if (event.target.matches('.scenario-content') && event.target === promptInput) {
+            const nextPromptText = event.target.value;
+            if (foci.length > 0) {
+                const adjusted = adjustFociForPromptEdit(foci, lastPromptTextForSpanTracking, nextPromptText);
+                if (adjusted.changed || adjusted.needsReview) {
+                    foci = adjusted.foci;
+                    selectedFocusIndex = null;
+                    renderFoci();
+                }
+                updateCoverageVisualization();
+                updateCoverageStats();
+            }
+            lastPromptTextForSpanTracking = nextPromptText;
+            selectionToolbar.classList.add('hidden');
+        }
+        if (event.target.matches('.scenario-message-id')) {
+            const previousId = card.dataset.messageId;
+            const nextId = event.target.value.trim();
+            remapFocusMessageId(previousId, nextId);
+            updateScenarioOrderRails();
+        }
+        if (event.target.matches('.scenario-input-name')) {
+            updateManualInputFields();
+        }
+        if (event.target.matches('.scenario-analysis-mode')) {
+            const retain = event.target.value === 'retain';
+            card.querySelector('.scenario-input-name').classList.toggle('hidden', !retain);
+            if (!retain) card.querySelector('.scenario-input-name').value = '';
+            if (retain && foci.some(function (focus) {
+                return focusSpansOf(focus).some(function (span) {
+                    return span.message_id === card.dataset.messageId;
+                });
+            })) {
+                removeFocusSpansForMessage(card.dataset.messageId);
+            }
+            updateManualInputFields();
+        }
+    });
+    scenarioEditor.addEventListener('click', function (event) {
+        const card = event.target.closest('.scenario-message-card');
+        if (!card) return;
+        if (event.target.closest('.scenario-delete')) {
+            if (document.querySelectorAll('#scenario-messages .scenario-message-card').length <= 1) {
+                showErrorModal('A scenario needs at least one message.');
+                return;
+            }
+            removeFocusSpansForMessage(card.dataset.messageId);
+            card.remove();
+        } else if (event.target.closest('.scenario-move-up') && card.previousElementSibling) {
+            card.parentNode.insertBefore(card, card.previousElementSibling);
+        } else if (event.target.closest('.scenario-move-down') && card.nextElementSibling) {
+            card.parentNode.insertBefore(card.nextElementSibling, card);
+        }
+        updateScenarioOrderRails();
+        updateManualInputFields();
+    });
+}
+
+const scenarioAddMessage = document.getElementById('scenario-add-message');
+if (scenarioAddMessage) {
+    scenarioAddMessage.addEventListener('click', function () {
+        const container = document.getElementById('scenario-messages');
+        const index = container.children.length;
+        const existingIds = new Set(Array.from(container.querySelectorAll('.scenario-message-id')).map(function (input) {
+            return input.value.trim();
+        }));
+        let suffix = index + 1;
+        while (existingIds.has('message-' + suffix)) suffix += 1;
+        container.insertAdjacentHTML('beforeend', scenarioMessageCardHtml({
+            id: 'message-' + suffix, role: 'user', content: '', analysis_mode: 'retain'
+        }, index));
+        updateScenarioOrderRails();
+        updateManualInputFields();
+    });
+}
+
+const scenarioContractEnabled = document.getElementById('scenario-contract-enabled');
+if (scenarioContractEnabled) {
+    scenarioContractEnabled.addEventListener('change', function () {
+        document.getElementById('scenario-contract-fields').classList.toggle('hidden', !scenarioContractEnabled.checked);
+    });
+}
+window.getInferenceScenario = readMainScenario;
+window.setInferenceScenario = setMainScenario;
 
 // Tab Navigation
 function switchTab(tabName) {
@@ -795,6 +1117,7 @@ function savePromptAndFoci() {
     const prompt = promptInput ? promptInput.value.trim() : '';
     const data = {
         prompt: prompt,
+        scenario: readMainScenario(),
         foci: foci,
         timestamp: new Date().toISOString()
     };
@@ -815,9 +1138,8 @@ function loadPromptAndFoci() {
     
     try {
         const data = JSON.parse(saved);
-        if (promptInput && data.prompt) {
-            promptInput.value = data.prompt;
-        }
+        if (data.scenario) setMainScenario(data.scenario);
+        else if (data.prompt) setMainScenario(legacyPromptScenario(data.prompt));
         if (data.foci && Array.isArray(data.foci)) {
             foci = data.foci;
             renderFoci();
@@ -833,6 +1155,7 @@ function saveBatchAnalysis() {
     const prompt = batchPromptInput ? batchPromptInput.value.trim() : '';
     const data = {
         prompt: prompt,
+        scenario: getBatchScenario(),
         foci: batchFoci,
         pairs: batchPairs,
         timestamp: new Date().toISOString()
@@ -854,14 +1177,15 @@ function loadBatchAnalysis() {
     
     try {
         const data = JSON.parse(saved);
+        if (data.scenario) setMainScenario(data.scenario);
         if (batchPromptInput && data.prompt) {
             batchPromptInput.value = data.prompt;
         }
         if (data.foci && Array.isArray(data.foci)) {
             batchFoci = data.foci.map(f => ({
                 ...f,
-                is_dynamic: f.is_dynamic || false,
-                dynamic_type: f.dynamic_type || null
+                is_dynamic: false,
+                dynamic_type: null
             }));
             renderBatchFoci();
         }
@@ -959,9 +1283,8 @@ window.addEventListener('DOMContentLoaded', async () => {
     if (savedPrompt) {
         try {
             const data = JSON.parse(savedPrompt);
-            if (promptInput && data.prompt) {
-                promptInput.value = data.prompt;
-            }
+            if (data.scenario) setMainScenario(data.scenario);
+            else if (data.prompt) setMainScenario(legacyPromptScenario(data.prompt));
             if (data.foci && Array.isArray(data.foci) && data.foci.length > 0) {
                 foci = data.foci;
                 renderFoci();
@@ -977,6 +1300,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     if (savedBatch) {
         try {
             const data = JSON.parse(savedBatch);
+            if (data.scenario) setMainScenario(data.scenario);
             if (batchPromptInput && data.prompt) {
                 batchPromptInput.value = data.prompt;
             }
@@ -1341,7 +1665,11 @@ function showError(message) {
 
 // Auto-Detect Foci
 detectFociBtn.addEventListener('click', async () => {
-    const prompt = promptInput.value.trim();
+    let scenario;
+    try { scenario = readMainScenario(); } catch (error) { showErrorModal(error.message); return; }
+    const prompt = scenario.messages.filter(function (message) {
+        return message.analysis_mode === 'analyse';
+    }).map(function (message) { return message.content; }).join('\n\n').trim();
     
     if (!prompt) {
         showErrorModal('Please enter a prompt first.');
@@ -1388,7 +1716,7 @@ detectFociBtn.addEventListener('click', async () => {
         const response = await fetch('/api/detect-foci', {
             method: 'POST',
             headers: getApiHeaders(),
-            body: JSON.stringify(getApiBody({ prompt })),
+            body: JSON.stringify(getApiBody({ scenario: scenario })),
         });
         
         // Check content-type before parsing JSON
@@ -1410,8 +1738,8 @@ detectFociBtn.addEventListener('click', async () => {
         
         foci = (data.foci || []).map(f => ({
             ...f,
-            is_dynamic: f.is_dynamic || false,
-            dynamic_type: f.dynamic_type || null
+            is_dynamic: false,
+            dynamic_type: null
         }));
         window.fociCoverage = data.coverage || null;
         // Automatic proposals without source provenance are omitted from foci;
@@ -1453,13 +1781,24 @@ if (promptInput) {
     promptInput.addEventListener('keyup', handleTextSelection);
 }
 
-function handleTextSelection() {
-    const textarea = promptInput;
+function handleTextSelection(event) {
+    const candidate = event && event.target && event.target.matches('.scenario-content')
+        ? event.target
+        : promptInput;
+    const card = candidate && candidate.closest('.scenario-message-card');
+    if (!candidate || (card && card.querySelector('.scenario-analysis-mode').value !== 'analyse')) {
+        selectionToolbar.classList.add('hidden');
+        selectedText = '';
+        return;
+    }
+    const textarea = candidate;
+    promptInput = textarea;
+    if (card) activeScenarioMessageId = card.dataset.messageId;
     const start = textarea.selectionStart;
     const end = textarea.selectionEnd;
-    const selected = textarea.value.substring(start, end).trim();
+    const selected = textarea.value.substring(start, end);
     
-    if (selected.length > 0 && start !== end) {
+    if (selected.trim().length > 0 && start !== end) {
         selectedText = selected;
         selectedStart = start;
         selectedEnd = end;
@@ -1496,7 +1835,13 @@ if (tagSelectionBtn) {
             return;
         }
 
-        const alreadyTagged = foci.some(f => f.prompt_section === selectedText);
+        const alreadyTagged = foci.some(function (focus) {
+            return focusSpansOf(focus).some(function (span) {
+                return span.message_id === activeScenarioMessageId
+                    && span.char_start === selectedStart
+                    && span.char_end === selectedEnd;
+            });
+        });
         if (alreadyTagged) {
             if (!confirm('This text is already tagged as a focus. Add it anyway?')) {
                 selectionToolbar.classList.add('hidden');
@@ -1517,7 +1862,8 @@ if (tagSelectionBtn) {
             grounding_method: 'manual_selection',
             grounding_confidence: 1.0,
             provenance: 'manual',
-            spans: [{ char_start: selectedStart, char_end: selectedEnd, text: selectedText }]
+            message_id: activeScenarioMessageId,
+            spans: [{ message_id: activeScenarioMessageId, char_start: selectedStart, char_end: selectedEnd, text: selectedText, text_snapshot: selectedText }]
         }, promptText);
         foci.push(created);
         selectedFocusIndex = foci.length - 1;
@@ -1603,6 +1949,7 @@ function focusSpansOf(focus) {
         return focus.spans.map(function (s) {
             return {
                 id: s.id || null,
+                message_id: s.message_id || focus.message_id || null,
                 char_start: Number(s.char_start != null ? s.char_start : s.start),
                 char_end: Number(s.char_end != null ? s.char_end : s.end),
                 text: s.text || s.text_snapshot || null
@@ -1615,6 +1962,7 @@ function focusSpansOf(focus) {
         && focus.char_end > focus.char_start) {
         return [{
             id: focus.span_id || null,
+            message_id: focus.message_id || null,
             char_start: focus.char_start,
             char_end: focus.char_end,
             text: focus.prompt_section || null
@@ -1629,14 +1977,17 @@ function normalizeFocusClient(focus, prompt) {
     // Deduplicate identical ranges
     const seen = {};
     spans = spans.filter(function (s) {
-        const key = s.char_start + ':' + s.char_end;
+        const key = (s.message_id || '') + ':' + s.char_start + ':' + s.char_end;
         if (seen[key]) return false;
         seen[key] = true;
         return true;
     });
-    spans.sort(function (a, b) { return a.char_start - b.char_start; });
+    spans.sort(function (a, b) {
+        return String(a.message_id || '').localeCompare(String(b.message_id || '')) || a.char_start - b.char_start;
+    });
     if (prompt) {
         spans = spans.map(function (s) {
+            if (s.message_id && s.message_id !== activeScenarioMessageId) return s;
             const text = prompt.substring(s.char_start, s.char_end);
             return Object.assign({}, s, { text: text, text_snapshot: text });
         });
@@ -1644,23 +1995,32 @@ function normalizeFocusClient(focus, prompt) {
     f.spans = spans;
     f.span_count = spans.length;
     f.is_multi_span = spans.length > 1;
-    // Contiguous if single union interval
+    // Contiguity and union lengths are meaningful only within a message.
     let union = [];
     spans.forEach(function (s) {
-        if (!union.length || s.char_start > union[union.length - 1][1]) {
-            union.push([s.char_start, s.char_end]);
+        const messageId = s.message_id || '';
+        const prior = union[union.length - 1];
+        if (!prior || prior[0] !== messageId || s.char_start > prior[2]) {
+            union.push([messageId, s.char_start, s.char_end]);
         } else {
-            union[union.length - 1][1] = Math.max(union[union.length - 1][1], s.char_end);
+            prior[2] = Math.max(prior[2], s.char_end);
         }
     });
     f.is_contiguous = union.length <= 1;
     f.total_span_length = spans.reduce(function (a, s) { return a + (s.char_end - s.char_start); }, 0);
-    f.unique_span_length = union.reduce(function (a, se) { return a + (se[1] - se[0]); }, 0);
+    f.unique_span_length = union.reduce(function (a, se) { return a + (se[2] - se[1]); }, 0);
     if (spans.length) {
+        const messageIds = Array.from(new Set(spans.map(function (span) { return span.message_id; }).filter(Boolean)));
+        if (messageIds.length === 1) f.message_id = messageIds[0];
+        f.message_ids = messageIds;
         f.char_start = spans[0].char_start;
         f.char_end = spans[spans.length - 1].char_end;
         if (prompt) {
-            const texts = spans.map(function (s) { return prompt.substring(s.char_start, s.char_end); });
+            const texts = spans.map(function (s) {
+                return s.message_id && s.message_id !== activeScenarioMessageId
+                    ? (s.text_snapshot || s.text || '')
+                    : prompt.substring(s.char_start, s.char_end);
+            });
             f.prompt_section = texts.length > 1 ? texts.join('\n…\n') : texts[0];
         }
     }
@@ -1672,13 +2032,15 @@ function addSpanToFocus(index, start, end, prompt) {
     if (start == null || end == null || start >= end) return false;
     const focus = normalizeFocusClient(foci[index], prompt);
     const exists = (focus.spans || []).some(function (s) {
-        return s.char_start === start && s.char_end === end;
+        return s.message_id === activeScenarioMessageId
+            && s.char_start === start && s.char_end === end;
     });
     if (exists) {
         showErrorModal('That exact span is already part of this focus.');
         return false;
     }
     focus.spans.push({
+        message_id: activeScenarioMessageId,
         char_start: start,
         char_end: end,
         text: prompt.substring(start, end),
@@ -1716,11 +2078,12 @@ function computeClientCoverage(prompt, focusList) {
     const n = prompt.length;
     const depth = new Array(n).fill(0);
     (focusList || []).forEach(function (focus) {
-        if (focus.verified === false || focus.is_dynamic) return;
+        if (focus.verified === false) return;
         const nf = normalizeFocusClient(focus, prompt);
         // Union per focus for unique-within-focus, but depth counts each focus once per char
         const covered = {};
         (nf.spans || []).forEach(function (s) {
+            if (s.message_id && s.message_id !== activeScenarioMessageId) return;
             for (let i = s.char_start; i < s.char_end && i < n; i++) {
                 if (i >= 0) covered[i] = true;
             }
@@ -1753,7 +2116,9 @@ function computeClientCoverage(prompt, focusList) {
 
 function clientSpanUnion(focus, prompt) {
     const nf = normalizeFocusClient(focus, prompt);
-    return (nf.spans || []).map(function (s) {
+    return (nf.spans || []).filter(function (s) {
+        return !s.message_id || s.message_id === activeScenarioMessageId;
+    }).map(function (s) {
         return [s.char_start, s.char_end];
     });
 }
@@ -1776,11 +2141,11 @@ function computeClientOverlaps(prompt, focusList) {
     const list = focusList || [];
     const pairs = [];
     for (let i = 0; i < list.length; i++) {
-        if (list[i].verified === false || list[i].is_dynamic) continue;
+        if (list[i].verified === false) continue;
         const a = clientSpanUnion(list[i], prompt);
         const lenA = a.reduce(function (s, se) { return s + (se[1] - se[0]); }, 0) || 1;
         for (let j = i + 1; j < list.length; j++) {
-            if (list[j].verified === false || list[j].is_dynamic) continue;
+            if (list[j].verified === false) continue;
             const b = clientSpanUnion(list[j], prompt);
             const inter = intervalsIntersectionLen(a, b);
             if (inter <= 0) continue;
@@ -1816,8 +2181,15 @@ function extractStructuredSectionFoci(prompt) {
     while ((m = xmlRe.exec(prompt)) !== null) {
         found.push({
             focus: m[1],
+            message_id: activeScenarioMessageId,
             char_start: m.index,
             char_end: m.index + m[0].length,
+            spans: [{
+                message_id: activeScenarioMessageId,
+                char_start: m.index,
+                char_end: m.index + m[0].length,
+                text_snapshot: m[0]
+            }],
             prompt_section: m[0],
             provenance: 'xml',
             verified: true,
@@ -1837,8 +2209,15 @@ function extractStructuredSectionFoci(prompt) {
         const title = headings[i].title;
         found.push({
             focus: title,
+            message_id: activeScenarioMessageId,
             char_start: headings[i].start,
             char_end: end,
+            spans: [{
+                message_id: activeScenarioMessageId,
+                char_start: headings[i].start,
+                char_end: end,
+                text_snapshot: prompt.substring(headings[i].start, end)
+            }],
             prompt_section: prompt.substring(headings[i].start, end),
             provenance: 'markdown',
             verified: true,
@@ -1875,18 +2254,23 @@ function repairFocusSpan(index) {
     focus.char_start = start;
     focus.char_end = end;
     focus.prompt_section = exact;
-    focus.spans = [{ char_start: start, char_end: end, text: exact, text_snapshot: exact }];
+    focus.message_id = activeScenarioMessageId;
+    focus.spans = [{
+        message_id: activeScenarioMessageId,
+        char_start: start,
+        char_end: end,
+        text: exact,
+        text_snapshot: exact
+    }];
     Object.assign(focus, normalizeFocusClient(focus, prompt));
     focus.verified = true;
     focus.grounding_method = 'manual_selection';
     focus.grounding_confidence = 1.0;
     focus.grounding_failure = null;
-    focus.attributable = focus.is_dynamic ? false : true;
-    if (focus.is_dynamic) {
-        focus.reason = 'dynamic_slot';
-    } else {
-        focus.reason = null;
-    }
+    focus.is_dynamic = false;
+    focus.dynamic_type = null;
+    focus.attributable = true;
+    focus.reason = null;
     renderFoci();
 }
 
@@ -1914,9 +2298,6 @@ function renderFoci() {
     });
     
     fociContainer.innerHTML = foci.map((focus, index) => {
-        const isDynamic = focus.is_dynamic || false;
-        const dynamicType = focus.dynamic_type || '';
-        const dynamicTypeOptions = ['chat', 'rag', 'tools', 'other'];
         const promptText = promptInput ? promptInput.value : '';
         const nf = normalizeFocusClient(focus, promptText);
         const overlapPairs = computeClientOverlaps(promptText, foci);
@@ -1929,7 +2310,6 @@ function renderFoci() {
                     <span style="cursor: move; user-select: none;">☰</span>
                     <input type="checkbox" class="focus-select-checkbox" data-focus-index="${index}" onchange="updateMergeButton()" style="cursor: pointer;">
                     <span style="cursor:pointer;" onclick="event.stopPropagation(); selectFocusForEditing(${index})" title="Select this focus to add more spans">${index + 1}. ${escapeHtml(focus.focus)}</span>
-                    ${isDynamic ? `<span style="margin-left: 8px; padding: 2px 6px; background: #fef3c7; border-radius: 4px; font-size: 0.75em; color: #92400e;">Dynamic: ${dynamicType}</span>` : ''}
                 </div>
                 <button class="focus-item-remove" onclick="removeFocus(${index})">×</button>
             </div>
@@ -1961,7 +2341,7 @@ function renderFoci() {
                 <ol class="focus-span-list">
                   ${(nf.spans || []).map((s, si) => {
                     const excerpt = (s.text || (promptText.substring(s.char_start, s.char_end) || '')).slice(0, 80);
-                    return `<li><code>[${s.char_start}:${s.char_end}]</code> ${escapeHtml(excerpt)}${excerpt.length >= 80 ? '…' : ''}
+                    return `<li><code>${escapeHtml(s.message_id || activeScenarioMessageId)} [${s.char_start}:${s.char_end}]</code> ${escapeHtml(excerpt)}${excerpt.length >= 80 ? '…' : ''}
                       <span class="focus-span-actions">
                         <button type="button" class="btn btn-outline btn-small" onclick="event.stopPropagation(); removeSpanFromFocus(${index}, ${si})">Remove span</button>
                       </span>
@@ -1976,18 +2356,6 @@ function renderFoci() {
                   <button type="button" class="btn btn-outline btn-small" onclick="event.stopPropagation(); selectFocusForEditing(${index}); document.getElementById('prompt-input').focus();">Add another span…</button>
                 </div>
                 `}
-            </div>
-            <div class="focus-item-controls" style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #e5e7eb; display: flex; align-items: center; gap: 12px;">
-                <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
-                    <input type="checkbox" ${isDynamic ? 'checked' : ''} onchange="toggleFocusDynamic(${index}, this.checked)" style="cursor: pointer;">
-                    <span style="font-size: 0.9em;">Mark as Dynamic</span>
-                </label>
-                ${isDynamic ? `
-                <select onchange="setFocusDynamicType(${index}, this.value)" style="padding: 4px 8px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 0.9em;" value="${dynamicType}">
-                    <option value="">Select type...</option>
-                    ${dynamicTypeOptions.map(opt => `<option value="${opt}" ${dynamicType === opt ? 'selected' : ''}>${opt.charAt(0).toUpperCase() + opt.slice(1)}</option>`).join('')}
-                </select>
-                ` : ''}
             </div>
         </div>
         `;
@@ -2136,17 +2504,6 @@ function mergeSelectedFoci() {
         spans: spans
     }, promptText);
     
-    // If any selected focus is dynamic, mark merged as dynamic
-    const hasDynamic = selectedIndices.some(i => foci[i].is_dynamic);
-    if (hasDynamic) {
-        mergedFocus.is_dynamic = true;
-        // Use the first dynamic type found
-        const dynamicType = selectedIndices.find(i => foci[i].is_dynamic && foci[i].dynamic_type);
-        if (dynamicType !== undefined) {
-            mergedFocus.dynamic_type = foci[dynamicType].dynamic_type;
-        }
-    }
-    
     // Remove selected foci (in reverse order to maintain indices)
     for (let i = selectedIndices.length - 1; i >= 0; i--) {
         foci.splice(selectedIndices[i], 1);
@@ -2174,31 +2531,6 @@ function showSuccessMessage(message) {
         successDiv.style.transition = 'opacity 0.3s';
         setTimeout(() => successDiv.remove(), 300);
     }, 2000);
-}
-
-// Toggle focus dynamic status
-function toggleFocusDynamic(index, isDynamic) {
-    if (foci[index]) {
-        foci[index].is_dynamic = isDynamic;
-        if (!isDynamic) {
-            foci[index].dynamic_type = null;
-        } else if (!foci[index].dynamic_type) {
-            // Default to 'chat' if no type set
-            foci[index].dynamic_type = 'chat';
-        }
-        renderFoci();
-    }
-}
-
-// Set focus dynamic type
-function setFocusDynamicType(index, dynamicType) {
-    if (foci[index]) {
-        foci[index].dynamic_type = dynamicType || null;
-        if (dynamicType) {
-            foci[index].is_dynamic = true;
-        }
-        renderFoci();
-    }
 }
 
 // Get darker shade of a color
@@ -2238,7 +2570,7 @@ function updateCoverageVisualization() {
     // Find all covered sections (every span of every focus)
     const coveredRanges = [];
     foci.forEach((focus, index) => {
-        if (focus.verified === false || focus.is_dynamic) {
+        if (focus.verified === false) {
             return;
         }
         const nf = normalizeFocusClient(focus, prompt);
@@ -2413,7 +2745,9 @@ function removeFocus(index) {
 
 // Generate Output
 generateOutputBtn.addEventListener('click', async () => {
-    const prompt = promptInput.value.trim();
+    let scenario;
+    try { scenario = readMainScenario(); } catch (error) { showErrorModal(error.message); return; }
+    const prompt = scenario.messages.map(function (message) { return message.content; }).join('\n').trim();
     
     if (!prompt) {
         showErrorModal('Please enter a prompt first.');
@@ -2454,7 +2788,7 @@ generateOutputBtn.addEventListener('click', async () => {
         const response = await fetch('/api/generate-output', {
             method: 'POST',
             headers: getApiHeaders(),
-            body: JSON.stringify(getApiBody({ prompt }, 'mut')),
+            body: JSON.stringify(getApiBody({ scenario: scenario }, 'mut')),
         });
         
         const data = await response.json();
@@ -2500,7 +2834,11 @@ if (loadAssessmentCheckpointBtn) {
 
 // Assess Focus
 assessBtn.addEventListener('click', async () => {
-    const prompt = promptInput.value.trim();
+    let scenario;
+    try { scenario = readMainScenario(); } catch (error) { showErrorModal(error.message); return; }
+    const prompt = scenario.messages.filter(function (message) {
+        return message.analysis_mode === 'analyse';
+    }).map(function (message) { return message.content; }).join('\n\n').trim();
     const output = outputInput.value.trim();
     
     if (!prompt) {
@@ -2551,8 +2889,8 @@ assessBtn.addEventListener('click', async () => {
         const response = await fetch('/api/assess', {
             method: 'POST',
             headers: getApiHeaders(),
-            body: JSON.stringify(getApiBody({ 
-                prompt, 
+            body: JSON.stringify(getApiBody({
+                scenario: scenario,
                 output,
                 foci: foci.length > 0 ? foci : undefined
             })),
@@ -2955,7 +3293,11 @@ if (resetSlidersBtn) {
 // Rewrite prompt with emphasis
 if (rewritePromptBtn) {
     rewritePromptBtn.addEventListener('click', async () => {
-        const prompt = promptInput.value.trim();
+        let scenario;
+        try { scenario = readMainScenario(); } catch (error) { showErrorModal(error.message); return; }
+        const prompt = scenario.messages.filter(function (message) {
+            return message.analysis_mode === 'analyse';
+        }).map(function (message) { return message.content; }).join('\n\n').trim();
         
         if (!prompt || foci.length === 0) {
             showErrorModal('Please enter a prompt and define foci first.');
@@ -2967,7 +3309,9 @@ if (rewritePromptBtn) {
             // Use Number() so an explicit 0 is preserved (|| would also keep 0, but be explicit).
             const rewriteWeight = Number(focusWeights[index]);
             const weight = Number.isFinite(rewriteWeight) ? rewriteWeight : 0;
+            const sourceFocus = foci.find(function (item) { return item.focus === focus.focus; }) || {};
             return {
+                ...sourceFocus,
                 focus: focus.focus,
                 prompt_section: focus.prompt_section,
                 reported_focus_score: (typeof focus.reported_focus_score === 'number')
@@ -3030,8 +3374,8 @@ if (rewritePromptBtn) {
             const response = await fetch('/api/rewrite-prompt', {
                 method: 'POST',
                 headers: getApiHeaders(),
-                body: JSON.stringify(getApiBody({ 
-                    prompt,
+                body: JSON.stringify(getApiBody({
+                    scenario: scenario,
                     foci: weights
                 })),
             });
@@ -3042,7 +3386,11 @@ if (rewritePromptBtn) {
                 throw new Error(data.error || 'Failed to rewrite prompt');
             }
             
-            const nextRewritten = (data.rewritten_prompt || '').trim();
+            rewrittenScenario = data.rewritten_scenario || null;
+            const nextRewritten = (data.rewritten_prompt ||
+                (rewrittenScenario && rewrittenScenario.messages
+                    ? rewrittenScenario.messages.filter(function (m) { return m.analysis_mode === 'analyse'; }).map(function (m) { return m.content; }).join('\n\n')
+                    : '')).trim();
             if (!nextRewritten) {
                 throw new Error(
                     'Rewrite returned an empty prompt. Try again or adjust focus weights.'
@@ -3126,7 +3474,10 @@ if (generateFocusedOutputBtn) {
             const response = await fetch('/api/generate-output', {
                 method: 'POST',
                 headers: getApiHeaders(),
-                body: JSON.stringify(getApiBody({ prompt: rewrittenPromptText }, 'mut')),
+                body: JSON.stringify(getApiBody(
+                    rewrittenScenario ? { scenario: rewrittenScenario } : { prompt: rewrittenPromptText },
+                    'mut'
+                )),
             });
             
             const data = await response.json();
@@ -3270,19 +3621,19 @@ function sleepMs(ms) {
     return new Promise(function (resolve) { setTimeout(resolve, ms); });
 }
 
-async function fetchAblationSample(prompt, fociList, kind, focusIndex, temperature, controller) {
+async function fetchAblationSample(inference, fociList, kind, focusIndex, temperature, controller, inputs) {
     const maxAttempts = 8;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
         const response = await fetch('/api/ablation-sample', {
             method: 'POST',
             headers: getApiHeaders(),
-            body: JSON.stringify(getApiBody({
-                prompt: prompt,
+            body: JSON.stringify(getApiBody(Object.assign({
                 foci: fociList,
                 kind: kind,
                 focus_index: focusIndex,
-                temperature: temperature
-            }, 'mut')),
+                temperature: temperature,
+                inputs: inputs || undefined
+            }, typeof inference === 'string' ? { prompt: inference } : { scenario: inference }), 'mut')),
             signal: controller.signal
         });
         const data = await response.json();
@@ -3323,7 +3674,7 @@ async function mapPool(items, limit, fn) {
 }
 
 function isClientAttributableFocus(focus) {
-    if (!focus || focus.is_dynamic) return false;
+    if (!focus) return false;
     if (focus.verified === false) return false;
     // Overlaps remain attributable; backend records affected_overlapping_foci warnings.
     if (focus.reason === 'unverified' || focus.reason === 'dynamic_slot') {
@@ -3336,7 +3687,7 @@ function isClientAttributableFocus(focus) {
     return true;
 }
 
-async function runPacedAblation(prompt, fociList, cfg, onProgress) {
+async function runPacedAblation(inference, fociList, cfg, onProgress, inputs) {
     const report = typeof onProgress === 'function'
         ? onProgress
         : function (msg) { showLoading(msg); };
@@ -3361,7 +3712,7 @@ async function runPacedAblation(prompt, fociList, cfg, onProgress) {
         report('Generating samples (0 of ' + jobs.length + ')…');
         const samples = await mapPool(jobs, concurrency, async function (job) {
             const sample = await fetchAblationSample(
-                prompt, fociList, job.kind, job.focusIndex, cfg.temperature, controller
+                inference, fociList, job.kind, job.focusIndex, cfg.temperature, controller, inputs
             );
             completed += 1;
             report('Generating samples (' + completed + ' of ' + jobs.length + ')…');
@@ -3372,9 +3723,15 @@ async function runPacedAblation(prompt, fociList, cfg, onProgress) {
         const ablatedOutputs = {};
         let inputTokens = 0;
         let outputTokens = 0;
+        let boundScenario = null;
+        let inputBinding = null;
+        const sampleScenarioMetadata = [];
         for (let i = 0; i < jobs.length; i++) {
             const job = jobs[i];
             const sample = samples[i];
+            if (sample.scenario && !boundScenario) boundScenario = sample.scenario;
+            if (sample.input_binding && !inputBinding) inputBinding = sample.input_binding;
+            if (sample.scenario_metadata) sampleScenarioMetadata.push(sample.scenario_metadata);
             if (sample.usage) {
                 inputTokens += sample.usage.prompt_tokens || 0;
                 outputTokens += sample.usage.completion_tokens || 0;
@@ -3391,20 +3748,28 @@ async function runPacedAblation(prompt, fociList, cfg, onProgress) {
         const response = await fetch('/api/ablation-score', {
             method: 'POST',
             headers: getApiHeaders(),
-            body: JSON.stringify(getApiBody({
-                prompt: prompt,
+            body: JSON.stringify(getApiBody(Object.assign({
                 foci: fociList,
                 baseline_outputs: baselineOutputs,
                 ablated_outputs: ablatedOutputs,
                 temperature: cfg.temperature,
                 input_tokens: inputTokens,
                 output_tokens: outputTokens
-            }, 'mut')),
+            }, typeof inference === 'string'
+                ? { prompt: inference }
+                : { scenario: boundScenario || inference }), 'mut')),
             signal: controller.signal
         });
         const data = await response.json();
         if (!response.ok) {
             throw new Error(data.error || 'Failed to score ablation samples');
+        }
+        if (boundScenario) {
+            data.scenario = boundScenario;
+            data.scenario_metadata = {
+                input_binding: inputBinding,
+                samples: sampleScenarioMetadata,
+            };
         }
         return data;
     } finally {
@@ -3414,7 +3779,11 @@ async function runPacedAblation(prompt, fociList, cfg, onProgress) {
 
 if (runAblationBtn) {
     runAblationBtn.addEventListener('click', async () => {
-        const prompt = promptInput.value.trim();
+        let scenario;
+        try { scenario = readMainScenario(); } catch (error) { showErrorModal(error.message); return; }
+        const prompt = scenario.messages.filter(function (message) {
+            return message.analysis_mode === 'analyse';
+        }).map(function (message) { return message.content; }).join('\n\n').trim();
         
         if (!prompt) {
             showErrorModal('Please enter a prompt first.');
@@ -3439,7 +3808,7 @@ if (runAblationBtn) {
 
         var nTested = window.FocalPromptExperiment
             ? window.FocalPromptExperiment.countPreviewAttributable(foci)
-            : foci.filter(function (f) { return !f.is_dynamic; }).length;
+        : foci.length;
         showLoading(
             window.FocalPromptExperiment
                 ? window.FocalPromptExperiment.formatAblationLoading(
@@ -3452,7 +3821,7 @@ if (runAblationBtn) {
         );
         
         try {
-            const data = await runPacedAblation(prompt, foci, cfg);
+            const data = await runPacedAblation(scenario, foci, cfg);
             renderAblationResults(data);
             
         } catch (error) {
@@ -3564,12 +3933,13 @@ function bindReportedFocusDynamicsHandlers(data) {
 
     btn.addEventListener('click', async function () {
         const prompt = (data && data.prompt) || (promptInput ? promptInput.value.trim() : '');
+        const scenario = data && data.scenario;
         const fociList = (data && (data.foci_list || data.foci)) || foci;
         const baselines = (data && data.baseline_outputs && data.baseline_outputs.length)
             ? data.baseline_outputs
             : (data && data.baseline_output ? [data.baseline_output] : []);
-        if (!prompt || !fociList || !fociList.length || !baselines.length) {
-            showErrorModal('Need prompt, foci, and baseline samples from the ablation run.');
+        if ((!prompt && !scenario) || !fociList || !fociList.length || !baselines.length) {
+            showErrorModal('Need a scenario, foci, and baseline samples from the ablation run.');
             return;
         }
 
@@ -3606,13 +3976,12 @@ function bindReportedFocusDynamicsHandlers(data) {
             const response = await fetch('/api/ablation-reported-focus-dynamics', {
                 method: 'POST',
                 headers: getApiHeaders(),
-                body: JSON.stringify(getApiBody({
-                    prompt: prompt,
+                body: JSON.stringify(getApiBody(Object.assign({
                     foci: fociList,
                     baseline_outputs: baselines,
                     ablated_outputs: ablatedMap,
                     association_focus: associationFocus || null
-                }))
+                }, scenario ? { scenario: scenario } : { prompt: prompt })))
             });
             const result = await response.json();
             if (!response.ok) {
@@ -3967,6 +4336,7 @@ function bindAblationStabilityHandlers(data) {
 
 async function runRefineAblationStability(focusIndex, data) {
     const prompt = (data && data.prompt) || (promptInput ? promptInput.value.trim() : '');
+    const scenario = data && data.scenario;
     const fociList = (data && data.foci_list) || foci;
     const baselines = (data && data.baseline_outputs && data.baseline_outputs.length)
         ? data.baseline_outputs
@@ -3976,8 +4346,8 @@ async function runRefineAblationStability(focusIndex, data) {
         : [];
     const rec = records.find(function (r) { return Number(r.focus_index) === Number(focusIndex); });
     const existing = (rec && rec.ablated_outputs) || [];
-    if (!prompt || !fociList.length || !baselines.length || !existing.length) {
-        showErrorModal('Need prompt, foci, baseline samples, and existing ablated outputs.');
+    if ((!prompt && !scenario) || !fociList.length || !baselines.length || !existing.length) {
+        showErrorModal('Need a scenario, foci, baseline samples, and existing ablated outputs.');
         return;
     }
     const nAdditional = parseInt(
@@ -3996,8 +4366,7 @@ async function runRefineAblationStability(focusIndex, data) {
         const response = await fetch('/api/ablation-refine-stability', {
             method: 'POST',
             headers: getApiHeaders(),
-            body: JSON.stringify(getApiBody({
-                prompt: prompt,
+            body: JSON.stringify(getApiBody(Object.assign({
                 foci: fociList,
                 focus_index: focusIndex,
                 baseline_outputs: baselines,
@@ -4009,7 +4378,7 @@ async function runRefineAblationStability(focusIndex, data) {
                 permutation_seed: data.permutation_seed,
                 behavioral_criterion: criterion,
                 run_behavioral_judge: runJudge,
-            }, 'mut')),
+            }, scenario ? { scenario: scenario } : { prompt: prompt }), 'mut')),
         });
         const result = await response.json();
         if (!response.ok) {
@@ -4731,8 +5100,15 @@ if (runFocusOrderBtn) {
         const baselines = (ab && ab.baseline_outputs && ab.baseline_outputs.length)
             ? ab.baseline_outputs
             : (ab && ab.baseline_output ? [ab.baseline_output] : []);
-        if (!baselines.length || !promptInput || !foci.length) {
+        if (!baselines.length || !foci.length) {
             showErrorModal('Run Experiment B (section 6) with tagged foci first.');
+            return;
+        }
+        let scenario;
+        try {
+            scenario = readMainScenario();
+        } catch (error) {
+            showErrorModal(error.message);
             return;
         }
         const k = focusOrderKSel ? parseInt(focusOrderKSel.value, 10) || 5 : 5;
@@ -4757,7 +5133,7 @@ if (runFocusOrderBtn) {
                 method: 'POST',
                 headers: getApiHeaders(),
                 body: JSON.stringify(getApiBody({
-                    prompt: promptInput.value,
+                    scenario: scenario,
                     foci: foci,
                     baseline_outputs: baselines,
                     k_permutations: k,
@@ -4908,12 +5284,20 @@ if (agentClearFociBtn) {
     });
 }
 
-// Agent Builder: Auto-Detect Foci (needs prompt input)
+// Agent Builder: Auto-Detect Foci from every Analyse message.
 if (agentDetectFociBtn) {
     agentDetectFociBtn.addEventListener('click', async () => {
-        const prompt = promptInput ? promptInput.value.trim() : '';
-        if (!prompt) {
-            showErrorModal('Please enter a prompt in the Prompt Analysis tab first, or manually add foci.');
+        let scenario;
+        try {
+            scenario = readMainScenario();
+        } catch (error) {
+            showErrorModal(error.message);
+            return;
+        }
+        if (!scenario.messages.some(function (message) {
+            return message.analysis_mode === 'analyse' && message.content.trim();
+        })) {
+            showErrorModal('Add non-empty Analyse content in Prompt Analysis first.');
             return;
         }
         
@@ -4923,7 +5307,7 @@ if (agentDetectFociBtn) {
             const response = await fetch('/api/detect-foci', {
                 method: 'POST',
                 headers: getApiHeaders(),
-                body: JSON.stringify(getApiBody({ prompt: prompt })),
+                body: JSON.stringify(getApiBody({ scenario: scenario })),
             });
             
             const data = await response.json();
@@ -4934,8 +5318,8 @@ if (agentDetectFociBtn) {
             
             agentFoci = (data.foci || []).map(f => ({
                 ...f,
-                is_dynamic: f.is_dynamic || false,
-                dynamic_type: f.dynamic_type || null
+                is_dynamic: false,
+                dynamic_type: null
             }));
             renderAgentFoci();
             
@@ -5127,26 +5511,25 @@ if (generateAgentResponseBtn) {
         showLoading('Building prompt and generating response...');
         
         try {
-            // First build the prompt
+            const agentScenario = scenarioWithAgentInput(chatContent);
+
+            // First construct an input-specific scenario from the selected foci.
             const buildResponse = await fetch('/api/build-agent-prompt', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify(getApiBody({
+                    scenario: agentScenario,
                     foci: window.fociWeightsData.foci_weights.map(fw => {
-                        // Find the original focus to get prompt_section + dynamic flags
                         const originalFocus = agentFoci.find(f => f.focus === fw.focus);
                         if (!originalFocus) {
                             console.warn(`Could not find original focus for: ${fw.focus}`);
                         }
-                        return {
+                        return Object.assign({}, originalFocus || { focus: fw.focus }, {
                             focus: fw.focus,
-                            weight: fw.weight,
-                            prompt_section: originalFocus ? originalFocus.prompt_section : '',
-                            is_dynamic: originalFocus ? !!originalFocus.is_dynamic : false,
-                            dynamic_type: originalFocus ? (originalFocus.dynamic_type || null) : null
-                        };
+                            weight: fw.weight
+                        });
                     }),
                     all_foci: agentFoci,
                     chat_content: chatContent,
@@ -5160,15 +5543,14 @@ if (generateAgentResponseBtn) {
                 throw new Error(buildData.error || 'Failed to build prompt');
             }
             
-            // Then generate response
+            // Then generate with the same roles, retained input, and output contract.
             const genResponse = await fetch('/api/generate-agent-response', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify(getApiBody({
-                    constructed_prompt: buildData.constructed_prompt,
-                    chat_content: chatContent,
+                    scenario: buildData.constructed_scenario,
                     temperature: 0.7
                 }, 'mut')),
             });
@@ -5227,10 +5609,13 @@ function renderAgentResponse(buildData, genData, totalCost, assessCost, generate
         html += '</div>';
     }
     
+    const constructedScenario = buildData.constructed_scenario
+        ? JSON.stringify(buildData.constructed_scenario, null, 2)
+        : buildData.constructed_prompt;
     html += `
         <div class="constructed-prompt-display">
-            <h4 style="margin: 0 0 12px 0; color: var(--primary-color);">Constructed Prompt:</h4>
-            <div>${escapeHtml(buildData.constructed_prompt)}</div>
+            <h4 style="margin: 0 0 12px 0; color: var(--primary-color);">Constructed Scenario:</h4>
+            <pre>${escapeHtml(constructedScenario || '')}</pre>
         </div>
     `;
     
@@ -5257,6 +5642,7 @@ if (csvUpload) {
         try {
             const formData = new FormData();
             formData.append('file', file);
+            formData.append('scenario', JSON.stringify(getBatchScenario()));
             
             const response = await fetch('/api/parse-batch-csv', {
                 method: 'POST',
@@ -5274,8 +5660,9 @@ if (csvUpload) {
             updateBatchAnalysisButton();
             updateCostEstimate();
             
-            if (data.errors && data.errors.length > 0) {
-                showError('CSV parsed with some errors: ' + data.errors.join(', '));
+            const csvNotices = (data.errors || []).concat(data.warnings || []);
+            if (csvNotices.length > 0) {
+                showError('CSV parsed with notices: ' + csvNotices.join('; '));
             }
             
         } catch (error) {
@@ -5288,52 +5675,36 @@ if (csvUpload) {
     });
 }
 
-// Extra manual fields (RAG, tools, …). Primary pair input is always #manual-pair-input (chat_content).
+// Manual fields are generated from named Retain inputs in the scenario.
 function updateManualInputFields() {
     if (!manualInputFields) return;
-    
-    const dynamicTypes = new Set();
-    batchFoci.forEach(focus => {
-        if (focus.is_dynamic && focus.dynamic_type) {
-            dynamicTypes.add(focus.dynamic_type);
-        }
-    });
-    
-    const fieldLabels = {
-        'rag': 'RAG context (this pair)',
-        'tools': 'Tool results (this pair)',
-        'other': 'Other dynamic input (this pair)'
-    };
-    const fieldIds = {
-        'rag': 'manual-rag-context',
-        'tools': 'manual-tool-results',
-        'other': 'manual-other-input'
-    };
-    
+    const names = scenarioInputNames();
+    if (manualPairInput) {
+        const group = document.getElementById('manual-primary-input-group');
+        const label = document.getElementById('manual-primary-input-label');
+        if (group) group.classList.toggle('hidden', names.length === 0);
+        if (label) label.textContent = names[0] || 'Input';
+        manualPairInput.dataset.inputName = names[0] || '';
+        manualPairInput.placeholder = names.length ? ('Value for ' + names[0] + '…') : '';
+    }
     let html = '';
-    ['rag', 'tools', 'other'].forEach(type => {
-        if (dynamicTypes.has(type)) {
-            html += `<label for="${fieldIds[type]}" style="display:block;font-weight:600;margin-bottom:6px;">${fieldLabels[type]}</label>`;
-            html += `<textarea 
-                id="${fieldIds[type]}" 
-                class="textarea-large" 
-                placeholder="${fieldLabels[type]} — optional if unused"
-                rows="3"
-            ></textarea>`;
-        }
+    names.slice(1).forEach(function (name, index) {
+        const id = 'manual-named-input-' + index;
+        html += `<label for="${id}" style="display:block;font-weight:600;margin-bottom:6px;">${escapeHtml(name)}</label>`;
+        html += `<textarea id="${id}" data-input-name="${escapeScenarioAttribute(name)}" class="textarea-large" placeholder="Value for ${escapeScenarioAttribute(name)}…" rows="3"></textarea>`;
     });
-    
     manualInputFields.innerHTML = html;
 }
 
 // Batch Analysis: Manual Entry
 if (addPairBtn) {
     addPairBtn.addEventListener('click', () => {
+        const names = scenarioInputNames();
         const inputText = manualPairInput ? manualPairInput.value.trim() : '';
         const output = manualOutput ? manualOutput.value.trim() : '';
         
-        if (!inputText) {
-            showErrorModal('Please fill in the Input field.');
+        if (names.length && !inputText) {
+            showErrorModal('Please fill in the ' + names[0] + ' input.');
             return;
         }
         if (!output) {
@@ -5341,39 +5712,16 @@ if (addPairBtn) {
             return;
         }
         
-        const inputs = { chat_content: inputText };
-        
-        const dynamicTypes = new Set();
-        batchFoci.forEach(focus => {
-            if (focus.is_dynamic && focus.dynamic_type) {
-                dynamicTypes.add(focus.dynamic_type);
-            }
+        const inputs = {};
+        if (names.length) inputs[names[0]] = inputText;
+        manualInputFields.querySelectorAll('[data-input-name]').forEach(function (field) {
+            inputs[field.dataset.inputName] = field.value.trim();
         });
-        
-        const fieldIds = {
-            'chat': 'manual-pair-input',
-            'rag': 'manual-rag-context',
-            'tools': 'manual-tool-results',
-            'other': 'manual-other-input'
-        };
-        
-        dynamicTypes.forEach(type => {
-            if (type === 'chat') {
-                return;
-            }
-            const fieldId = fieldIds[type];
-            const field = document.getElementById(fieldId);
-            if (field) {
-                const value = field.value.trim();
-                if (type === 'rag') {
-                    inputs.rag_context = value;
-                } else if (type === 'tools') {
-                    inputs.tool_results = value;
-                } else if (type === 'other') {
-                    inputs.other_input = value;
-                }
-            }
-        });
+        const blankNames = Object.keys(inputs).filter(function (name) { return !inputs[name]; });
+        if (blankNames.length) {
+            showErrorModal('Please fill in named inputs: ' + blankNames.join(', '));
+            return;
+        }
         
         batchPairs.push({
             inputs: inputs,
@@ -5450,10 +5798,6 @@ function renderPairs() {
 
 function renderPairItem(pair, index) {
     const inputs = pair.inputs || {};
-    const chatContent = inputs.chat_content || pair.chat_content || '';
-    const ragContext = inputs.rag_context || '';
-    const toolResults = inputs.tool_results || '';
-    const otherInput = inputs.other_input || '';
     const output = pair.output || '';
     const rowPrompt = (typeof pair.prompt === 'string') ? pair.prompt : '';
     
@@ -5465,18 +5809,13 @@ function renderPairItem(pair, index) {
                     ${rowPrompt ? `<p style="margin: 4px 0; font-size: 0.9em; color: var(--text-secondary);">
                         Prompt: ${escapeHtml(rowPrompt.substring(0, 100))}${rowPrompt.length > 100 ? '...' : ''}
                     </p>` : ''}
-                    ${chatContent ? `<p style="margin: 4px 0; font-size: 0.9em; color: var(--text-secondary);">
-                        Chat: ${escapeHtml(chatContent.substring(0, 100))}${chatContent.length > 100 ? '...' : ''}
-                    </p>` : ''}
-                    ${ragContext ? `<p style="margin: 4px 0; font-size: 0.9em; color: var(--text-secondary);">
-                        RAG: ${escapeHtml(ragContext.substring(0, 100))}${ragContext.length > 100 ? '...' : ''}
-                    </p>` : ''}
-                    ${toolResults ? `<p style="margin: 4px 0; font-size: 0.9em; color: var(--text-secondary);">
-                        Tools: ${escapeHtml(toolResults.substring(0, 100))}${toolResults.length > 100 ? '...' : ''}
-                    </p>` : ''}
-                    ${otherInput ? `<p style="margin: 4px 0; font-size: 0.9em; color: var(--text-secondary);">
-                        Other: ${escapeHtml(otherInput.substring(0, 100))}${otherInput.length > 100 ? '...' : ''}
-                    </p>` : ''}
+                    ${Object.entries(inputs).map(function (entry) {
+                        const name = String(entry[0]);
+                        const value = String(entry[1] == null ? '' : entry[1]);
+                        return `<p style="margin: 4px 0; font-size: 0.9em; color: var(--text-secondary);">
+                            ${escapeHtml(name)}: ${escapeHtml(value.substring(0, 100))}${value.length > 100 ? '...' : ''}
+                        </p>`;
+                    }).join('')}
                     <p style="margin: 4px 0; font-size: 0.9em; color: var(--text-secondary);">
                         Output: ${escapeHtml(output.substring(0, 100))}${output.length > 100 ? '...' : ''}
                     </p>
@@ -5511,13 +5850,12 @@ if (clearPairsBtn) {
 function updateBatchAnalysisButton() {
     const btn = document.getElementById('run-batch-analysis-btn');
     if (btn) {
-        // Check if we have prompt from input OR per-row CSV prompts OR can reconstruct from foci
-        const hasPromptInput = batchPromptInput ? batchPromptInput.value.trim().length > 0 : false;
-        const hasRowPrompts = batchPairs.length > 0 && batchPairs.every(
-            p => typeof p.prompt === 'string' && p.prompt.length > 0
-        );
-        const canReconstructFromFoci = batchFoci.length > 0 && batchFoci.every(f => f.prompt_section && f.prompt_section.trim().length > 0);
-        const hasPrompt = hasPromptInput || hasRowPrompts || canReconstructFromFoci;
+        let hasPrompt = false;
+        try {
+            hasPrompt = getBatchScenario().messages.some(function (message) {
+                return message.analysis_mode === 'analyse' && message.content.trim();
+            });
+        } catch (_error) {}
         
         const shouldBeDisabled = batchPairs.length === 0 || batchFoci.length === 0 || !hasPrompt;
         
@@ -5548,7 +5886,7 @@ function updateCostEstimate() {
     const numPairs = batchPairs.length;
     const numFoci = window.FocalPromptExperiment
         ? window.FocalPromptExperiment.countPreviewAttributable(batchFoci)
-        : batchFoci.filter(function (f) { return !f.is_dynamic; }).length;
+        : batchFoci.length;
     const cfg = window.FocalPromptExperiment ? window.FocalPromptExperiment.getState() : {
         temperature: 0.7, n_baseline: 10, n_ablated: 5
     };
@@ -5640,74 +5978,13 @@ if (batchImportFociBtn) {
         }
         batchFoci = JSON.parse(JSON.stringify(foci)).map(f => ({
             ...f,
-            is_dynamic: f.is_dynamic || false,
-            dynamic_type: f.dynamic_type || null
+            is_dynamic: false,
+            dynamic_type: null
         })); // Deep copy with dynamic properties
         updateManualInputFields();
         renderBatchFoci();
         updateBatchAnalysisButton();
         updateCostEstimate();
-    });
-}
-
-// Batch Analysis: Auto-Detect Dynamic Foci
-if (batchDetectDynamicFociBtn) {
-    batchDetectDynamicFociBtn.addEventListener('click', async () => {
-        const prompt = batchPromptInput ? batchPromptInput.value.trim() : '';
-        if (!prompt) {
-            showErrorModal('Please enter the prompt first.');
-            return;
-        }
-        if (batchFoci.length === 0) {
-            showErrorModal('Please detect or define foci first.');
-            return;
-        }
-        if (batchPairs.length === 0) {
-            showErrorModal('Please add at least one pair to detect dynamic patterns.');
-            return;
-        }
-        
-        showLoading('Analyzing prompt structure and input patterns to detect dynamic foci...');
-        
-        try {
-            const response = await fetch('/api/detect-dynamic-foci', {
-                method: 'POST',
-                headers: getApiHeaders(),
-                body: JSON.stringify(getApiBody({
-                    prompt: prompt,
-                    foci: batchFoci,
-                    pairs: batchPairs
-                })),
-            });
-            
-            const data = await response.json();
-            
-            if (!response.ok) {
-                throw new Error(data.error || 'Failed to detect dynamic foci');
-            }
-            
-            // Update foci with dynamic suggestions
-            batchFoci = data.foci || batchFoci;
-            updateManualInputFields();
-            renderBatchFoci();
-            updateBatchAnalysisButton();
-            updateCostEstimate();
-            
-            // Show summary of suggestions
-            const suggestions = data.suggestions || [];
-            const dynamicCount = suggestions.filter(s => s.should_be_dynamic && s.confidence > 0.6).length;
-            if (dynamicCount > 0) {
-                alert(`✓ Detected ${dynamicCount} dynamic focus/foci based on prompt structure and input patterns. Review the foci to see which ones were marked as dynamic.`);
-            } else {
-                alert('No dynamic foci detected. All foci appear to be static instructions.');
-            }
-            
-        } catch (error) {
-            showError('Error detecting dynamic foci: ' + error.message);
-            console.error('Detect dynamic foci error:', error);
-        } finally {
-            hideLoading();
-        }
     });
 }
 
@@ -5726,7 +6003,7 @@ if (batchDetectFociBtn) {
             const response = await fetch('/api/detect-foci', {
                 method: 'POST',
                 headers: getApiHeaders(),
-                body: JSON.stringify(getApiBody({ prompt: prompt })),
+            body: JSON.stringify(getApiBody({ scenario: getBatchScenario() })),
             });
             
             const data = await response.json();
@@ -5737,8 +6014,8 @@ if (batchDetectFociBtn) {
             
             batchFoci = (data.foci || []).map(f => ({
                 ...f,
-                is_dynamic: f.is_dynamic || false,
-                dynamic_type: f.dynamic_type || null
+                is_dynamic: false,
+                dynamic_type: null
             }));
             window.rejectedFocusProposals = data.rejected_proposals || [];
             if (window.rejectedFocusProposals.length) {
@@ -5834,25 +6111,25 @@ async function handleRunBatchAnalysis(e) {
     console.log('Button found in handler:', btn);
     console.log('Button disabled attribute:', btn.disabled);
     
-    // Check state directly - can use prompt input OR reconstruct from foci
-    const hasPromptInput = batchPromptInput ? batchPromptInput.value.trim().length > 0 : false;
-    const canReconstructFromFoci = batchFoci.length > 0 && batchFoci.every(f => f.prompt_section && f.prompt_section.trim().length > 0);
-    const hasPrompt = hasPromptInput || canReconstructFromFoci;
+    let batchScenario;
+    try {
+        batchScenario = getBatchScenario();
+    } catch (error) {
+        showErrorModal(error.message);
+        return;
+    }
+    const hasPrompt = batchScenario.messages.some(function (message) {
+        return message.analysis_mode === 'analyse' && message.content.trim();
+    });
     const canRun = batchPairs.length > 0 && batchFoci.length > 0 && hasPrompt;
     
     console.log('State check - Pairs:', batchPairs.length, 'Foci:', batchFoci.length);
-    console.log('Has prompt input?', hasPromptInput, 'Can reconstruct from foci?', canReconstructFromFoci);
+    console.log('Has analysed scenario content?', hasPrompt);
     console.log('Can run?', canRun);
     
     if (!canRun) {
         console.warn('Cannot run analysis - missing requirements');
-        let promptMsg = 'No prompt';
-        if (hasPromptInput) {
-            promptMsg = 'Prompt input: ' + (batchPromptInput.value.trim().length) + ' chars';
-        } else if (canReconstructFromFoci) {
-            promptMsg = 'Can reconstruct from ' + batchFoci.length + ' foci';
-        }
-        showErrorModal('Please ensure you have:\n- At least one pair (you have ' + batchPairs.length + ')\n- At least one focus (you have ' + batchFoci.length + ')\n- A prompt: ' + promptMsg);
+        showErrorModal('Please ensure you have at least one pair, one focus, and non-empty Analyse content in the scenario.');
         return;
     }
 
@@ -5882,48 +6159,21 @@ async function handleRunBatchAnalysis(e) {
         return;
     }
     
-    // Get prompt - either from input or reconstruct from foci
-    let prompt = batchPromptInput ? batchPromptInput.value.trim() : '';
-    
-    if (!prompt && batchFoci.length > 0) {
-        // Reconstruct prompt from foci (join all prompt_section values)
-        prompt = batchFoci.map(f => f.prompt_section || '').filter(s => s.trim().length > 0).join('\n\n');
-        console.log('Reconstructed prompt from foci, length:', prompt.length);
-    }
-    
-    if (!prompt) {
-        showErrorModal('Please enter the prompt that was used for all pairs, or ensure foci contain prompt sections.');
-        return;
-    }
-    
     console.log('Starting batch analysis with', batchPairs.length, 'pairs and', batchFoci.length, 'foci');
-    console.log('Using prompt (length:', prompt.length, ')');
-    
-    // Add prompt to all pairs (ensure new structure)
+    console.log('Using scenario version', batchScenario.version);
+
     const pairsWithPrompt = batchPairs.map(pair => {
-        // Ensure pair is in new structure
         const inputs = pair.inputs || {
             chat_content: pair.chat_content || '',
             rag_context: pair.rag_context || '',
             tool_results: pair.tool_results || ''
         };
-        // Prefer per-row CSV prompt when present (exact text; do not trim —
-        // ablation spans depend on byte-for-text fidelity). Else shared prompt
-        // (typed or reconstructed from foci above).
-        const rowPrompt = (typeof pair.prompt === 'string') ? pair.prompt : null;
         return {
             inputs: inputs,
             output: pair.output,
-            prompt: (rowPrompt !== null && rowPrompt.length > 0) ? rowPrompt : prompt
+            prompt: pair.prompt
         };
     });
-
-    if (pairsWithPrompt.some(p => !(p.prompt && String(p.prompt).length > 0))) {
-        showErrorModal(
-            'Every pair needs a non-empty prompt. Enter the shared prompt above, include a per-row prompt column in the CSV, or ensure foci cover the source text.'
-        );
-        return;
-    }    
     // Client-paced batch: one short serverless call per sample (same path as
     // single ablation). Avoids the hosted SSE timeout that left users with
     // zero pair results.
@@ -5973,7 +6223,11 @@ async function handleRunBatchAnalysis(e) {
             model: scored.model,
             provider: scored.provider,
             tokens: tokens,
-            cost_breakdown: scored.cost_breakdown || null
+            cost_breakdown: scored.cost_breakdown || null,
+            scenario: scored.scenario || null,
+            scenario_metadata: scored.scenario_metadata || null,
+            reproducibility: scored.reproducibility || null,
+            coverage: scored.coverage || null
         };
     }
 
@@ -5989,12 +6243,13 @@ async function handleRunBatchAnalysis(e) {
             try {
                 setBatchProgress(pairLabel + ': sampling…');
                 const scored = await runPacedAblation(
-                    pair.prompt,
+                    batchScenario,
                     batchFoci,
                     cfg,
                     function (msg) {
                         setBatchProgress(pairLabel + ': ' + msg);
-                    }
+                    },
+                    pair.inputs
                 );
                 pairResults.push(scoreToBatchPairResult(scored, pair, pairIndex));
                 setBatchProgress(
@@ -6047,6 +6302,8 @@ async function handleRunBatchAnalysis(e) {
             cost_breakdown: {},
             session_id: sessionId
         };
+        completeData.scenario = batchScenario;
+        completeData.workspace_version = 2;
         window.batchResultsData = completeData;
         renderBatchResults(completeData);
         if (exportResultsBtn) exportResultsBtn.disabled = false;
@@ -6953,6 +7210,7 @@ if (runBatchAgentBtn) {
                 body: JSON.stringify(getApiBody({
                     pairs: batchAgentData.pairs,
                     foci: batchFoci,
+                    scenario: getBatchScenario(),
                 }))
             });
             
@@ -7571,7 +7829,7 @@ if (analyzeOptimizationBtn) {
             
             // Foci and prompt - use batch foci if available, otherwise regular foci
             foci: batchFoci.length > 0 ? batchFoci : foci,
-            original_prompt: promptInput?.value || '',
+            scenario: readMainScenario(),
             ...selectedModelPayload('analysis')
         };
         
@@ -7898,7 +8156,7 @@ if (exportBatchAgentResultsBtn) {
 // ---------------------------------------------------------------------------
 // Workspace session export / import (full page state)
 // ---------------------------------------------------------------------------
-const WORKSPACE_SESSION_VERSION = 1;
+const WORKSPACE_SESSION_VERSION = 2;
 
 function readAblationExperimentConfig(scope) {
     const root = scope || document.getElementById('prompt-analysis-tab');
@@ -7937,6 +8195,7 @@ function collectPromptAnalysisWorkspace() {
         || null;
     return {
         prompt: promptInput ? promptInput.value : '',
+        scenario: readMainScenario(),
         output: outputInput ? outputInput.value : '',
         foci: foci,
         assessment_payload: window.lastAssessmentApiPayload || null,
@@ -7944,6 +8203,7 @@ function collectPromptAnalysisWorkspace() {
             weights: { ...focusWeights },
             assessment_foci: assessmentFoci.map(function (f) { return { ...f }; }),
             rewritten_prompt: rewrittenPromptText,
+            rewritten_scenario: rewrittenScenario,
             intended_distribution: { ...intendedDistribution },
             generated_from_adjusted: !!window.generatedFromAdjustedPrompt,
             adjusted_output: adjustedOutput ? adjustedOutput.textContent : '',
@@ -7986,6 +8246,7 @@ function collectWorkspaceSession() {
         prompt_analysis: collectPromptAnalysisWorkspace(),
         batch_analysis: {
             prompt: batchPromptInput ? batchPromptInput.value : '',
+            scenario: getBatchScenario(),
             foci: batchFoci,
             pairs: batchPairs,
             results: window.batchResultsData || null,
@@ -8017,11 +8278,42 @@ function validateWorkspaceSession(data) {
         }
         return 'Unrecognized file: expected a FocalPrompt workspace export.';
     }
-    if (data.version != null && data.version !== WORKSPACE_SESSION_VERSION) {
+    if (data.version != null && data.version !== 1 && data.version !== WORKSPACE_SESSION_VERSION) {
         return 'Unsupported workspace version ' + data.version +
             ' (expected ' + WORKSPACE_SESSION_VERSION + ').';
     }
     return null;
+}
+
+function migrateWorkspaceV1(data) {
+    if (!data || data.version !== 1) return data;
+    const migrated = JSON.parse(JSON.stringify(data));
+    function assignLegacyMessage(focusList) {
+        return (focusList || []).map(function (focus) {
+            const next = Object.assign({}, focus, {
+                message_id: 'legacy-prompt',
+                is_dynamic: false,
+                dynamic_type: null,
+            });
+            if (Array.isArray(next.spans)) {
+                next.spans = next.spans.map(function (span) {
+                    return Object.assign({}, span, { message_id: 'legacy-prompt' });
+                });
+            }
+            return next;
+        });
+    }
+    if (migrated.prompt_analysis) {
+        migrated.prompt_analysis.scenario = legacyPromptScenario(migrated.prompt_analysis.prompt || ' ');
+        migrated.prompt_analysis.foci = assignLegacyMessage(migrated.prompt_analysis.foci);
+    }
+    if (migrated.batch_analysis) {
+        migrated.batch_analysis.scenario = legacyPromptScenario(migrated.batch_analysis.prompt || ' ');
+        migrated.batch_analysis.foci = assignLegacyMessage(migrated.batch_analysis.foci);
+    }
+    migrated.version = WORKSPACE_SESSION_VERSION;
+    migrated.migrated_from_version = 1;
+    return migrated;
 }
 
 function restoreFocusControlState(fc) {
@@ -8041,6 +8333,7 @@ function restoreFocusControlState(fc) {
     }
     if (fc.rewritten_prompt) {
         rewrittenPromptText = fc.rewritten_prompt;
+        rewrittenScenario = fc.rewritten_scenario || null;
         if (rewrittenPrompt) {
             rewrittenPrompt.textContent = rewrittenPromptText;
         }
@@ -8049,6 +8342,7 @@ function restoreFocusControlState(fc) {
         }
     } else {
         rewrittenPromptText = '';
+        rewrittenScenario = null;
         if (rewrittenPrompt) {
             rewrittenPrompt.textContent = '';
         }
@@ -8110,14 +8404,15 @@ function restorePromptAnalysisWorkspace(pa) {
     if (!pa) {
         return;
     }
-    if (pa.prompt != null && promptInput) {
-        promptInput.value = pa.prompt;
-    }
+    if (pa.scenario) setMainScenario(pa.scenario);
+    else if (pa.prompt != null) setMainScenario(legacyPromptScenario(pa.prompt));
     if (pa.output != null && outputInput) {
         outputInput.value = pa.output;
     }
     if (Array.isArray(pa.foci)) {
-        foci = pa.foci;
+        foci = pa.foci.map(function (focus) {
+            return Object.assign({}, focus, { is_dynamic: false, dynamic_type: null });
+        });
         renderFoci();
         if (foci.length > 0) {
             updateCoverageVisualization();
@@ -8201,6 +8496,7 @@ function restoreBatchAnalysisWorkspace(ba) {
     if (!ba) {
         return;
     }
+    if (ba.scenario) setMainScenario(ba.scenario);
     if (batchPromptInput && ba.prompt != null) {
         batchPromptInput.value = ba.prompt;
     }
@@ -8208,8 +8504,8 @@ function restoreBatchAnalysisWorkspace(ba) {
         batchFoci = ba.foci.map(function (f) {
             return {
                 ...f,
-                is_dynamic: f.is_dynamic || false,
-                dynamic_type: f.dynamic_type || null,
+                is_dynamic: false,
+                dynamic_type: null,
             };
         });
         renderBatchFoci();
@@ -8250,7 +8546,9 @@ function restoreAgentBuilderWorkspace(ab) {
         return;
     }
     if (Array.isArray(ab.foci)) {
-        agentFoci = ab.foci;
+        agentFoci = ab.foci.map(function (focus) {
+            return Object.assign({}, focus, { is_dynamic: false, dynamic_type: null });
+        });
         renderAgentFoci();
     }
     if (chatInput && ab.chat_input != null) {
@@ -8346,7 +8644,7 @@ function importWorkspaceSessionFile(file) {
             return;
         }
         try {
-            restoreWorkspaceSession(data);
+            restoreWorkspaceSession(migrateWorkspaceV1(data));
             alert('Workspace imported successfully. You can continue from where you left off.');
         } catch (err) {
             showErrorModal('Failed to restore workspace: ' + err.message);

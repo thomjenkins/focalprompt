@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "messages": [
+    {
+      "id": "clinic-rules",
+      "role": "system",
+      "content": "You help veterinary teams draft concise, empathetic replies. Never diagnose. Escalate urgent symptoms to a clinician and state uncertainty plainly.",
+      "analysis_mode": "analyse"
+    },
+    {
+      "id": "customer-message",
+      "role": "user",
+      "content": "My pup needs a booster and has been coughing today. What should I do?",
+      "analysis_mode": "retain",
+      "input_name": "customer_message"
+    }
+  ],
+  "output_contract": {
+    "type": "json_schema",
+    "name": "suggested_message",
+    "strict": true,
+    "schema": {
+      "type": "object",
+      "properties": {
+        "suggestedMessage": {"type": "string"}
+      },
+      "required": ["suggestedMessage"],
+      "additionalProperties": false
+    }
+  }
+}

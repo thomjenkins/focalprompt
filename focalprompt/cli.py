@@ -18,6 +18,16 @@ def _add_inference_args(p: argparse.ArgumentParser) -> None:
     p.add_argument('-o', '--output-file', default=None)
 
 
+def _add_prompt_or_scenario(p: argparse.ArgumentParser) -> None:
+    source = p.add_mutually_exclusive_group(required=True)
+    source.add_argument('prompt', nargs='?', help='Legacy prompt text or file')
+    source.add_argument(
+        '--scenario',
+        metavar='FILE',
+        help='Versioned inference scenario JSON file',
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog='focalprompt',
@@ -30,17 +40,17 @@ def main(argv: list[str] | None = None) -> int:
     p_ui.add_argument('--port', type=int, default=5001)
 
     p_foci = sub.add_parser('foci', help='Detect foci in a prompt file')
-    p_foci.add_argument('prompt')
+    _add_prompt_or_scenario(p_foci)
     _add_inference_args(p_foci)
 
     p_assess = sub.add_parser('assess', help='Model-assessed focus distribution')
-    p_assess.add_argument('prompt')
+    _add_prompt_or_scenario(p_assess)
     p_assess.add_argument('completion', help='Model output to score against foci')
     p_assess.add_argument('--foci-json', default=None)
     _add_inference_args(p_assess)
 
     p_ablate = sub.add_parser('ablate', help='Leave-one-focus-out perturbation analysis')
-    p_ablate.add_argument('prompt')
+    _add_prompt_or_scenario(p_ablate)
     p_ablate.add_argument('--foci-json', required=True)
     p_ablate.add_argument('--n-baseline', type=int, default=10)
     p_ablate.add_argument('--n-ablated', type=int, default=5)
@@ -49,7 +59,7 @@ def main(argv: list[str] | None = None) -> int:
     _add_inference_args(p_ablate)
 
     p_analyze = sub.add_parser('analyze', help='End-to-end: foci + optional assess + ablate')
-    p_analyze.add_argument('prompt')
+    _add_prompt_or_scenario(p_analyze)
     p_analyze.add_argument('--completion', default=None)
     p_analyze.add_argument('--foci-json', default=None)
     p_analyze.add_argument('--n-baseline', type=int, default=10)
@@ -95,20 +105,28 @@ def main(argv: list[str] | None = None) -> int:
         api_key=args.api_key,
         base_url=args.base_url,
     )
+    scenario_kw = {'scenario': args.scenario} if getattr(args, 'scenario', None) else {}
+    prompt_arg = None if scenario_kw else args.prompt
 
     if args.cmd == 'foci':
-        result = detect_foci(args.prompt, **inf)
+        result = detect_foci(prompt_arg, **scenario_kw, **inf)
     elif args.cmd == 'assess':
         foci = json.loads(Path(args.foci_json).read_text()) if args.foci_json else None
         if isinstance(foci, dict) and 'foci' in foci:
             foci = foci['foci']
-        result = assess_focus(args.prompt, Path(args.completion).read_text() if Path(args.completion).exists() else args.completion, foci, **inf)
+        result = assess_focus(
+            prompt_arg,
+            Path(args.completion).read_text() if Path(args.completion).exists() else args.completion,
+            foci,
+            **scenario_kw,
+            **inf,
+        )
     elif args.cmd == 'ablate':
         foci = json.loads(Path(args.foci_json).read_text())
         if isinstance(foci, dict) and 'foci' in foci:
             foci = foci['foci']
         result = ablate(
-            args.prompt, foci,
+            prompt_arg, foci, **scenario_kw,
             n_baseline=args.n_baseline, n_ablated=args.n_ablated,
             temperature=args.temperature, permutation_seed=args.seed, **inf,
         )
@@ -122,7 +140,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.completion:
             completion = Path(args.completion).read_text() if Path(args.completion).exists() else args.completion
         result = analyze(
-            args.prompt,
+            prompt_arg,
+            **scenario_kw,
             output=completion,
             foci=foci,
             n_baseline=args.n_baseline,

@@ -134,3 +134,68 @@ def test_prepare_refuses_single_movable():
         {'focus': 'A', 'prompt_section': 'Only one.', 'is_dynamic': False},
     ])
     assert prep['ok'] is False
+
+
+def test_scenario_order_experiment_preserves_message_boundaries(mock_provider, mock_embedding):
+    scenario = {
+        'version': 1,
+        'messages': [
+            {
+                'id': 'rules',
+                'role': 'system',
+                'content': 'Rule A.\n\nRule B.',
+                'analysis_mode': 'analyse',
+            },
+            {
+                'id': 'question',
+                'role': 'user',
+                'content': 'Never move me',
+                'analysis_mode': 'retain',
+            },
+        ],
+    }
+    foci = [
+        {
+            'focus': 'A',
+            'spans': [{
+                'message_id': 'rules',
+                'char_start': 0,
+                'char_end': 7,
+                'text_snapshot': 'Rule A.',
+            }],
+        },
+        {
+            'focus': 'B',
+            'spans': [{
+                'message_id': 'rules',
+                'char_start': 9,
+                'char_end': 16,
+                'text_snapshot': 'Rule B.',
+            }],
+        },
+    ]
+    svc = OrderSensitivityService(
+        mock_provider, 'gpt-4o-mini', embedding_service=mock_embedding
+    )
+
+    result = svc.run_scenario_order_experiment(
+        scenario=scenario,
+        foci=foci,
+        baseline_outputs=['baseline 1', 'baseline 2'],
+        k_permutations=2,
+        m_samples=1,
+        order_seed=4,
+        temperature=0.7,
+    )
+
+    assert result['ok'] is True
+    assert result['scenario'] == scenario
+    assert result['scenario_metadata']['ordering_message_id'] == 'rules'
+    assert result['ordering_groups'] == [{
+        'message_id': 'rules',
+        'role': 'system',
+        'focus_indices': [0, 1],
+    }]
+    for call in mock_provider.chat_completion.call_args_list:
+        assert [message['role'] for message in call.kwargs['messages']] == ['system', 'user']
+        assert call.kwargs['messages'][1]['content'] == 'Never move me'

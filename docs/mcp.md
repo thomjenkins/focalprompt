@@ -33,6 +33,21 @@ Uses the same inference resolution as the CLI and web UI:
 | `report_focus` | A | Model self-report of focus on one completion — **not** attention weights |
 | `ablation_analysis` | B | Perturbation sensitivity + BH-FDR (slow, many API calls) |
 
+Every tool accepts either the legacy `prompt` string or an optional `scenario` object. Do not provide both. `ablation_analysis` accepts named retained-message values in `options.inputs`; its focus spans use `message_id`, `char_start`, `char_end`, and `text_snapshot`. Structured output contracts are preserved and locally validated for every baseline and ablated sample.
+
+```json
+{
+  "scenario": {
+    "version": 1,
+    "messages": [
+      {"id":"rules","role":"system","content":"Answer from the supplied context.","analysis_mode":"analyse"},
+      {"id":"question","role":"user","content":"","analysis_mode":"retain","input_name":"question"}
+    ]
+  },
+  "options": {"inputs":{"question":"When is the booster due?"}}
+}
+```
+
 ## Client configuration
 
 ### Claude Desktop

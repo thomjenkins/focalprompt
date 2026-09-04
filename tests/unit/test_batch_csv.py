@@ -169,3 +169,60 @@ def test_parsed_pairs_usable_as_batch_payload():
         p['prompt'] = 'System prompt for ablation.'
     assert pairs[0]['prompt'] == 'System prompt for ablation.'
     assert pairs[0]['inputs']['chat_content'] == 'user hi'
+
+
+def test_arbitrary_named_inputs_for_rag_scenario():
+    result = parse_batch_csv_bytes(
+        b'question,retrieved_context,output\nWhat is it?,Source text,Answer\n',
+        expected_input_names=['question', 'retrieved_context'],
+    )
+    body, status = parse_result_to_response(result)
+    assert status == 200
+    assert body['pairs'][0]['inputs'] == {
+        'question': 'What is it?',
+        'retrieved_context': 'Source text',
+    }
+
+
+def test_named_input_missing_blank_and_unused_columns_are_explicit():
+    missing = parse_batch_csv_bytes(
+        b'question,output\nWhat?,Answer\n',
+        expected_input_names=['question', 'retrieved_context'],
+    )
+    body, status = parse_result_to_response(missing)
+    assert status == 400
+    assert body['missing_input_columns'] == ['retrieved_context']
+
+    blank = parse_batch_csv_bytes(
+        b'question,retrieved_context,output\nWhat?,,Answer\n',
+        expected_input_names=['question', 'retrieved_context'],
+    )
+    body, status = parse_result_to_response(blank)
+    assert status == 400
+    assert 'Blank named inputs' in ' '.join(body['errors'])
+
+    unused = parse_batch_csv_bytes(
+        b'question,retrieved_context,debug_note,output\nWhat?,Source,note,Answer\n',
+        expected_input_names=['question', 'retrieved_context'],
+    )
+    body, status = parse_result_to_response(unused)
+    assert status == 200
+    assert body['unused_input_columns'] == ['debug_note']
+
+
+def test_static_scenario_accepts_output_only_rows_and_reports_extra_columns():
+    static = parse_batch_csv_bytes(
+        b'output\nExpected answer\n',
+        expected_input_names=[],
+    )
+    body, status = parse_result_to_response(static)
+    assert status == 200
+    assert body['pairs'] == [{'inputs': {}, 'output': 'Expected answer'}]
+
+    extra = parse_batch_csv_bytes(
+        b'note,output\nmetadata,Expected answer\n',
+        expected_input_names=[],
+    )
+    body, status = parse_result_to_response(extra)
+    assert status == 200
+    assert body['unused_input_columns'] == ['note']

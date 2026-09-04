@@ -13,6 +13,37 @@ from abc import ABC, abstractmethod
 from typing import Optional, List, Dict, Any
 import json
 
+from utils.inference_scenario import ProviderCapabilityError
+
+
+def _structured_schema(response_format: Optional[Dict]) -> Optional[Dict[str, Any]]:
+    """Extract a JSON Schema from the OpenAI-compatible boundary shape."""
+    if not response_format or response_format.get('type') != 'json_schema':
+        return None
+    config = response_format.get('json_schema')
+    if not isinstance(config, dict) or not isinstance(config.get('schema'), dict):
+        raise ProviderCapabilityError('Invalid json_schema response_format')
+    return config['schema']
+
+
+def _merge_conversation_roles(
+    messages: List[Dict[str, str]],
+) -> tuple[List[Dict[str, str]], List[Dict[str, Any]]]:
+    """Merge consecutive equivalent roles for providers that require alternation."""
+    merged: List[Dict[str, str]] = []
+    records: List[Dict[str, Any]] = []
+    for message in messages:
+        role = message['role']
+        if role == 'developer':
+            role = 'system'
+        item = {'role': role, 'content': message['content']}
+        if merged and merged[-1]['role'] == role:
+            records.append({'role': role, 'source_indices': [len(merged) - 1, len(merged)]})
+            merged[-1]['content'] += '\n\n' + item['content']
+        else:
+            merged.append(item)
+    return merged, records
+
 
 class LLMProvider(ABC):
     """Abstract base class for LLM providers."""
@@ -77,9 +108,18 @@ class OpenAIProvider(LLMProvider):
             kwargs['max_tokens'] = max_tokens
         
         response = self.client.chat.completions.create(**kwargs)
+
+        choice = response.choices[0]
+        refusal = getattr(choice.message, 'refusal', None)
         
         return {
-            'content': response.choices[0].message.content,
+            'content': choice.message.content,
+            'refusal': refusal,
+            'finish_reason': getattr(choice, 'finish_reason', None),
+            'provider_metadata': {
+                'provider_translation': 'openai_chat',
+                'role_merges': [],
+            },
             'usage': {
                 'prompt_tokens': response.usage.prompt_tokens,
                 'completion_tokens': response.usage.completion_tokens,
@@ -114,21 +154,14 @@ class AnthropicProvider(LLMProvider):
         response_format: Optional[Dict] = None,
         max_tokens: Optional[int] = None,
     ) -> Dict[str, Any]:
-        # Convert messages format (Anthropic uses different format)
-        # Anthropic expects system message separately and messages array
-        system_message = None
-        anthropic_messages = []
-        
-        for msg in messages:
-            if msg['role'] == 'system':
-                system_message = msg['content']
-            else:
-                # Anthropic uses 'assistant' and 'user' roles
-                role = msg['role'] if msg['role'] in ['user', 'assistant'] else 'user'
-                anthropic_messages.append({
-                    'role': role,
-                    'content': msg['content']
-                })
+        # Anthropic exposes instructions separately and requires alternating
+        # conversational roles. Preserve instruction block order exactly.
+        instruction_blocks = [
+            {'type': 'text', 'text': msg['content']}
+            for msg in messages if msg['role'] in ('system', 'developer')
+        ]
+        conversation = [msg for msg in messages if msg['role'] not in ('system', 'developer')]
+        anthropic_messages, role_merges = _merge_conversation_roles(conversation)
         
         kwargs = {
             'model': model,
@@ -137,29 +170,59 @@ class AnthropicProvider(LLMProvider):
             'max_tokens': max_tokens or 4096
         }
         
-        if system_message:
-            kwargs['system'] = system_message
+        if instruction_blocks:
+            kwargs['system'] = instruction_blocks
+
+        schema = _structured_schema(response_format)
+        if schema is not None:
+            kwargs['output_config'] = {
+                'format': {'type': 'json_schema', 'schema': schema}
+            }
         
         # Handle response format (JSON mode)
         if response_format and response_format.get('type') == 'json_object':
             # Anthropic supports JSON mode via system message
-            if system_message:
-                kwargs['system'] = system_message + "\n\nRespond in valid JSON format only."
+            if instruction_blocks:
+                kwargs['system'] = instruction_blocks + [
+                    {'type': 'text', 'text': 'Respond in valid JSON format only.'}
+                ]
             else:
                 kwargs['system'] = "Respond in valid JSON format only."
-        
-        response = self.client.messages.create(**kwargs)
+
+        try:
+            response = self.client.messages.create(**kwargs)
+        except TypeError as exc:
+            if schema is not None:
+                raise ProviderCapabilityError(
+                    'Installed Anthropic SDK cannot express required structured output; '
+                    'upgrade to anthropic>=1.0'
+                ) from exc
+            raise
         
         # Extract content (Anthropic returns content as a list)
         content = ""
         if response.content:
-            if isinstance(response.content[0], dict):
-                content = response.content[0].get('text', '')
+            block = next(
+                (part for part in response.content if getattr(part, 'type', None) == 'text'),
+                response.content[0],
+            )
+            if isinstance(block, dict):
+                content = block.get('text', '')
             else:
-                content = str(response.content[0])
+                content = getattr(block, 'text', str(block))
         
         return {
             'content': content,
+            'finish_reason': getattr(response, 'stop_reason', None),
+            'provider_metadata': {
+                'provider_translation': 'anthropic_messages',
+                'instruction_roles_merged': [
+                    msg['role'] for msg in messages
+                    if msg['role'] in ('system', 'developer')
+                ],
+                'role_merges': role_merges,
+                'structured_output': 'output_config.format' if schema is not None else None,
+            },
             'usage': {
                 'prompt_tokens': response.usage.input_tokens,
                 'completion_tokens': response.usage.output_tokens,
@@ -196,27 +259,39 @@ class GoogleProvider(LLMProvider):
         response_format: Optional[Dict] = None,
         max_tokens: Optional[int] = None,
     ) -> Dict[str, Any]:
-        # Convert messages format for Gemini
-        # Gemini uses a different message format
-        chat = self.genai.GenerativeModel(model).start_chat(history=[])
-        
-        # Process messages
-        last_user_message = None
-        for msg in messages:
-            if msg['role'] == 'user':
-                last_user_message = msg['content']
-            elif msg['role'] == 'assistant':
-                # Add to history
-                if last_user_message:
-                    chat.history.append({
-                        'role': 'user',
-                        'parts': [last_user_message]
-                    })
-                    chat.history.append({
-                        'role': 'model',
-                        'parts': [msg['content']]
-                    })
-                    last_user_message = None
+        instruction_blocks = [
+            msg['content'] for msg in messages
+            if msg['role'] in ('system', 'developer')
+        ]
+        conversation, role_merges = _merge_conversation_roles([
+            msg for msg in messages if msg['role'] not in ('system', 'developer')
+        ])
+        system_instruction = '\n\n'.join(instruction_blocks) or None
+        try:
+            generative_model = self.genai.GenerativeModel(
+                model,
+                system_instruction=system_instruction,
+            )
+        except TypeError as exc:
+            if system_instruction:
+                raise ProviderCapabilityError(
+                    'Installed Gemini SDK cannot preserve system/developer instructions'
+                ) from exc
+            generative_model = self.genai.GenerativeModel(model)
+
+        if not conversation or conversation[-1]['role'] != 'user':
+            raise ProviderCapabilityError(
+                'Gemini generation requires the ordered conversation to end with a user message'
+            )
+        history = [
+            {
+                'role': 'model' if msg['role'] == 'assistant' else 'user',
+                'parts': [msg['content']],
+            }
+            for msg in conversation[:-1]
+        ]
+        last_user_message = conversation[-1]['content']
+        chat = generative_model.start_chat(history=history)
         
         # Generate response
         generation_config = {
@@ -225,18 +300,14 @@ class GoogleProvider(LLMProvider):
         if max_tokens is not None:
             generation_config['max_output_tokens'] = max_tokens
         
-        if response_format and response_format.get('type') == 'json_object':
+        schema = _structured_schema(response_format)
+        if schema is not None:
+            generation_config['response_mime_type'] = 'application/json'
+            generation_config['response_schema'] = schema
+        elif response_format and response_format.get('type') == 'json_object':
             generation_config['response_mime_type'] = 'application/json'
         
-        if last_user_message:
-            response = chat.send_message(last_user_message, generation_config=generation_config)
-        else:
-            # Use the last user message from messages list
-            user_messages = [m['content'] for m in messages if m['role'] == 'user']
-            if user_messages:
-                response = chat.send_message(user_messages[-1], generation_config=generation_config)
-            else:
-                raise ValueError("No user message found in messages")
+        response = chat.send_message(last_user_message, generation_config=generation_config)
         
         # Extract content
         content = response.text
@@ -248,6 +319,19 @@ class GoogleProvider(LLMProvider):
         
         return {
             'content': content,
+            'finish_reason': str(
+                getattr((getattr(response, 'candidates', None) or [None])[0], 'finish_reason', '')
+                or ''
+            ),
+            'provider_metadata': {
+                'provider_translation': 'gemini_generate_content',
+                'instruction_roles_merged': [
+                    msg['role'] for msg in messages
+                    if msg['role'] in ('system', 'developer')
+                ],
+                'role_merges': role_merges,
+                'structured_output': 'response_schema' if schema is not None else None,
+            },
             'usage': {
                 'prompt_tokens': int(prompt_chars / 4),
                 'completion_tokens': int(response_chars / 4),
@@ -308,9 +392,17 @@ class GrokProvider(LLMProvider):
             kwargs['max_tokens'] = max_tokens
         
         response = self.client.chat.completions.create(**kwargs)
+
+        choice = response.choices[0]
         
         return {
-            'content': response.choices[0].message.content,
+            'content': choice.message.content,
+            'refusal': getattr(choice.message, 'refusal', None),
+            'finish_reason': getattr(choice, 'finish_reason', None),
+            'provider_metadata': {
+                'provider_translation': 'openai_compatible_chat',
+                'role_merges': [],
+            },
             'usage': {
                 'prompt_tokens': response.usage.prompt_tokens,
                 'completion_tokens': response.usage.completion_tokens,
@@ -361,8 +453,15 @@ class OpenAICompatibleProvider(LLMProvider):
             if max_tokens is not None:
                 call_kw['max_tokens'] = max_tokens
             response = self.client.chat.completions.create(**call_kw)
+            choice = response.choices[0]
             return {
-                'content': response.choices[0].message.content,
+                'content': choice.message.content,
+                'refusal': getattr(choice.message, 'refusal', None),
+                'finish_reason': getattr(choice, 'finish_reason', None),
+                'provider_metadata': {
+                    'provider_translation': 'openai_compatible_chat',
+                    'role_merges': [],
+                },
                 'usage': {
                     'prompt_tokens': getattr(response.usage, 'prompt_tokens', 0) or 0,
                     'completion_tokens': getattr(response.usage, 'completion_tokens', 0) or 0,
@@ -394,6 +493,12 @@ class OpenAICompatibleProvider(LLMProvider):
         usage = data.get('usage') or {}
         return {
             'content': data['choices'][0]['message']['content'],
+            'refusal': data['choices'][0]['message'].get('refusal'),
+            'finish_reason': data['choices'][0].get('finish_reason'),
+            'provider_metadata': {
+                'provider_translation': 'openai_compatible_chat',
+                'role_merges': [],
+            },
             'usage': {
                 'prompt_tokens': usage.get('prompt_tokens', 0),
                 'completion_tokens': usage.get('completion_tokens', 0),

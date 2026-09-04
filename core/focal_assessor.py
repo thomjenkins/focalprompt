@@ -6,7 +6,7 @@ addresses different aspects (foci) of a given prompt.
 """
 
 import json
-from typing import List, Dict, Optional
+from typing import Any, List, Dict, Mapping, Optional
 from dataclasses import dataclass, asdict
 # OpenAI import removed - we use AI Gateway now via LLMProvider abstraction
 
@@ -99,8 +99,11 @@ class FocalAssessor:
     
     def generate_output(
         self,
-        prompt: str,
-        temperature: float = 0.7
+        prompt: Optional[str] = None,
+        temperature: float = 0.7,
+        *,
+        scenario: Optional[Mapping[str, Any]] = None,
+        inputs: Optional[Mapping[str, Any]] = None,
     ) -> str:
         """
         Generate an output using an LLM agent based on the prompt.
@@ -112,38 +115,42 @@ class FocalAssessor:
         Returns:
             Generated output string
         """
-        # Pass provider name if using AI Gateway
-        if hasattr(self.provider, 'chat_completion'):
-            # Check if provider needs provider parameter (AI Gateway)
-            import inspect
-            sig = inspect.signature(self.provider.chat_completion)
-            if 'provider' in sig.parameters:
-                response = self.provider.chat_completion(
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": prompt
-                        }
-                    ],
-                    model=self.agent_model,
-                    temperature=temperature,
-                    provider=self.provider_name
-                )
-            else:
-                response = self.provider.chat_completion(
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": prompt
-                        }
-                    ],
-                    model=self.agent_model,
-                    temperature=temperature
-                )
-        else:
-            raise ValueError("Provider does not have chat_completion method")
-        
-        return response['content']
+        return self.generate_output_response(
+            prompt,
+            temperature=temperature,
+            scenario=scenario,
+            inputs=inputs,
+        )['content']
+
+    def generate_output_response(
+        self,
+        prompt: Optional[str] = None,
+        temperature: float = 0.7,
+        *,
+        scenario: Optional[Mapping[str, Any]] = None,
+        inputs: Optional[Mapping[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Generate through the canonical scenario compiler and keep metadata."""
+        from utils.inference_scenario import (
+            bind_scenario_inputs,
+            complete_scenario,
+            normalize_scenario_input,
+        )
+
+        normalized, _legacy = normalize_scenario_input(
+            scenario=scenario, prompt=prompt
+        )
+        normalized, binding = bind_scenario_inputs(normalized, inputs)
+        response = complete_scenario(
+            self.provider,
+            self.agent_model,
+            self.provider_name,
+            normalized,
+            temperature=temperature,
+        )
+        response['scenario_metadata']['input_binding'] = binding
+        response['scenario'] = normalized
+        return response
     
     def assess(
         self,
@@ -433,4 +440,3 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\nError: {e}")
         print("Please set your OPENAI_API_KEY environment variable to run this example.")
-

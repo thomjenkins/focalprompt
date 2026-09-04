@@ -9,13 +9,14 @@ Public API::
     result = analyze(prompt=..., model=..., ...)
 """
 
-from focalprompt.api import analyze, assess_focus, detect_foci, ablate
+from focalprompt.api import analyze, assess_focus, detect_foci, ablate, generate_output
 
 __all__ = [
     'analyze',
     'assess_focus',
     'detect_foci',
     'ablate',
+    'generate_output',
     '__version__',
 ]
 

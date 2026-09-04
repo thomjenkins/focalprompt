@@ -10,6 +10,7 @@ from services.order_sensitivity_service import OrderSensitivityService
 from routes.http_errors import internal_error
 from utils.json_safe import sanitize_non_finite
 from utils.request_inference import request_inference_fields
+from utils.inference_scenario import ScenarioValidationError, scenario_from_request
 
 order_sensitivity_bp = Blueprint('order_sensitivity', __name__)
 
@@ -51,10 +52,11 @@ def run_focus_order_sensitivity():
     """
     try:
         data = request.json or {}
+        scenario, is_legacy = scenario_from_request(data)
         prompt = data.get('prompt') or ''
         foci = data.get('foci') or data.get('foci_list') or []
         baseline_outputs = data.get('baseline_outputs') or []
-        if not prompt.strip():
+        if is_legacy and not prompt.strip():
             return jsonify({'error': 'prompt is required'}), 400
         if not foci:
             return jsonify({'error': 'foci is required'}), 400
@@ -81,8 +83,7 @@ def run_focus_order_sensitivity():
             from services.assessment_service import AssessmentService
             assessment_service = AssessmentService(analysis_assessor)
 
-        result = svc.run_focus_order_experiment(
-            prompt=prompt,
+        experiment_kwargs = dict(
             foci=foci,
             baseline_outputs=baseline_outputs,
             k_permutations=int(data.get('k_permutations') or 5),
@@ -101,10 +102,17 @@ def run_focus_order_sensitivity():
             assessment_service=assessment_service,
             run_reported_focus=bool(data.get('run_reported_focus')),
         )
+        if is_legacy:
+            result = svc.run_focus_order_experiment(prompt=prompt, **experiment_kwargs)
+        else:
+            result = svc.run_scenario_order_experiment(
+                scenario=scenario,
+                **experiment_kwargs,
+            )
         if not result.get('ok'):
             return _analysis_json(result), 400
         return _analysis_json(result)
-    except ValueError as e:
+    except (ScenarioValidationError, ValueError) as e:
         return jsonify({'error': str(e)}), 400
     except Exception as e:
         return internal_error('order_sensitivity_run', e)

@@ -3154,6 +3154,93 @@ circle.fp-series-7 { fill: #8a8a8a; }
     color: #92400e;
     font-size: 0.9em;
 }
+
+/* Ordered inference scenario editor */
+.scenario-help {
+    margin: 0 0 14px;
+}
+.scenario-messages {
+    display: grid;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+.scenario-message-card {
+    display: grid;
+    grid-template-columns: 36px minmax(0, 1fr);
+    overflow: hidden;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: #fff;
+}
+.scenario-message-card:focus-within {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 2px rgba(30, 58, 95, 0.08);
+}
+.scenario-order-rail {
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding-top: 13px;
+    background: #eef2f7;
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    font-weight: 700;
+}
+.scenario-message-body {
+    min-width: 0;
+    padding: 12px;
+}
+.scenario-message-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+.scenario-message-controls input,
+.scenario-message-controls select,
+.scenario-output-contract input {
+    min-height: 34px;
+    padding: 6px 8px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background: #fff;
+    font: inherit;
+}
+.scenario-message-id { width: 170px; }
+.scenario-input-name { width: 180px; }
+.scenario-content { margin: 0; resize: vertical; }
+.scenario-output-contract {
+    margin-top: 16px;
+    padding: 14px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: #f8fafc;
+}
+.scenario-contract-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+}
+.scenario-contract-heading span {
+    display: block;
+    margin-top: 2px;
+    color: var(--text-secondary);
+    font-size: 0.86rem;
+}
+#scenario-contract-fields {
+    display: grid;
+    gap: 10px;
+    margin-top: 12px;
+}
+#scenario-contract-fields.hidden { display: none; }
+#scenario-contract-fields label { display: grid; gap: 6px; font-weight: 600; }
+.scenario-contract-error { margin: 0; color: var(--danger-color); }
+@media (max-width: 720px) {
+    .scenario-message-card { grid-template-columns: 28px minmax(0, 1fr); }
+    .scenario-message-controls > input,
+    .scenario-message-controls > select { flex: 1 1 135px; width: auto; }
+}
 .coverage-indicator {
     font-size: 0.85em;
 }
