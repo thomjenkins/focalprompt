@@ -156,7 +156,7 @@ def batch_analysis_stream():
                 yield f"data: {json.dumps({'type': 'error', 'message': 'Foci are required'})}\n\n"
                 return
 
-            fields = request_inference_fields(data)
+            fields = request_inference_fields(data, model_role='mut')
             model = fields['model']
             provider = fields['provider']
 

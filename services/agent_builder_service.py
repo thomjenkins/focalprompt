@@ -24,7 +24,10 @@ class AgentBuilderService:
         cost_calculator: Optional[CostCalculator] = None,
         checkpoint_service: Optional[CheckpointService] = None,
         max_workers: int = 10,
-        provider_name: Optional[str] = None
+        provider_name: Optional[str] = None,
+        generation_provider=None,
+        generation_model: Optional[str] = None,
+        generation_provider_name: Optional[str] = None
     ):
         """
         Initialize agent builder service.
@@ -40,6 +43,13 @@ class AgentBuilderService:
         self.provider = provider
         self.model = model
         self.provider_name = provider_name or getattr(provider, 'provider_name', None) or 'openai'
+        self.generation_provider = generation_provider or provider
+        self.generation_model = generation_model or model
+        self.generation_provider_name = (
+            generation_provider_name
+            or getattr(self.generation_provider, 'provider_name', None)
+            or self.provider_name
+        )
         self.cost_calculator = cost_calculator or CostCalculator()
         self.checkpoint_service = checkpoint_service or CheckpointService()
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
@@ -244,19 +254,19 @@ CRITICAL REQUIREMENTS:
         """
         # Check if provider needs provider parameter (AI Gateway)
         import inspect
-        sig = inspect.signature(self.provider.chat_completion)
+        sig = inspect.signature(self.generation_provider.chat_completion)
         needs_provider = 'provider' in sig.parameters
         
         chat_kwargs = {
-            'model': self.model,
+            'model': self.generation_model,
             'messages': [{"role": "user", "content": constructed_prompt}],
             'temperature': temperature
         }
         
         if needs_provider:
-            chat_kwargs['provider'] = self.provider_name
+            chat_kwargs['provider'] = self.generation_provider_name
         
-        response = self.provider.chat_completion(**chat_kwargs)
+        response = self.generation_provider.chat_completion(**chat_kwargs)
         return response['content']
     
     def process_single_agent_pair(
@@ -414,5 +424,4 @@ CRITICAL REQUIREMENTS:
         }
         
         yield f"data: {json.dumps(final_result)}\n\n"
-
 

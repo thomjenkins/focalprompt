@@ -64,7 +64,7 @@ def no_sleep(monkeypatch):
 
 
 def test_estimate_cost():
-    svc = OrderSensitivityService(Mock(), 'm')
+    svc = OrderSensitivityService(Mock(), 'm', embedding_service=Mock())
     est = svc.estimate_cost(k_permutations=5, m_samples=3, run_position_sweep=True)
     assert est['global_order_model_calls'] == 15
     assert est['total_model_calls'] >= 15
@@ -89,6 +89,44 @@ def test_run_focus_order_experiment_mocked(mock_provider, mock_embedding):
     assert 'baseline_stability' in result
     assert len(result['global_order_experiment']['permutations']) == 2
     assert result['global_order_experiment']['summary']['n_permutations'] == 2
+
+
+def test_behavioral_judge_uses_analysis_model_provider(mock_embedding):
+    mut_provider = Mock()
+    mut_provider.chat_completion.side_effect = [
+        {'content': 'mut output 1', 'usage': {'prompt_tokens': 5, 'completion_tokens': 3}},
+        {'content': 'mut output 2', 'usage': {'prompt_tokens': 5, 'completion_tokens': 3}},
+    ]
+    analysis_provider = Mock()
+    analysis_provider.chat_completion.return_value = {
+        'content': '{"classification":"COMPLIES","score":90,"rationale":"ok"}',
+        'usage': {'prompt_tokens': 7, 'completion_tokens': 2},
+    }
+    svc = OrderSensitivityService(
+        mut_provider,
+        'gpt-3.5-turbo',
+        provider_name='openai',
+        judge_provider=analysis_provider,
+        judge_model='gpt-4o',
+        judge_provider_name='openai',
+        embedding_service=mock_embedding,
+    )
+
+    result = svc.run_focus_order_experiment(
+        prompt=PROMPT,
+        foci=_foci(),
+        baseline_outputs=['b1', 'b2', 'b3'],
+        k_permutations=1,
+        m_samples=2,
+        order_seed=3,
+        temperature=0.7,
+        behavioral_criterion='Must comply',
+        run_behavioral_judge=True,
+    )
+
+    assert result['ok'] is True
+    assert mut_provider.chat_completion.call_args_list[0].kwargs['model'] == 'gpt-3.5-turbo'
+    assert analysis_provider.chat_completion.call_args_list[0].kwargs['model'] == 'gpt-4o'
 
 
 def test_prepare_refuses_single_movable():

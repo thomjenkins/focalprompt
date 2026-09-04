@@ -36,7 +36,7 @@ def detect_foci():
         if not prompt:
             return jsonify({'error': 'Prompt is required'}), 400
         
-        assessor = get_assessor(data=request_inference_fields(data))
+        assessor = get_assessor(data=request_inference_fields(data, model_role='analysis'))
         service = AssessmentService(assessor)
         
         try:
@@ -66,7 +66,7 @@ def detect_dynamic_foci():
         if not pairs or len(pairs) == 0:
             return jsonify({'error': 'At least one pair is required to detect dynamic patterns'}), 400
         
-        assessor = get_assessor(data=request_inference_fields(data))
+        assessor = get_assessor(data=request_inference_fields(data, model_role='analysis'))
         service = AssessmentService(assessor)
         
         result = service.detect_dynamic_foci(prompt, foci, pairs)
@@ -91,7 +91,7 @@ def assess():
         if not output:
             return jsonify({'error': 'Output is required'}), 400
         
-        assessor = get_assessor(data=request_inference_fields(data))
+        assessor = get_assessor(data=request_inference_fields(data, model_role='analysis'))
         checkpoint_service = CheckpointService()
         service = AssessmentService(assessor, checkpoint_service=checkpoint_service)
         
@@ -156,7 +156,7 @@ def generate_output():
         if not prompt:
             return jsonify({'error': 'Prompt is required'}), 400
         
-        fields = request_inference_fields(data)
+        fields = request_inference_fields(data, model_role='mut')
         model = fields.get('model', 'gpt-4o-mini')
         provider = fields.get('provider', 'openai')
         
@@ -185,7 +185,7 @@ def rewrite_prompt():
         if not foci_weights:
             return jsonify({'error': 'Foci with weights are required'}), 400
         
-        assessor = get_assessor(data=request_inference_fields(data))
+        assessor = get_assessor(data=request_inference_fields(data, model_role='analysis'))
         service = PromptRewriteService(assessor)
         
         rewritten = service.rewrite_prompt(prompt, foci_weights)

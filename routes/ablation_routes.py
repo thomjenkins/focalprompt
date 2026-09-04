@@ -25,8 +25,8 @@ def _analysis_json(data):
     return jsonify(sanitize_non_finite(data))
 
 
-def _ablation_service(data):
-    fields = request_inference_fields(data)
+def _ablation_service(data, model_role='mut'):
+    fields = request_inference_fields(data, model_role=model_role)
     assessor = get_assessor(data=fields)
     api_key = fields.get('api_key')
     return AblationService(
@@ -364,7 +364,7 @@ def ablation_reported_focus_dynamics():
         for key, vals in ablated_outputs.items():
             ablated_map[int(key)] = list(vals or [])
 
-        fields = request_inference_fields(data)
+        fields = request_inference_fields(data, model_role='analysis')
         assessor = get_assessor(data=fields)
         assessment_service = AssessmentService(assessor)
         service = _ablation_service(data)

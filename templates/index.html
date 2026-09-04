@@ -35,49 +35,98 @@
                     <h3 style="margin: 0;">Model selection</h3>
                 </div>
                 <div id="settings-content" style="display: none;">
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
-                        <div>
-                            <label for="provider-select" style="display: block; margin-bottom: 6px; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary);">
-                                LLM Provider
-                            </label>
-                            <select id="provider-select" style="width: 100%; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 14px; background: white; cursor: pointer; font-family: inherit;">
-                                <option value="openai">OpenAI</option>
-                                <option value="anthropic">Anthropic (Claude)</option>
-                                <option value="google">Google (Gemini)</option>
-                                <option value="xai">X.AI (Grok)</option>
-                                <option value="mistral">Mistral</option>
-                                <option value="meta">Meta (Llama)</option>
-                                <option value="deepseek">DeepSeek</option>
-                                <option value="alibaba">Alibaba (Qwen)</option>
-                                <option value="minimax">MiniMax</option>
-                                <option value="moonshotai">Moonshot AI</option>
-                                <option value="perplexity">Perplexity</option>
-                                <option value="amazon">Amazon (Nova)</option>
-                                <option value="zai">ZAI (GLM)</option>
-                                <option value="voyage">Voyage</option>
-                                <option value="cohere">Cohere</option>
-                                <option value="morph">Morph</option>
-                                <option value="nvidia">NVIDIA</option>
-                                <option value="bfl">BFL</option>
-                                <option value="vercel">Vercel</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label for="model-select" style="display: block; margin-bottom: 6px; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary);">Model</label>
-                            <div style="position: relative;">
-                                <input
-                                    type="text"
-                                    id="model-search"
-                                    placeholder="Search models (e.g., gpt-4, claude, gemini)..."
-                                    autocomplete="off"
-                                    style="width: 100%; padding: 10px 30px 10px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 14px; background: white; box-sizing: border-box; font-family: inherit;"
-                                />
-                                <span style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); pointer-events: none; color: #999;">🔍</span>
-                                <div id="model-dropdown" style="display: none; position: absolute; top: 100%; left: 0; right: 0; max-height: 300px; overflow-y: auto; background: white; border: 1px solid var(--border-color); border-top: none; border-radius: 0 0 8px 8px; z-index: 1000; box-shadow: var(--shadow-lg); margin-top: -1px;"></div>
+                    <div class="model-role-grid">
+                        <div class="model-role-panel">
+                            <h4>Model under test <span>MUT</span></h4>
+                            <div class="model-role-controls">
+                                <div>
+                                    <label for="provider-select" style="display: block; margin-bottom: 6px; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary);">
+                                        LLM Provider
+                                    </label>
+                                    <select id="provider-select" style="width: 100%; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 14px; background: white; cursor: pointer; font-family: inherit;">
+                                        <option value="openai">OpenAI</option>
+                                        <option value="anthropic">Anthropic (Claude)</option>
+                                        <option value="google">Google (Gemini)</option>
+                                        <option value="xai">X.AI (Grok)</option>
+                                        <option value="mistral">Mistral</option>
+                                        <option value="meta">Meta (Llama)</option>
+                                        <option value="deepseek">DeepSeek</option>
+                                        <option value="alibaba">Alibaba (Qwen)</option>
+                                        <option value="minimax">MiniMax</option>
+                                        <option value="moonshotai">Moonshot AI</option>
+                                        <option value="perplexity">Perplexity</option>
+                                        <option value="amazon">Amazon (Nova)</option>
+                                        <option value="zai">ZAI (GLM)</option>
+                                        <option value="voyage">Voyage</option>
+                                        <option value="cohere">Cohere</option>
+                                        <option value="morph">Morph</option>
+                                        <option value="nvidia">NVIDIA</option>
+                                        <option value="bfl">BFL</option>
+                                        <option value="vercel">Vercel</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label for="model-select" style="display: block; margin-bottom: 6px; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary);">Model</label>
+                                    <div style="position: relative;">
+                                        <input
+                                            type="text"
+                                            id="model-search"
+                                            placeholder="Search models (e.g., gpt-4, claude, gemini)..."
+                                            autocomplete="off"
+                                            style="width: 100%; padding: 10px 30px 10px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 14px; background: white; box-sizing: border-box; font-family: inherit;"
+                                        />
+                                        <span style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); pointer-events: none; color: #999;">🔍</span>
+                                        <div id="model-dropdown" style="display: none; position: absolute; top: 100%; left: 0; right: 0; max-height: 300px; overflow-y: auto; background: white; border: 1px solid var(--border-color); border-top: none; border-radius: 0 0 8px 8px; z-index: 1000; box-shadow: var(--shadow-lg); margin-top: -1px;"></div>
+                                    </div>
+                                    <select id="model-select" style="display: none;"></select>
+                                </div>
                             </div>
-                            <select id="model-select" style="display: none;">
-                                <!-- Hidden select for form submission -->
-                            </select>
+                        </div>
+                        <div class="model-role-panel">
+                            <h4>Analysis model <span>ANM</span></h4>
+                            <div class="model-role-controls">
+                                <div>
+                                    <label for="analysis-provider-select" style="display: block; margin-bottom: 6px; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary);">
+                                        LLM Provider
+                                    </label>
+                                    <select id="analysis-provider-select" style="width: 100%; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 14px; background: white; cursor: pointer; font-family: inherit;">
+                                        <option value="openai">OpenAI</option>
+                                        <option value="anthropic">Anthropic (Claude)</option>
+                                        <option value="google">Google (Gemini)</option>
+                                        <option value="xai">X.AI (Grok)</option>
+                                        <option value="mistral">Mistral</option>
+                                        <option value="meta">Meta (Llama)</option>
+                                        <option value="deepseek">DeepSeek</option>
+                                        <option value="alibaba">Alibaba (Qwen)</option>
+                                        <option value="minimax">MiniMax</option>
+                                        <option value="moonshotai">Moonshot AI</option>
+                                        <option value="perplexity">Perplexity</option>
+                                        <option value="amazon">Amazon (Nova)</option>
+                                        <option value="zai">ZAI (GLM)</option>
+                                        <option value="voyage">Voyage</option>
+                                        <option value="cohere">Cohere</option>
+                                        <option value="morph">Morph</option>
+                                        <option value="nvidia">NVIDIA</option>
+                                        <option value="bfl">BFL</option>
+                                        <option value="vercel">Vercel</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label for="analysis-model-select" style="display: block; margin-bottom: 6px; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary);">Model</label>
+                                    <div style="position: relative;">
+                                        <input
+                                            type="text"
+                                            id="analysis-model-search"
+                                            placeholder="Search analysis models..."
+                                            autocomplete="off"
+                                            style="width: 100%; padding: 10px 30px 10px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 14px; background: white; box-sizing: border-box; font-family: inherit;"
+                                        />
+                                        <span style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); pointer-events: none; color: #999;">🔍</span>
+                                        <div id="analysis-model-dropdown" style="display: none; position: absolute; top: 100%; left: 0; right: 0; max-height: 300px; overflow-y: auto; background: white; border: 1px solid var(--border-color); border-top: none; border-radius: 0 0 8px 8px; z-index: 1000; box-shadow: var(--shadow-lg); margin-top: -1px;"></div>
+                                    </div>
+                                    <select id="analysis-model-select" style="display: none;"></select>
+                                </div>
+                            </div>
                         </div>
                     </div>
 

@@ -25,7 +25,7 @@ def analyze_prompt_optimization():
         foci_list = data.get('foci', [])
         original_prompt = data.get('original_prompt', '')
         
-        fields = request_inference_fields(data)
+        fields = request_inference_fields(data, model_role='analysis')
         assessor = get_assessor(data=fields)
         cost_calculator = CostCalculator()
         
