@@ -458,6 +458,71 @@ const selectionText = document.getElementById('selection-text');
 const runAblationBtn = document.getElementById('run-ablation-btn');
 const loadAblationCheckpointBtn = document.getElementById('load-ablation-checkpoint-btn');
 const ablationResults = document.getElementById('ablation-results');
+let lastPromptTextForSpanTracking = promptInput ? promptInput.value : '';
+
+function adjustFociForPromptEdit(fociList, previousText, nextText) {
+    const promptEdit = window.FocalPromptPromptEdit || {};
+    const edit = promptEdit.detectPromptEdit
+        ? promptEdit.detectPromptEdit(previousText, nextText)
+        : null;
+    if (!edit || !Array.isArray(fociList) || !fociList.length) {
+        return { foci: fociList, changed: false, needsReview: false };
+    }
+    if (!promptEdit.adjustSpanForPromptEdit) {
+        return { foci: fociList, changed: false, needsReview: true };
+    }
+
+    let changed = false;
+    let needsReview = false;
+    const adjusted = fociList.map(function (focus) {
+        const nextFocus = { ...focus };
+        let focusNeedsReview = false;
+        const spans = focusSpansOf(nextFocus);
+        if (!spans.length) {
+            return nextFocus;
+        }
+        const nextSpans = spans.map(function (span) {
+            const result = promptEdit.adjustSpanForPromptEdit(span, edit);
+            changed = changed || result.changed;
+            focusNeedsReview = focusNeedsReview || result.needsReview;
+            needsReview = needsReview || focusNeedsReview;
+            return result.span;
+        }).filter(function (span) {
+            return span.char_end > span.char_start;
+        });
+
+        nextFocus.spans = nextSpans.map(function (span) {
+            const text = nextText.substring(span.char_start, span.char_end);
+            return { ...span, text, text_snapshot: text };
+        });
+        if (nextSpans.length) {
+            nextFocus.char_start = nextSpans[0].char_start;
+            nextFocus.char_end = nextSpans[nextSpans.length - 1].char_end;
+            const texts = nextFocus.spans.map(function (span) { return span.text; });
+            nextFocus.prompt_section = texts.length > 1 ? texts.join('\n…\n') : texts[0];
+        } else if (spans.length) {
+            delete nextFocus.char_start;
+            delete nextFocus.char_end;
+            nextFocus.prompt_section = '';
+            focusNeedsReview = true;
+            needsReview = true;
+        }
+        if (focusNeedsReview) {
+            nextFocus.needs_span_review = true;
+        }
+        return normalizeFocusClient(nextFocus, nextText);
+    });
+
+    return { foci: adjusted, changed, needsReview };
+}
+
+function syncPromptSpanTracking() {
+    lastPromptTextForSpanTracking = promptInput ? promptInput.value : '';
+}
+
+if (typeof window !== 'undefined' && window.FocalPromptPromptEdit) {
+    window.FocalPromptPromptEdit.adjustFociForPromptEdit = adjustFociForPromptEdit;
+}
 
 (function fillDocsMethodsPanel() {
     const el = document.getElementById('docs-methods-panel');
@@ -1683,6 +1748,7 @@ function repairFocusSpan(index) {
 
 // Render Foci
 function renderFoci() {
+    syncPromptSpanTracking();
     if (foci.length === 0) {
         fociContainer.innerHTML = '<p class="empty-state">No foci defined yet. Click "Auto-Detect Foci" or "Add Focus Manually" to get started.</p>';
         promptVisualization.classList.add('hidden');
@@ -1741,6 +1807,7 @@ function renderFoci() {
                   ${nf.is_multi_span ? `<span style="margin-left:6px;padding:2px 6px;border-radius:4px;font-size:0.75em;background:#e0e7ff;color:#3730a3;">${nf.span_count} spans</span>` : ''}
                   ${!nf.is_contiguous ? `<span style="margin-left:6px;padding:2px 6px;border-radius:4px;font-size:0.75em;background:#fee2e2;color:#991b1b;">non-contiguous</span>` : ''}
                   ${selectedFocusIndex === index ? `<span style="margin-left:6px;padding:2px 6px;border-radius:4px;font-size:0.75em;background:#dbeafe;color:#1e3a5f;">Selected for add-span</span>` : ''}
+                  ${focus.needs_span_review ? `<span style="margin-left:6px;padding:2px 6px;border-radius:4px;font-size:0.75em;background:#fef3c7;color:#92400e;">review spans</span>` : ''}
                 </div>
                 <div style="font-size:0.8em;color:#64748b;margin-bottom:4px;">
                   Total span length: ${nf.total_span_length || 0} · Unique within focus: ${nf.unique_span_length || 0}
@@ -2513,10 +2580,22 @@ if (toggleVisualization) {
 // Update visualization when prompt changes
 if (promptInput) {
     promptInput.addEventListener('input', () => {
+        const nextPromptText = promptInput.value;
         if (foci.length > 0) {
+            const adjusted = adjustFociForPromptEdit(
+                foci,
+                lastPromptTextForSpanTracking,
+                nextPromptText
+            );
+            if (adjusted.changed || adjusted.needsReview) {
+                foci = adjusted.foci;
+                selectedFocusIndex = null;
+                renderFoci();
+            }
             updateCoverageVisualization();
             updateCoverageStats();
         }
+        lastPromptTextForSpanTracking = nextPromptText;
         // Hide selection toolbar if prompt changes
         selectionToolbar.classList.add('hidden');
     });
