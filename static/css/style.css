@@ -143,6 +143,46 @@ body {
     font-weight: 700 !important;
 }
 
+.model-role-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+    margin-bottom: 16px;
+}
+
+.model-role-panel {
+    min-width: 0;
+    padding: 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: #fff;
+}
+
+.model-role-panel h4 {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 10px;
+    color: var(--text-primary);
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.model-role-panel h4 span {
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: var(--surface-muted);
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.model-role-controls {
+    display: grid;
+    grid-template-columns: minmax(130px, 0.42fr) minmax(180px, 0.58fr);
+    gap: 12px;
+}
+
 header {
     text-align: left;
     margin-bottom: 0;
@@ -1852,6 +1892,8 @@ code, .textarea-large, #prompt-input, #batch-prompt-input, #manual-pair-input, #
 @media (max-width: 860px) {
     .app-header-top { flex-wrap: wrap; gap: 12px; }
     .app-header-nav { order: 3; width: 100%; }
+    .model-role-grid,
+    .model-role-controls { grid-template-columns: 1fr; }
     .tab-navigation { flex-wrap: wrap; }
     .tab-docs { margin-left: 0; }
     .container { padding: 0 16px 32px; }

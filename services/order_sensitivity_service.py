@@ -51,10 +51,16 @@ class OrderSensitivityService:
         embedding_service: Optional[EmbeddingService] = None,
         cost_calculator: Optional[CostCalculator] = None,
         provider_name: Optional[str] = None,
+        judge_provider=None,
+        judge_model: Optional[str] = None,
+        judge_provider_name: Optional[str] = None,
     ):
         self.provider = provider
         self.model = model
         self.provider_name = provider_name or 'openai'
+        self.judge_provider = judge_provider or provider
+        self.judge_model = judge_model or model
+        self.judge_provider_name = judge_provider_name or self.provider_name
         self.api_key = api_key
         self.embedding_service = embedding_service or EmbeddingService()
         self.cost_calculator = cost_calculator or CostCalculator()
@@ -194,7 +200,7 @@ class OrderSensitivityService:
         judge = None
         if run_behavioral_judge and behavioral_criterion:
             judge = BehavioralCriterionJudge(
-                self.provider, self.model, self.provider_name
+                self.judge_provider, self.judge_model, self.judge_provider_name
             )
 
         baseline_judgments = self._maybe_judge(

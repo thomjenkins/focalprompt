@@ -117,7 +117,9 @@ def test_ablation_service_reported_focus_dynamics_uses_assessment_service():
         ],
         'overall_summary': 'ok',
     }
-    svc = AblationService(Mock(), 'gpt-4o-mini', provider_name='openai')
+    svc = AblationService(
+        Mock(), 'gpt-4o-mini', provider_name='openai', embedding_service=Mock()
+    )
     result = svc.run_reported_focus_dynamics(
         'prompt text',
         [{'focus': 'Role'}, {'focus': 'Cite'}],

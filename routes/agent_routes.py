@@ -31,7 +31,7 @@ def assess_chat_foci():
         if not foci_list or len(foci_list) == 0:
             return jsonify({'error': 'Foci are required'}), 400
         
-        fields = request_inference_fields(data)
+        fields = request_inference_fields(data, model_role='analysis')
         assessor = get_assessor(data=fields)
         cost_calculator = CostCalculator()
         
@@ -112,7 +112,7 @@ def generate_agent_response():
         if not constructed_prompt:
             return jsonify({'error': 'Constructed prompt is required'}), 400
         
-        fields = request_inference_fields(data)
+        fields = request_inference_fields(data, model_role='mut')
         assessor = get_assessor(data=fields)
         provider_name = getattr(assessor, 'provider_name', None) or fields['provider']
         service = AgentBuilderService(assessor.provider, fields['model'], provider_name=provider_name)
@@ -149,18 +149,26 @@ def build_batch_agents_stream():
                 yield f"data: {json.dumps({'type': 'error', 'message': 'Foci are required'})}\n\n"
                 return
             
-            fields = request_inference_fields(data)
+            fields = request_inference_fields(data, model_role='analysis')
             assessor = get_assessor(data=fields)
+            mut_fields = request_inference_fields(data, model_role='mut')
+            mut_assessor = get_assessor(data=mut_fields)
             cost_calculator = CostCalculator()
             checkpoint_service = CheckpointService()
             provider_name = getattr(assessor, 'provider_name', None) or fields['provider']
+            mut_provider_name = (
+                getattr(mut_assessor, 'provider_name', None) or mut_fields['provider']
+            )
             
             service = AgentBuilderService(
                 assessor.provider,
                 fields['model'],
                 cost_calculator,
                 checkpoint_service,
-                provider_name=provider_name
+                provider_name=provider_name,
+                generation_provider=mut_assessor.provider,
+                generation_model=mut_fields['model'],
+                generation_provider_name=mut_provider_name
             )
             
             # Stream results
@@ -193,7 +201,7 @@ def llm_evaluate_batch_agents_stream():
                 yield f"data: {json.dumps({'type': 'error', 'message': 'Results are required'})}\n\n"
                 return
             
-            fields = request_inference_fields(data)
+            fields = request_inference_fields(data, model_role='analysis')
             assessor = get_assessor(data=fields)
             cost_calculator = CostCalculator()
             

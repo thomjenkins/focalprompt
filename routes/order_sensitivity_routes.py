@@ -22,7 +22,7 @@ def _analysis_json(data):
 def estimate_focus_order_cost():
     try:
         data = request.json or {}
-        fields = request_inference_fields(data)
+        fields = request_inference_fields(data, model_role='mut')
         assessor = get_assessor(data=fields)
         svc = OrderSensitivityService(
             assessor.provider,
@@ -61,18 +61,25 @@ def run_focus_order_sensitivity():
         if not baseline_outputs:
             return jsonify({'error': 'baseline_outputs from Experiment B are required'}), 400
 
-        fields = request_inference_fields(data)
+        fields = request_inference_fields(data, model_role='mut')
         assessor = get_assessor(data=fields)
+        analysis_fields = request_inference_fields(data, model_role='analysis')
+        analysis_assessor = get_assessor(data=analysis_fields)
         svc = OrderSensitivityService(
             assessor.provider,
             fields['model'],
             provider_name=getattr(assessor, 'provider_name', fields['provider']),
+            judge_provider=analysis_assessor.provider,
+            judge_model=analysis_fields['model'],
+            judge_provider_name=getattr(
+                analysis_assessor, 'provider_name', analysis_fields['provider']
+            ),
         )
 
         assessment_service = None
         if data.get('run_reported_focus'):
             from services.assessment_service import AssessmentService
-            assessment_service = AssessmentService(assessor)
+            assessment_service = AssessmentService(analysis_assessor)
 
         result = svc.run_focus_order_experiment(
             prompt=prompt,

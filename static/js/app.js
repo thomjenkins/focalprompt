@@ -10,9 +10,11 @@ window.getAblationFoci = function () { return foci; };
 window.getBatchFoci = function () { return batchFoci; };
 
 // Settings management
-let userProvider = localStorage.getItem('focalprompt_provider') || 'openai';
+let userProvider = localStorage.getItem('focalprompt_mut_provider') || localStorage.getItem('focalprompt_provider') || 'openai';
 let userApiKey = localStorage.getItem('focalprompt_api_key') || '';
-let userModel = localStorage.getItem('focalprompt_model') || 'gpt-4o-mini';
+let userModel = localStorage.getItem('focalprompt_mut_model') || localStorage.getItem('focalprompt_model') || 'gpt-4o-mini';
+let analysisProvider = localStorage.getItem('focalprompt_analysis_provider') || 'openai';
+let analysisModel = localStorage.getItem('focalprompt_analysis_model') || 'gpt-4o';
 
 // Dynamic model list - will be populated from API
 let allModelsData = {
@@ -136,57 +138,92 @@ const defaultModels = {
 let modelSearchInput, modelDropdown, modelSelectHidden;
 let filteredModels = [];
 let selectedModelIndex = -1;
+let analysisModelSearchInput, analysisModelDropdown, analysisModelSelectHidden;
+let analysisFilteredModels = [];
+let analysisSelectedModelIndex = -1;
 
 function initModelSearch() {
     modelSearchInput = document.getElementById('model-search');
     modelDropdown = document.getElementById('model-dropdown');
     modelSelectHidden = document.getElementById('model-select');
+    analysisModelSearchInput = document.getElementById('analysis-model-search');
+    analysisModelDropdown = document.getElementById('analysis-model-dropdown');
+    analysisModelSelectHidden = document.getElementById('analysis-model-select');
     
-    if (!modelSearchInput || !modelDropdown || !modelSelectHidden) return;
-    
-    // Set initial value
-    updateModelSearchValue();
-    
-    // Filter models based on provider
-    modelSearchInput.addEventListener('input', handleModelSearch);
-    modelSearchInput.addEventListener('focus', () => {
-        if (modelSearchInput.value) {
-            handleModelSearch();
+    initSingleModelSearch('mut');
+    initSingleModelSearch('analysis');
+}
+
+function modelPicker(role) {
+    if (role === 'analysis') {
+        return {
+            role,
+            input: analysisModelSearchInput,
+            dropdown: analysisModelDropdown,
+            hidden: analysisModelSelectHidden,
+            providerSelect: document.getElementById('analysis-provider-select'),
+        };
+    }
+    return {
+        role: 'mut',
+        input: modelSearchInput,
+        dropdown: modelDropdown,
+        hidden: modelSelectHidden,
+        providerSelect: document.getElementById('provider-select'),
+    };
+}
+
+function modelState(role) {
+    if (role === 'analysis') {
+        return { provider: analysisProvider, model: analysisModel };
+    }
+    return { provider: userProvider, model: userModel };
+}
+
+function initSingleModelSearch(role) {
+    const picker = modelPicker(role);
+    if (!picker.input || !picker.dropdown || !picker.hidden) return;
+
+    updateModelSearchValue(role);
+
+    picker.input.addEventListener('input', function () { handleModelSearch(role); });
+    picker.input.addEventListener('focus', function () {
+        if (picker.input.value) {
+            handleModelSearch(role);
         } else {
-            showModelDropdown();
+            showModelDropdown(role);
         }
     });
-    modelSearchInput.addEventListener('blur', (e) => {
-        // Delay to allow click on dropdown item
-        setTimeout(() => {
-            if (!modelDropdown.contains(document.activeElement)) {
-                hideModelDropdown();
+    picker.input.addEventListener('blur', function () {
+        setTimeout(function () {
+            if (!picker.dropdown.contains(document.activeElement)) {
+                hideModelDropdown(role);
             }
         }, 200);
     });
-    modelSearchInput.addEventListener('keydown', handleModelSearchKeydown);
-    
-    // Update when provider changes
-    const providerSelect = document.getElementById('provider-select');
-    if (providerSelect) {
-        providerSelect.addEventListener('change', function () {
-            updateModelSearchValue();
+    picker.input.addEventListener('keydown', function (e) { handleModelSearchKeydown(e, role); });
+
+    if (picker.providerSelect) {
+        picker.providerSelect.addEventListener('change', function () {
+            updateModelSearchValue(role);
         });
     }
 }
 
-function handleModelSearch() {
-    const query = modelSearchInput.value.toLowerCase().trim();
+function handleModelSearch(role = 'mut') {
+    const picker = modelPicker(role);
+    if (!picker.input) return;
+    const query = picker.input.value.toLowerCase().trim();
     
     // Filter models - show all models that match, but prioritize current provider
-    const currentProvider = userProvider;
-    filteredModels = allModelsFlat.filter(model => {
+    const currentProvider = modelState(role).provider;
+    const filtered = allModelsFlat.filter(model => {
         const matches = model.searchText.includes(query);
         return matches;
     });
     
     // Sort: current provider first, then alphabetically
-    filteredModels.sort((a, b) => {
+    filtered.sort((a, b) => {
         const aIsCurrent = a.provider === currentProvider;
         const bIsCurrent = b.provider === currentProvider;
         if (aIsCurrent && !bIsCurrent) return -1;
@@ -195,25 +232,31 @@ function handleModelSearch() {
     });
     
     // Limit to 50 results for performance
-    filteredModels = filteredModels.slice(0, 50);
+    if (role === 'analysis') {
+        analysisFilteredModels = filtered.slice(0, 50);
+    } else {
+        filteredModels = filtered.slice(0, 50);
+    }
     
-    renderModelDropdown();
-    showModelDropdown();
+    renderModelDropdown(role);
+    showModelDropdown(role);
 }
 
-function renderModelDropdown() {
-    if (!modelDropdown) return;
+function renderModelDropdown(role = 'mut') {
+    const picker = modelPicker(role);
+    const models = role === 'analysis' ? analysisFilteredModels : filteredModels;
+    if (!picker.dropdown) return;
     
-    if (filteredModels.length === 0) {
-        modelDropdown.innerHTML = '<div style="padding: 12px; color: #999; text-align: center;">No models found</div>';
+    if (models.length === 0) {
+        picker.dropdown.innerHTML = '<div style="padding: 12px; color: #999; text-align: center;">No models found</div>';
         return;
     }
     
-    const currentProvider = userProvider;
+    const current = modelState(role);
     let html = '';
     let currentProviderGroup = '';
     
-    filteredModels.forEach((model, index) => {
+    models.forEach((model, index) => {
         // Group by provider
         if (model.provider !== currentProviderGroup) {
             if (currentProviderGroup) html += '</div>';
@@ -222,33 +265,39 @@ function renderModelDropdown() {
             html += `<div style="padding: 8px 12px; background: #f5f5f5; font-weight: 600; font-size: 0.85em; color: #666; border-bottom: 1px solid #e5e7eb;">${providerName}</div>`;
         }
         
-        const isSelected = model.value === userModel && model.provider === userProvider;
+        const isSelected = model.value === current.model && model.provider === current.provider;
         html += `
             <div class="model-option" data-index="${index}" data-value="${model.value}" data-provider="${model.provider}" 
                  style="padding: 10px 12px; cursor: pointer; border-bottom: 1px solid #f0f0f0; ${isSelected ? 'background: #e8f4f8;' : ''}"
                  onmouseover="this.style.background='#f8f9fa'" 
                  onmouseout="this.style.background='${isSelected ? '#e8f4f8' : 'white'}'"
-                 onclick="selectModel('${model.value}', '${model.provider}')">
+                 onclick="selectModel('${model.value}', '${model.provider}', '${role}')">
                 <div style="font-weight: ${isSelected ? '600' : '500'}; color: var(--text-primary);">${escapeHtml(model.label)}</div>
             </div>
         `;
     });
     
     if (currentProviderGroup) html += '</div>';
-    modelDropdown.innerHTML = html;
+    picker.dropdown.innerHTML = html;
 }
 
-function showModelDropdown() {
-    if (modelDropdown) {
-        modelDropdown.style.display = 'block';
+function showModelDropdown(role = 'mut') {
+    const picker = modelPicker(role);
+    if (picker.dropdown) {
+        picker.dropdown.style.display = 'block';
     }
 }
 
-function hideModelDropdown() {
-    if (modelDropdown) {
-        modelDropdown.style.display = 'none';
+function hideModelDropdown(role = 'mut') {
+    const picker = modelPicker(role);
+    if (picker.dropdown) {
+        picker.dropdown.style.display = 'none';
     }
-    selectedModelIndex = -1;
+    if (role === 'analysis') {
+        analysisSelectedModelIndex = -1;
+    } else {
+        selectedModelIndex = -1;
+    }
 }
 
 function resolveModelFromSearchText(text) {
@@ -274,120 +323,184 @@ function resolveModelFromSearchText(text) {
     return null;
 }
 
-function getCurrentModelSelection() {
-    const fromSearch = modelSearchInput
-        ? resolveModelFromSearchText(modelSearchInput.value)
+function getCurrentModelSelection(role = 'mut') {
+    const picker = modelPicker(role);
+    const state = modelState(role);
+    const fromSearch = picker.input
+        ? resolveModelFromSearchText(picker.input.value)
         : null;
     if (fromSearch) {
         return fromSearch;
     }
-    return { provider: userProvider, model: userModel };
+    return state;
 }
 
-function persistModelSelection(provider, model) {
-    userProvider = provider;
-    userModel = model;
-    localStorage.setItem('focalprompt_provider', provider);
-    localStorage.setItem('focalprompt_model', model);
-    const providerSelect = document.getElementById('provider-select');
-    if (providerSelect && providerSelect.value !== provider) {
-        providerSelect.value = provider;
+function persistModelSelection(provider, model, role = 'mut') {
+    const picker = modelPicker(role);
+    if (role === 'analysis') {
+        analysisProvider = provider;
+        analysisModel = model;
+        localStorage.setItem('focalprompt_analysis_provider', provider);
+        localStorage.setItem('focalprompt_analysis_model', model);
+    } else {
+        userProvider = provider;
+        userModel = model;
+        localStorage.setItem('focalprompt_mut_provider', provider);
+        localStorage.setItem('focalprompt_mut_model', model);
+        localStorage.setItem('focalprompt_provider', provider);
+        localStorage.setItem('focalprompt_model', model);
     }
-    if (modelSelectHidden) {
-        modelSelectHidden.value = model;
+    if (picker.providerSelect && picker.providerSelect.value !== provider) {
+        picker.providerSelect.value = provider;
     }
-    updateModelSearchValue();
+    if (picker.hidden) {
+        picker.hidden.value = model;
+    }
+    updateModelSearchValue(role);
     updateModelDisplay();
 }
 
-function selectModel(modelValue, modelProvider) {
-    persistModelSelection(modelProvider, modelValue);
+function selectModel(modelValue, modelProvider, role = 'mut') {
+    persistModelSelection(modelProvider, modelValue, role);
     
     // Update model select dropdown (if it exists)
-    const modelSelect = document.getElementById('model-select');
-    if (modelSelect) {
-        modelSelect.value = modelValue;
+    const picker = modelPicker(role);
+    if (picker.hidden) {
+        picker.hidden.value = modelValue;
     }
     
-    hideModelDropdown();
+    hideModelDropdown(role);
     updateCostEstimate();
 }
 
 // Make selectModel available globally for onclick handlers
 window.selectModel = selectModel;
 
-function updateModelSearchValue() {
-    if (!modelSearchInput) return;
+function updateModelSearchValue(role = 'mut') {
+    const picker = modelPicker(role);
+    if (!picker.input) return;
     
-    const selectedModel = allModelsFlat.find(m => m.value === userModel && m.provider === userProvider);
+    const state = modelState(role);
+    const selectedModel = allModelsFlat.find(m => m.value === state.model && m.provider === state.provider);
     if (selectedModel) {
-        modelSearchInput.value = selectedModel.label;
+        picker.input.value = selectedModel.label;
     } else {
         // Try to find any model with this value
-        const anyModel = allModelsFlat.find(m => m.value === userModel);
+        const anyModel = allModelsFlat.find(m => m.value === state.model);
         if (anyModel) {
-            modelSearchInput.value = anyModel.label;
-            userProvider = anyModel.provider;
+            picker.input.value = anyModel.label;
+            if (role === 'analysis') {
+                analysisProvider = anyModel.provider;
+            } else {
+                userProvider = anyModel.provider;
+            }
         } else {
-            modelSearchInput.value = `${userProvider}/${userModel}`;
+            picker.input.value = `${state.provider}/${state.model}`;
         }
     }
     
-    if (modelSelectHidden) {
-        modelSelectHidden.value = userModel;
+    if (picker.hidden) {
+        picker.hidden.value = modelState(role).model;
     }
 }
 
-function handleModelSearchKeydown(e) {
-    if (!modelDropdown || modelDropdown.style.display === 'none') return;
+function handleModelSearchKeydown(e, role = 'mut') {
+    const picker = modelPicker(role);
+    if (!picker.dropdown || picker.dropdown.style.display === 'none') return;
     
-    const options = modelDropdown.querySelectorAll('.model-option');
+    const options = picker.dropdown.querySelectorAll('.model-option');
     if (options.length === 0) return;
+    let selectedIndex = role === 'analysis' ? analysisSelectedModelIndex : selectedModelIndex;
     
     if (e.key === 'ArrowDown') {
         e.preventDefault();
-        selectedModelIndex = Math.min(selectedModelIndex + 1, options.length - 1);
-        options[selectedModelIndex].scrollIntoView({ block: 'nearest' });
-        options[selectedModelIndex].style.background = '#e8f4f8';
-        if (selectedModelIndex > 0) {
-            options[selectedModelIndex - 1].style.background = '';
+        selectedIndex = Math.min(selectedIndex + 1, options.length - 1);
+        options[selectedIndex].scrollIntoView({ block: 'nearest' });
+        options[selectedIndex].style.background = '#e8f4f8';
+        if (selectedIndex > 0) {
+            options[selectedIndex - 1].style.background = '';
         }
     } else if (e.key === 'ArrowUp') {
         e.preventDefault();
-        selectedModelIndex = Math.max(selectedModelIndex - 1, 0);
-        options[selectedModelIndex].scrollIntoView({ block: 'nearest' });
-        options[selectedModelIndex].style.background = '#e8f4f8';
-        if (selectedModelIndex < options.length - 1) {
-            options[selectedModelIndex + 1].style.background = '';
+        selectedIndex = Math.max(selectedIndex - 1, 0);
+        options[selectedIndex].scrollIntoView({ block: 'nearest' });
+        options[selectedIndex].style.background = '#e8f4f8';
+        if (selectedIndex < options.length - 1) {
+            options[selectedIndex + 1].style.background = '';
         }
     } else if (e.key === 'Enter') {
         e.preventDefault();
-        if (selectedModelIndex >= 0 && selectedModelIndex < options.length) {
-            const option = options[selectedModelIndex];
+        if (selectedIndex >= 0 && selectedIndex < options.length) {
+            const option = options[selectedIndex];
             const value = option.dataset.value;
             const provider = option.dataset.provider;
-            selectModel(value, provider);
+            selectModel(value, provider, role);
         }
     } else if (e.key === 'Escape') {
-        hideModelDropdown();
-        modelSearchInput.blur();
+        hideModelDropdown(role);
+        picker.input.blur();
+    }
+    if (role === 'analysis') {
+        analysisSelectedModelIndex = selectedIndex;
+    } else {
+        selectedModelIndex = selectedIndex;
     }
 }
 
 // Legacy function for backward compatibility
-function updateModelSelector(provider) {
+function updateModelSelector(provider, role = 'mut') {
     // This is now handled by the searchable input
-    updateModelSearchValue();
+    updateModelSearchValue(role);
 }
 
-function formattedModelSelection() {
-    const provider = (userProvider || 'openai').trim();
-    const model = (userModel || '').trim();
+function formattedModelSelection(role = 'mut') {
+    const state = modelState(role);
+    const label = role === 'analysis' ? 'ANM' : 'MUT';
+    const provider = (state.provider || 'openai').trim();
+    const model = (state.model || '').trim();
+    return model ? `${label} ${provider}/${model}` : label;
+}
+
+function shortModelSelection(role = 'mut') {
+    const state = modelState(role);
+    const provider = (state.provider || 'openai').trim();
+    const model = (state.model || '').trim();
     return model ? `${provider}/${model}` : 'Model';
 }
 
+function formattedModelPair() {
+    return `${formattedModelSelection('mut')} · ${formattedModelSelection('analysis')}`;
+}
+
+function getModelSelectionForRole(role) {
+    return role === 'mut' ? getCurrentModelSelection('mut') : getCurrentModelSelection('analysis');
+}
+
+function selectedModelPayload(role = 'analysis') {
+    const mut = getCurrentModelSelection('mut');
+    const anm = getCurrentModelSelection('analysis');
+    const selected = role === 'mut' ? mut : anm;
+    return {
+        model_role: role,
+        model: selected.model,
+        provider: selected.provider,
+        mut_model: mut.model,
+        mut_provider: mut.provider,
+        analysis_model: anm.model,
+        analysis_provider: anm.provider,
+    };
+}
+
+function pricingModelPayload(role = 'analysis') {
+    const selected = getModelSelectionForRole(role);
+    return {
+        model: selected.model,
+        provider: selected.provider,
+    };
+}
+
 function updateModelDisplay() {
-    const displayText = formattedModelSelection();
+    const displayText = formattedModelPair();
     const chipLabel = document.getElementById('model-chip-label');
     if (chipLabel) {
         chipLabel.textContent = displayText;
@@ -400,6 +513,27 @@ function updateModelDisplay() {
     }
 }
 
+function updateCostDisplay() {
+    const costEstimate = document.getElementById('cost-estimate');
+    if (!costEstimate || !modelPricingCache) return;
+
+    const mut = getModelSelectionForRole('mut');
+    const anm = getModelSelectionForRole('analysis');
+    const estimates = [
+        ['MUT', mut.provider, mut.model],
+        ['ANM', anm.provider, anm.model],
+    ].map(function (row) {
+        const providerData = modelPricingCache[row[1]];
+        const modelData = providerData && providerData.models.find(function (m) { return m.id === row[2]; });
+        if (!modelData || !modelData.pricing) return row[0] + ': -';
+        const pricing = modelData.pricing;
+        const estimatedCost = (1000 * pricing.input_per_1k / 1000) + (500 * pricing.output_per_1k / 1000);
+        return row[0] + ': $' + estimatedCost.toFixed(4);
+    });
+    costEstimate.textContent = estimates.join(' · ');
+    costEstimate.title = 'Estimated cost for a typical request per configured model role (1000 input + 500 output tokens)';
+}
+
 // Helper function to get API request headers
 function getApiHeaders() {
     return {
@@ -408,12 +542,9 @@ function getApiHeaders() {
 }
 
 // Helper: request body with selected model/provider (BYO credentials live server-side via env)
-function getApiBody(additionalData = {}) {
+function getApiBody(additionalData = {}, role = 'analysis') {
     const body = { ...additionalData };
-    const sel = getCurrentModelSelection();
-    body.model = sel.model;
-    body.provider = sel.provider;
-    return body;
+    return { ...body, ...selectedModelPayload(role) };
 }
 
 // DOM Elements
@@ -788,39 +919,6 @@ async function loadModelPricing() {
     }
 }
 
-// Update cost display based on selected model
-function updateCostDisplay() {
-    const costEstimate = document.getElementById('cost-estimate');
-    if (!costEstimate || !modelPricingCache) return;
-
-    const sel = getCurrentModelSelection();
-    const provider = sel.provider;
-    const model = sel.model;
-
-    const providerData = modelPricingCache[provider];
-    if (!providerData) {
-        costEstimate.textContent = '-';
-        return;
-    }
-
-    const modelData = providerData.models.find(function (m) { return m.id === model; });
-    if (!modelData || !modelData.pricing) {
-        costEstimate.textContent = '-';
-        return;
-    }
-    
-    const pricing = modelData.pricing;
-    
-    // Estimate for a typical request (1000 input, 500 output tokens)
-    const typicalInput = 1000;
-    const typicalOutput = 500;
-    const estimatedCost = (typicalInput * pricing.input_per_1k / 1000) + (typicalOutput * pricing.output_per_1k / 1000);
-    
-    // Show total cost (already includes markup)
-    costEstimate.textContent = `$${estimatedCost.toFixed(4)}`;
-    costEstimate.title = `Estimated cost for a typical request (${typicalInput} input + ${typicalOutput} output tokens)`;
-}
-
 // Check health on page load
 window.addEventListener('DOMContentLoaded', async () => {
     // Initialize model search with fallback models first (for immediate UI)
@@ -830,7 +928,8 @@ window.addEventListener('DOMContentLoaded', async () => {
     const modelsLoaded = await loadModelsFromGateway();
     if (modelsLoaded) {
         // Update the model search input with current selection
-        updateModelSearchValue();
+        updateModelSearchValue('mut');
+        updateModelSearchValue('analysis');
         updateModelDisplay();
         console.log('Model selector updated with gateway models');
     }
@@ -903,8 +1002,10 @@ window.addEventListener('DOMContentLoaded', async () => {
     
     // Initialize settings UI
     const providerSelect = document.getElementById('provider-select');
+    const analysisProviderSelect = document.getElementById('analysis-provider-select');
     const apiKeyInput = document.getElementById('api-key-input');
     const modelSelect = document.getElementById('model-select');
+    const analysisModelSelect = document.getElementById('analysis-model-select');
     const saveSettingsBtn = document.getElementById('save-settings-btn');
     const testApiKeyBtn = document.getElementById('test-api-key-btn');
     const toggleSettingsBtn = document.getElementById('toggle-settings-btn');
@@ -921,7 +1022,6 @@ window.addEventListener('DOMContentLoaded', async () => {
         providerSelect.addEventListener('change', () => {
             const newProvider = providerSelect.value;
             const oldProvider = userProvider;
-            userProvider = newProvider;
             
             // Only reset model if provider actually changed
             if (oldProvider !== newProvider) {
@@ -930,13 +1030,35 @@ window.addEventListener('DOMContentLoaded', async () => {
                 
                 if (!currentModelValid) {
                     const defaultModel = defaultModels[newProvider] || (allModelsData[newProvider] && allModelsData[newProvider][0]) || 'gpt-4o-mini';
-                    persistModelSelection(newProvider, defaultModel);
+                    persistModelSelection(newProvider, defaultModel, 'mut');
                 } else {
-                    persistModelSelection(newProvider, userModel);
+                    persistModelSelection(newProvider, userModel, 'mut');
                 }
             }
             
-            updateModelSelector(newProvider);
+            updateModelSelector(newProvider, 'mut');
+        });
+    }
+
+    if (analysisProviderSelect) {
+        analysisProviderSelect.value = analysisProvider;
+        updateModelSelector(analysisProvider, 'analysis');
+
+        analysisProviderSelect.addEventListener('change', () => {
+            const newProvider = analysisProviderSelect.value;
+            const oldProvider = analysisProvider;
+
+            if (oldProvider !== newProvider) {
+                const currentModelValid = allModelsFlat.some(m => m.value === analysisModel && m.provider === newProvider);
+                if (!currentModelValid) {
+                    const defaultModel = defaultModels[newProvider] || (allModelsData[newProvider] && allModelsData[newProvider][0]) || 'gpt-4o';
+                    persistModelSelection(newProvider, defaultModel, 'analysis');
+                } else {
+                    persistModelSelection(newProvider, analysisModel, 'analysis');
+                }
+            }
+
+            updateModelSelector(newProvider, 'analysis');
         });
     }
     
@@ -945,6 +1067,9 @@ window.addEventListener('DOMContentLoaded', async () => {
     }
     if (modelSelect) {
         modelSelect.value = userModel;
+    }
+    if (analysisModelSelect) {
+        analysisModelSelect.value = analysisModel;
     }
     
     // Toggle settings visibility (preserve model-chip markup)
@@ -974,7 +1099,9 @@ window.addEventListener('DOMContentLoaded', async () => {
             modelStatusChangeBtn.addEventListener('click', () => {
                 isExpanded = true;
                 setExpanded(true);
-                if (modelSearchInput) {
+                if (analysisModelSearchInput) {
+                    analysisModelSearchInput.focus();
+                } else if (modelSearchInput) {
                     modelSearchInput.focus();
                 }
             });
@@ -985,16 +1112,21 @@ window.addEventListener('DOMContentLoaded', async () => {
     // Save settings — use searchable picker state, not stale hidden <select>
     if (saveSettingsBtn) {
         saveSettingsBtn.addEventListener('click', () => {
-            const sel = getCurrentModelSelection();
-            const valid = allModelsFlat.some(function (m) {
-                return m.provider === sel.provider && m.value === sel.model;
+            const mut = getCurrentModelSelection('mut');
+            const anm = getCurrentModelSelection('analysis');
+            const validMut = allModelsFlat.some(function (m) {
+                return m.provider === mut.provider && m.value === mut.model;
             });
-            if (!valid) {
-                apiKeyStatus.textContent = '⚠ Pick a model from the search list';
+            const validAnm = allModelsFlat.some(function (m) {
+                return m.provider === anm.provider && m.value === anm.model;
+            });
+            if (!validMut || !validAnm) {
+                apiKeyStatus.textContent = '⚠ Pick both models from the search lists';
                 apiKeyStatus.style.color = '#ffc107';
                 return;
             }
-            persistModelSelection(sel.provider, sel.model);
+            persistModelSelection(mut.provider, mut.model, 'mut');
+            persistModelSelection(anm.provider, anm.model, 'analysis');
             updateModelDisplay();
             
             apiKeyStatus.textContent = '✓ Model selection saved';
@@ -1010,13 +1142,26 @@ window.addEventListener('DOMContentLoaded', async () => {
     // Update cost when provider or model changes
     if (providerSelect) {
         providerSelect.addEventListener('change', async () => {
-            await updateModelSelector(providerSelect.value);
+            await updateModelSelector(providerSelect.value, 'mut');
+            updateModelDisplay();
+        });
+    }
+
+    if (analysisProviderSelect) {
+        analysisProviderSelect.addEventListener('change', async () => {
+            await updateModelSelector(analysisProviderSelect.value, 'analysis');
             updateModelDisplay();
         });
     }
     
     if (modelSelect) {
         modelSelect.addEventListener('change', () => {
+            updateCostDisplay();
+            updateModelDisplay();
+        });
+    }
+    if (analysisModelSelect) {
+        analysisModelSelect.addEventListener('change', () => {
             updateCostDisplay();
             updateModelDisplay();
         });
@@ -1211,8 +1356,7 @@ detectFociBtn.addEventListener('click', async () => {
             body: JSON.stringify({
                 estimated_input_tokens: Math.ceil(prompt.length / 4) + 500, // Rough estimate: prompt + system message
                 estimated_output_tokens: 1000, // Estimate for foci detection response
-                model: userModel,
-                provider: userProvider
+                ...pricingModelPayload('analysis')
             })
         });
         
@@ -2284,8 +2428,7 @@ generateOutputBtn.addEventListener('click', async () => {
             body: JSON.stringify({
                 estimated_input_tokens: Math.ceil(prompt.length / 4) + 500, // Rough estimate: prompt + system message
                 estimated_output_tokens: 500, // Estimate for generated output
-                model: userModel,
-                provider: userProvider
+                ...pricingModelPayload('mut')
             })
         });
         
@@ -2311,7 +2454,7 @@ generateOutputBtn.addEventListener('click', async () => {
         const response = await fetch('/api/generate-output', {
             method: 'POST',
             headers: getApiHeaders(),
-            body: JSON.stringify(getApiBody({ prompt })),
+            body: JSON.stringify(getApiBody({ prompt }, 'mut')),
         });
         
         const data = await response.json();
@@ -2386,8 +2529,7 @@ assessBtn.addEventListener('click', async () => {
             body: JSON.stringify({
                 estimated_input_tokens: estimatedInputTokens,
                 estimated_output_tokens: estimatedOutputTokens,
-                model: userModel,
-                provider: userProvider
+                ...pricingModelPayload('analysis')
             })
         });
         
@@ -2866,8 +3008,7 @@ if (rewritePromptBtn) {
                 body: JSON.stringify({
                     estimated_input_tokens: estimatedInputTokens,
                     estimated_output_tokens: estimatedOutputTokens,
-                    model: userModel,
-                    provider: userProvider
+                    ...pricingModelPayload('analysis')
                 })
             });
             
@@ -2963,8 +3104,7 @@ if (generateFocusedOutputBtn) {
                 body: JSON.stringify({
                     estimated_input_tokens: estimatedInputTokens,
                     estimated_output_tokens: estimatedOutputTokens,
-                    model: userModel,
-                    provider: userProvider
+                    ...pricingModelPayload('mut')
                 })
             });
             
@@ -2986,7 +3126,7 @@ if (generateFocusedOutputBtn) {
             const response = await fetch('/api/generate-output', {
                 method: 'POST',
                 headers: getApiHeaders(),
-                body: JSON.stringify(getApiBody({ prompt: rewrittenPromptText })),
+                body: JSON.stringify(getApiBody({ prompt: rewrittenPromptText }, 'mut')),
             });
             
             const data = await response.json();
@@ -3142,7 +3282,7 @@ async function fetchAblationSample(prompt, fociList, kind, focusIndex, temperatu
                 kind: kind,
                 focus_index: focusIndex,
                 temperature: temperature
-            })),
+            }, 'mut')),
             signal: controller.signal
         });
         const data = await response.json();
@@ -3259,7 +3399,7 @@ async function runPacedAblation(prompt, fociList, cfg, onProgress) {
                 temperature: cfg.temperature,
                 input_tokens: inputTokens,
                 output_tokens: outputTokens
-            })),
+            }, 'mut')),
             signal: controller.signal
         });
         const data = await response.json();
@@ -3716,7 +3856,7 @@ async function runShuffleRobustnessForFocus(focusIndex, data, focusNameHint) {
                 permutation_seed: data.permutation_seed,
                 temperature: cfg.temperature,
                 inputs: inputs
-            }))
+            }, 'mut'))
         });
         const result = await response.json();
         if (!response.ok) {
@@ -3869,7 +4009,7 @@ async function runRefineAblationStability(focusIndex, data) {
                 permutation_seed: data.permutation_seed,
                 behavioral_criterion: criterion,
                 run_behavioral_judge: runJudge,
-            })),
+            }, 'mut')),
         });
         const result = await response.json();
         if (!response.ok) {
@@ -3967,7 +4107,7 @@ function bindBehavioralDifferenceReviewHandlers(data) {
                 const response = await fetch('/api/behavioral-difference/llm-judge', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
+                    body: JSON.stringify(getApiBody({
                         focus: focus,
                         removed_span: rec.prompt_section || rec.focus_text || '',
                         baseline_outputs: baselineOutputs,
@@ -3975,10 +4115,8 @@ function bindBehavioralDifferenceReviewHandlers(data) {
                         prompt: data.prompt || '',
                         blind: true,
                         n_judges: 1,
-                        provider: userProvider,
-                        model: userModel,
                         api_key: userApiKey,
-                    }),
+                    })),
                 });
                 const result = await response.json();
                 if (!response.ok) {
@@ -4566,7 +4704,7 @@ async function updateFocusOrderCostEstimate() {
                 run_position_sweep: focusOrderRunSweep && focusOrderRunSweep.checked,
                 run_behavioral_judge: focusOrderRunJudge && focusOrderRunJudge.checked,
                 baseline_outputs: baselines,
-            })),
+            }, 'mut')),
         });
         const est = await response.json();
         if (response.ok) {
@@ -4629,7 +4767,7 @@ if (runFocusOrderBtn) {
                     focus_index_for_sweep: runSweep ? parseInt(sweepFocus, 10) : null,
                     run_behavioral_judge: runJudge,
                     behavioral_criterion: criterion,
-                })),
+                }, 'mut')),
             });
             const data = await response.json();
             if (!response.ok) {
@@ -4995,7 +5133,7 @@ if (generateAgentResponseBtn) {
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({
+                body: JSON.stringify(getApiBody({
                     foci: window.fociWeightsData.foci_weights.map(fw => {
                         // Find the original focus to get prompt_section + dynamic flags
                         const originalFocus = agentFoci.find(f => f.focus === fw.focus);
@@ -5013,9 +5151,7 @@ if (generateAgentResponseBtn) {
                     all_foci: agentFoci,
                     chat_content: chatContent,
                     chat_weight: window.fociWeightsData.chat_weight,
-                    model: userModel || 'gpt-4o-mini',
-                    provider: userProvider || 'openai'
-                }),
+                })),
             });
             
             const buildData = await buildResponse.json();
@@ -5030,12 +5166,11 @@ if (generateAgentResponseBtn) {
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({
+                body: JSON.stringify(getApiBody({
                     constructed_prompt: buildData.constructed_prompt,
                     chat_content: chatContent,
-                    model: 'gpt-4o-mini',
                     temperature: 0.7
-                }),
+                }, 'mut')),
             });
             
             const genData = await genResponse.json();
@@ -6815,11 +6950,10 @@ if (runBatchAgentBtn) {
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({
+                body: JSON.stringify(getApiBody({
                     pairs: batchAgentData.pairs,
                     foci: batchFoci,
-                    model: 'gpt-4o-mini'
-                })
+                }))
             });
             
             if (!response.ok) {
@@ -7349,10 +7483,9 @@ if (runLLMEvalBtn) {
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({
+                body: JSON.stringify(getApiBody({
                     results: batchAgentResultsData,
-                    model: 'gpt-4o-mini'
-                })
+                }))
             });
             
             if (!response.ok) {
@@ -7439,7 +7572,7 @@ if (analyzeOptimizationBtn) {
             // Foci and prompt - use batch foci if available, otherwise regular foci
             foci: batchFoci.length > 0 ? batchFoci : foci,
             original_prompt: promptInput?.value || '',
-            model: 'gpt-4o'
+            ...selectedModelPayload('analysis')
         };
         
         if (!dataToSend.batch_analysis.statistics && 
@@ -7846,6 +7979,10 @@ function collectWorkspaceSession() {
         exported_at: new Date().toISOString(),
         active_tab: currentTab,
         model: { provider: userProvider, model: userModel },
+        models: {
+            mut: getCurrentModelSelection('mut'),
+            analysis: getCurrentModelSelection('analysis'),
+        },
         prompt_analysis: collectPromptAnalysisWorkspace(),
         batch_analysis: {
             prompt: batchPromptInput ? batchPromptInput.value : '',
@@ -8140,10 +8277,17 @@ function restoreAgentBuilderWorkspace(ab) {
 }
 
 function restoreWorkspaceSession(data) {
-    if (data.model && data.model.provider && data.model.model) {
-        persistModelSelection(data.model.provider, data.model.model);
-        updateModelSelector(data.model.provider);
+    const mut = data.models && data.models.mut ? data.models.mut : data.model;
+    const anm = data.models && data.models.analysis ? data.models.analysis : null;
+    if (mut && mut.provider && mut.model) {
+        persistModelSelection(mut.provider, mut.model, 'mut');
+        updateModelSelector(mut.provider, 'mut');
     }
+    if (anm && anm.provider && anm.model) {
+        persistModelSelection(anm.provider, anm.model, 'analysis');
+        updateModelSelector(anm.provider, 'analysis');
+    }
+    updateModelDisplay();
     restorePromptAnalysisWorkspace(data.prompt_analysis);
     restoreBatchAnalysisWorkspace(data.batch_analysis);
     restoreAgentBuilderWorkspace(data.agent_builder);
