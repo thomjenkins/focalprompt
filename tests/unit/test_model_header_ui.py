@@ -58,6 +58,20 @@ def test_api_payload_includes_model_roles():
     assert "getApiBody({ prompt }, 'mut')" in js
 
 
+def test_rewrite_prompt_route_logs_model_context():
+    py = (REPO / 'routes' / 'assessment_routes.py').read_text(encoding='utf-8')
+    start = py.index("def rewrite_prompt():")
+    block = py[start:py.index("@assessment_bp.route('/api/build-agent-prompt-from-inputs'", start)]
+
+    assert '✅ /api/rewrite-prompt route handler called' in block
+    assert 'Method: {request.method}' in block
+    assert 'Path: {request.path}' in block
+    assert 'Blueprint: {assessment_bp.name}' in block
+    assert "request_inference_fields(data, model_role='analysis')" in block
+    assert 'Using model: {model}, provider: {provider}' in block
+    assert '✅ Prompt rewritten successfully' in block
+
+
 def test_collapsed_settings_hides_the_whole_model_selection_panel():
     js = (REPO / 'static' / 'js' / 'app.js').read_text(encoding='utf-8')
 

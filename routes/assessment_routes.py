@@ -175,6 +175,12 @@ def generate_output():
 @assessment_bp.route('/api/rewrite-prompt', methods=['POST'])
 def rewrite_prompt():
     """Rewrite prompt with emphasis based on focus weights."""
+    import sys
+    print(f"✅ /api/rewrite-prompt route handler called", file=sys.stderr)
+    print(f"   Method: {request.method}", file=sys.stderr)
+    print(f"   Path: {request.path}", file=sys.stderr)
+    print(f"   Blueprint: {assessment_bp.name}", file=sys.stderr)
+
     try:
         data = request.json
         prompt = data.get('prompt', '')
@@ -185,14 +191,22 @@ def rewrite_prompt():
         if not foci_weights:
             return jsonify({'error': 'Foci with weights are required'}), 400
         
-        assessor = get_assessor(data=request_inference_fields(data, model_role='analysis'))
+        fields = request_inference_fields(data, model_role='analysis')
+        model = fields.get('model', 'gpt-4o')
+        provider = fields.get('provider', 'openai')
+
+        print(f"   Using model: {model}, provider: {provider}", file=sys.stderr)
+
+        assessor = get_assessor(data=fields)
         service = PromptRewriteService(assessor)
         
         rewritten = service.rewrite_prompt(prompt, foci_weights)
-        
+
+        print(f"   ✅ Prompt rewritten successfully", file=sys.stderr)
         return jsonify({'rewritten_prompt': rewritten})
         
     except Exception as e:
+        print(f"   ❌ Prompt rewrite failed: {e}", file=sys.stderr)
         return internal_error('assessment_rewrite_prompt', e)
 
 
