@@ -27,6 +27,7 @@ const foci = FOCI;
 const activeScenarioMessageId = ACTIVE;
 const selectedFocusIndex = 0;
 const document = {querySelectorAll: () => messages.map(message => ({
+    dataset: {messageId: message.id},
     querySelector: selector => ({value: ({
         '.scenario-message-id': message.id,
         '.scenario-role': message.role || 'user',
