@@ -50,6 +50,7 @@ async function fetchAblationSample(inference, fs, kind, index, temperature, cont
 }
 const oneAllocation = {assessment_protocol: 'context-grounded-v2', assessment_temperature: .2,
   budget_normalized: true, raw_score_total: 60,
+  allocation_recovery: {calls: 1, focus_indices: [0]},
   request_summary: 'Answer <this> request.', request_evidence: [{message_id: 'chat', quote: 'Retained chat'}],
   foci: [{focus: 'Brief', focus_index: 0, applicability: 'background', score: 100, explanation: 'A concise answer.'}]};
 async function fetch(path, options) {
@@ -97,6 +98,8 @@ async function mapPool(items, count, task) { return Promise.all(items.map(task))
   assert.match(rendered, /Retained chat/);
   assert.match(rendered, /scores totaled 60/);
   assert.match(rendered, /Rescaled proportionally to 100%/);
+  assert.match(rendered, /Completed with 1 follow-up model call/);
+  assert.deepEqual(flow.collect().prospective.allocation_recovery, {calls: 1, focus_indices: [0]});
   await assert.rejects(flow.sampleBaseline, /Successful samples are saved/);
   const completed = flow.collect().samples.filter(Boolean).length;
   assert.ok(completed > 0 && completed < 10);

@@ -174,7 +174,9 @@
             + esc(assessment.assessment_temperature) + '</p>' : '';
         const normalized = assessment.budget_normalized ? '<p class="info-text">The model’s scores totaled '
             + esc(assessment.raw_score_total) + '. Rescaled proportionally to 100%; relative weights and zero scores are unchanged.</p>' : '';
-        return request + evidence + temperature + normalized
+        const recovery = assessment.allocation_recovery?.calls > 0 ? '<p class="info-text">Completed with '
+            + esc(assessment.allocation_recovery.calls) + ' follow-up model call(s) to repair an incomplete or invalid assessment.</p>' : '';
+        return request + evidence + temperature + normalized + recovery
             + '<div class="workflow-table-wrap"><table class="workflow-table"><thead><tr><th>Focus</th><th>Budget</th><th>Justification</th></tr></thead><tbody>'
             + assessment.foci.map(row => '<tr><th scope="row">' + (row.focus_index + 1) + '. ' + esc(row.focus)
                 + (applicability[row.applicability] ? '<br><span class="info-text">' + applicability[row.applicability] + '</span>' : '')
