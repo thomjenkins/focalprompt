@@ -140,7 +140,10 @@
                             
                             <p><strong>2. Choose Analyse and Retain messages</strong></p>
                             <p>
-                                Foci are grounded only in <strong>Analyse</strong> messages. <strong>Retain</strong> messages stay unchanged across experimental arms and can have a unique input name for batch substitution.
+                                Foci are grounded only in <strong>Analyse</strong> messages. <strong>Retain</strong> messages stay unchanged across experimental arms. Their optional <strong>Input name</strong> identifies a batch input column, not the message itself.
+                            </p>
+                            <p>
+                                For single runs, the editor text is used directly; you can leave Input name blank. Message IDs are managed automatically and preserved with saved analysis.
                             </p>
                             <p>
                                 Tag the Analyse content into points of focus or "foci" and aim for close to <strong>100% coverage</strong>. The model can propose foci, but review the exact message-relative spans before running experiments.
@@ -191,10 +194,10 @@
                             
                             <p><strong>7. Batch Analysis</strong></p>
                             <p>
-                                Batch fields are generated from retained messages with <code>input_name</code>. Every row must supply every named input; Analyse messages and the output contract are shared unchanged.
+                                Set a retained message's <strong>Input name</strong> to a column name such as <code>customer_message</code>. Each row's value replaces that message's <strong>entire content</strong>, not a placeholder inside it. Analyse messages and the output contract are shared unchanged across rows.
                             </p>
                             <p>
-                                Add rows manually or upload a CSV containing <code>output</code> plus one column for every named input.
+                                Add rows manually or upload a CSV containing <code>output</code> (the recorded response) plus one column for every named input. Multiple varying messages need distinct input names, with a non-blank value for each in every row. Leave Input name blank on retained messages that should stay fixed across rows.
                             </p>
                             
                             <h3 style="margin-top: 32px; color: var(--primary-color);">Agent Builder</h3>

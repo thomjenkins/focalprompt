@@ -48,6 +48,8 @@ Every tool accepts either the legacy `prompt` string or an optional `scenario` o
 }
 ```
 
+Here, `options.inputs.question` replaces the complete content of the retained message with `input_name: "question"`; it does not interpolate placeholders within that message. Omitting `options.inputs` uses stored message content. Supplying it requires a non-blank value for every configured input name. The message `id` remains a separate reference key for analysis, even when it happens to equal `input_name`.
+
 ## Client configuration
 
 ### Claude Desktop

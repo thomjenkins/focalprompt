@@ -36,9 +36,25 @@ Analyse messages are eligible for focus detection and ablation. Retain messages 
 }
 ```
 
+## Named batch inputs
+
 `input_name` is valid only on a retained message. For a batch pair, `pairs[].inputs[input_name]` replaces that message's complete content; every named input must be present and non-blank. CSV columns other than reserved `output` and legacy `prompt` are named inputs. Missing, blank, and unused columns are reported separately.
 
 For a single run, omitting `inputs` uses the contents already stored on retained messages. Passing an explicit `inputs` object switches to named-input binding and requires every configured name.
+
+In the web editor, **Input name** means “batch input column (optional).” Leave it blank for messages whose content should stay fixed across rows, or when only doing single runs. Naming an input does not itself replace the editor text; replacement happens when an input mapping is supplied.
+
+For the `customer_message` input above, upload a CSV such as:
+
+```csv
+customer_message,output
+"My pup needs a booster.","When was their last vaccination?"
+"Can I book a check-up?","What day works for you?"
+```
+
+Each row's `customer_message` replaces the entire retained message, while `output` is the recorded response for that example. Analyse messages and the output contract remain shared across rows. Multiple varying messages need distinct input names, each with a matching column and a non-blank value in every row. Manual batch entry uses the same names.
+
+This is **not placeholder interpolation**: setting `input_name` to `clientName` does not substitute `{{clientName}}` inside a message. Message `id` is a separate reference key used by focus spans and rewrites, not a batch column.
 
 ## Strict structured output
 
