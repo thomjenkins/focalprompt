@@ -87,7 +87,7 @@
         const rows = comparisonRows(data);
         if (!rows.length) return '';
         const number = value => value === null ? '—' : value.toFixed(1);
-        return '<div style="overflow-x:auto"><table class="results-table"><thead><tr>'
+        return '<div class="workflow-table-wrap"><table class="workflow-table"><thead><tr>'
             + '<th>Output</th><th>Self-assessment /100</th><th>Second judge /100</th><th>Second − self (points)</th>'
             + '</tr></thead><tbody>' + rows.map(row => '<tr><td>' + esc(row.label) + '</td><td>'
                 + number(row.self) + '</td><td>' + number(row.external) + '</td><td>'
