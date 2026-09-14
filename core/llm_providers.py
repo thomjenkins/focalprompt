@@ -13,7 +13,7 @@ from abc import ABC, abstractmethod
 from typing import Optional, List, Dict, Any
 import json
 
-from utils.inference_scenario import ProviderCapabilityError
+from utils.inference_scenario import ProviderCapabilityError, StructuredOutputError
 
 
 def _openai_model_id(model: str) -> str:
@@ -68,6 +68,57 @@ def _structured_schema(response_format: Optional[Dict]) -> Optional[Dict[str, An
     if not isinstance(config, dict) or not isinstance(config.get('schema'), dict):
         raise ProviderCapabilityError('Invalid json_schema response_format')
     return config['schema']
+
+
+def openai_output_parameters(model: str, response_format: Optional[Dict]) -> tuple[Dict, Dict]:
+    """Express a schema using the selected model's supported strict transport."""
+    if not response_format:
+        return {}, {}
+    schema = _structured_schema(response_format)
+    # These chat models support strict function arguments, but not the newer
+    # json_schema response format. Choose the transport before sampling so all
+    # experimental arms use the same schema and no output is repaired/resampled.
+    if schema is not None and _openai_model_id(model) in {
+        'gpt-3.5-turbo', 'gpt-3.5-turbo-0125', 'gpt-3.5-turbo-1106',
+    }:
+        config = response_format['json_schema']
+        name = config.get('name')
+        if not isinstance(name, str) or not name or config.get('strict') is not True:
+            raise ProviderCapabilityError('Structured function output requires a name and strict=true')
+        return {
+            'tools': [{'type': 'function', 'function': {
+                'name': name,
+                'description': 'Return the final response using the supplied output schema.',
+                'parameters': schema,
+                'strict': True,
+            }}],
+            'tool_choice': {'type': 'function', 'function': {'name': name}},
+            'parallel_tool_calls': False,
+        }, {'structured_output': 'strict_function_call', 'structured_output_function': name}
+    return {'response_format': response_format}, (
+        {'structured_output': 'response_format.json_schema'} if schema is not None else {}
+    )
+
+
+def openai_response_content(message: Any, output_metadata: Dict) -> Optional[str]:
+    """Read the response object; output functions are never executed."""
+    def field(value, name):
+        return value.get(name) if isinstance(value, dict) else getattr(value, name, None)
+
+    expected = output_metadata.get('structured_output_function')
+    if not expected or field(message, 'refusal'):
+        return field(message, 'content')
+    calls = field(message, 'tool_calls')
+    if not isinstance(calls, list) or len(calls) != 1:
+        raise StructuredOutputError('Model must return exactly one structured output function call')
+    call = calls[0]
+    function = field(call, 'function')
+    if field(call, 'type') != 'function' or field(function, 'name') != expected:
+        raise StructuredOutputError('Model returned an unexpected structured output function')
+    arguments = field(function, 'arguments')
+    if not isinstance(arguments, str) or not arguments.strip():
+        raise StructuredOutputError('Model returned empty structured output arguments')
+    return arguments
 
 
 def _merge_conversation_roles(
@@ -146,22 +197,21 @@ class OpenAIProvider(LLMProvider):
         max_token_kwargs, token_limit_metadata = openai_max_token_parameters(
             model, max_tokens
         )
+        output_kwargs, output_metadata = openai_output_parameters(model, response_format)
         kwargs = {
             'model': model,
             'messages': messages,
             **temperature_kwargs,
             **max_token_kwargs,
+            **output_kwargs,
         }
-        
-        if response_format:
-            kwargs['response_format'] = response_format
         response = self.client.chat.completions.create(**kwargs)
 
         choice = response.choices[0]
         refusal = getattr(choice.message, 'refusal', None)
         
         return {
-            'content': choice.message.content,
+            'content': openai_response_content(choice.message, output_metadata),
             'refusal': refusal,
             'finish_reason': getattr(choice, 'finish_reason', None),
             'provider_metadata': {
@@ -169,6 +219,7 @@ class OpenAIProvider(LLMProvider):
                 'role_merges': [],
                 'sampling': sampling_metadata,
                 'token_limit': token_limit_metadata,
+                **output_metadata,
             },
             'usage': {
                 'prompt_tokens': response.usage.prompt_tokens,

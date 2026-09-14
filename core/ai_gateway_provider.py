@@ -17,8 +17,10 @@ from core.llm_providers import (
     LLMProvider,
     openai_max_token_parameters,
     openai_temperature_parameters,
+    openai_output_parameters,
+    openai_response_content,
 )
-from utils.inference_scenario import ProviderCapabilityError
+from utils.inference_scenario import ProviderCapabilityError, StructuredOutputError
 
 # Lazy import - only import requests when actually needed
 _requests_available = None
@@ -165,9 +167,12 @@ class AIGatewayProvider(LLMProvider):
             **max_token_payload,
         }
         
-        # Structured output is experimental configuration, not a best-effort
-        # hint. Always forward it and let the gateway/provider reject clearly.
-        if response_format:
+        # Keep schema enforcement across model-specific API representations.
+        output_metadata = {}
+        if gateway_provider == 'openai':
+            output_payload, output_metadata = openai_output_parameters(model, response_format)
+            payload.update(output_payload)
+        elif response_format:
             payload['response_format'] = response_format
         
         # Make direct HTTP request to gateway with retry logic
@@ -210,7 +215,7 @@ class AIGatewayProvider(LLMProvider):
                 
                 choice = data['choices'][0]
                 return {
-                    'content': choice['message']['content'],
+                    'content': openai_response_content(choice['message'], output_metadata),
                     'refusal': choice['message'].get('refusal'),
                     'finish_reason': choice.get('finish_reason'),
                     'provider_metadata': {
@@ -218,6 +223,7 @@ class AIGatewayProvider(LLMProvider):
                         'role_merges': [],
                         'sampling': sampling_metadata,
                         'token_limit': token_limit_metadata,
+                        **output_metadata,
                     },
                     'usage': {
                         'prompt_tokens': data['usage']['prompt_tokens'],
@@ -287,6 +293,7 @@ class AIGatewayProvider(LLMProvider):
                 contract_markers = (
                     'response_format', 'response format', 'json_schema',
                     'json schema', 'structured output',
+                    'tool_choice', 'tool choice', 'tools', 'function', 'strict',
                 )
                 if (
                     response_format
@@ -360,7 +367,7 @@ class AIGatewayProvider(LLMProvider):
                     raise Exception("Service temporarily unavailable. Please try again in a moment. If the problem persists, please contact support.")
                     
             except Exception as e:
-                if isinstance(e, (RateLimitError, ProviderCapabilityError)):
+                if isinstance(e, (RateLimitError, ProviderCapabilityError, StructuredOutputError)):
                     raise
                 import sys
                 print(f"AI Gateway Unexpected Error: {str(e)}", file=sys.stderr)
