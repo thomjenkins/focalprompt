@@ -28,34 +28,33 @@ def test_app_js_updates_chip_and_lab_nav_model_display():
     assert 'updateModelChipLabel' not in js
 
 
-def test_settings_ui_configures_mut_and_analysis_models():
+def test_settings_ui_configures_global_and_section_models():
     html = (REPO / 'templates' / 'index.html').read_text(encoding='utf-8')
 
-    assert 'Model under test' in html
-    assert 'Analysis model' in html
+    assert 'Global default model' in html
+    assert 'data-model-section="quality"' in html
+    assert 'id="apply-model-to-all-btn"' in html
     assert 'id="provider-select"' in html
-    assert 'id="analysis-provider-select"' in html
     assert 'id="model-search"' in html
-    assert 'id="analysis-model-search"' in html
+    assert 'id="analysis-model-search"' not in html
 
 
-def test_save_model_selection_refreshes_both_visible_model_roles():
+def test_save_model_selection_refreshes_global_model():
     js = (REPO / 'static' / 'js' / 'app.js').read_text(encoding='utf-8')
     save_block_start = js.index("saveSettingsBtn.addEventListener('click'")
     save_block = js[save_block_start:js.index('updateCostDisplay();', save_block_start)]
 
     assert "persistModelSelection(mut.provider, mut.model, 'mut');" in save_block
-    assert "persistModelSelection(anm.provider, anm.model, 'analysis');" in save_block
-    assert save_block.index("persistModelSelection(anm.provider, anm.model, 'analysis');") < save_block.index('updateModelDisplay();')
+    assert save_block.index("persistModelSelection(mut.provider, mut.model, 'mut');") < save_block.index('updateModelDisplay();')
 
 
 def test_api_payload_includes_model_roles():
     js = (REPO / 'static' / 'js' / 'app.js').read_text(encoding='utf-8')
 
-    assert "function selectedModelPayload(role = 'analysis')" in js
+    assert "function selectedModelPayload(role = 'analysis', section = null)" in js
     assert 'mut_model: mut.model' in js
     assert 'analysis_model: anm.model' in js
-    assert "getApiBody({ scenario: scenario }, 'mut')" in js
+    assert "getApiBody({ scenario: scenario }, 'mut', 'output')" in js
 
 
 def test_rewrite_prompt_route_logs_model_context():

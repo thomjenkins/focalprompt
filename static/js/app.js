@@ -16,6 +16,166 @@ let userModel = localStorage.getItem('focalprompt_mut_model') || localStorage.ge
 let analysisProvider = localStorage.getItem('focalprompt_analysis_provider') || 'openai';
 let analysisModel = localStorage.getItem('focalprompt_analysis_model') || 'gpt-4o';
 
+// Section model settings. Role fields remain on the wire for older API clients.
+const MODEL_SECTIONS = [
+    'foci', 'output', 'reported', 'adjust', 'ablation', 'order', 'quality',
+    'batch-foci', 'batch-analysis', 'agent-foci', 'agent-assess',
+    'agent-response', 'agent-batch', 'agent-report', 'optimization',
+];
+
+function normalizeSectionModels(value) {
+    const normalized = {};
+    for (const section of MODEL_SECTIONS) {
+        const selection = value && value[section];
+        if (selection && typeof selection.provider === 'string' && selection.provider.trim()
+            && typeof selection.model === 'string' && selection.model.trim()) {
+            normalized[section] = { provider: selection.provider, model: selection.model };
+        }
+    }
+    return normalized;
+}
+
+function loadSectionModels() {
+    try {
+        return normalizeSectionModels(JSON.parse(localStorage.getItem('focalprompt_section_models')));
+    } catch (_) {
+        return {};
+    }
+}
+
+let sectionModelOverrides = loadSectionModels();
+
+function getSectionModel(section) {
+    return sectionModelOverrides[section] || { provider: userProvider, model: userModel };
+}
+
+function saveSectionModels() {
+    localStorage.setItem('focalprompt_section_models', JSON.stringify(sectionModelOverrides));
+}
+
+function collectModelSettings() {
+    return { global: { ...getSectionModel(null) }, sections: structuredClone(sectionModelOverrides) };
+}
+
+function restoreModelSettings(data) {
+    const globalModel = data.model_settings?.global || data.models?.mut || data.model;
+    sectionModelOverrides = normalizeSectionModels(data.model_settings?.sections);
+    if (globalModel && typeof globalModel.provider === 'string' && globalModel.provider
+        && typeof globalModel.model === 'string' && globalModel.model) {
+        persistModelSelection(globalModel.provider, globalModel.model, 'mut');
+    }
+    saveSectionModels();
+    renderSectionModelSelectors();
+    updateModelDisplay();
+}
+
+function setAllSectionModels(selection) {
+    sectionModelOverrides = {};
+    persistModelSelection(selection.provider, selection.model, 'mut');
+    saveSectionModels();
+    renderSectionModelSelectors();
+    updateCostDisplay();
+}
+
+const sectionModelPickers = new Map();
+
+function initSectionModelSelectors() {
+    document.querySelectorAll('[data-model-section]').forEach(container => {
+        const section = container.dataset.modelSection;
+        const id = 'section-model-' + section;
+        container.innerHTML = `
+            <button type="button" class="model-chip section-model-chip" aria-expanded="false" aria-controls="${id}-panel">
+                <span class="status-dot" aria-hidden="true"></span>
+                <span class="section-model-label"></span>
+                <span class="chip-action">Change</span>
+            </button>
+            <div id="${id}-panel" class="model-role-panel section-model-panel" hidden>
+                <div class="model-role-controls">
+                    <div>
+                        <label for="${id}-provider">LLM Provider</label>
+                        <select id="${id}-provider"></select>
+                    </div>
+                    <div>
+                        <label for="${id}-search">Model</label>
+                        <div class="section-model-search-wrap">
+                            <input id="${id}-search" type="text" placeholder="Search models (e.g., gpt-4, claude, gemini)..." autocomplete="off"
+                                role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="${id}-dropdown">
+                            <span class="section-model-search-icon" aria-hidden="true">⌕</span>
+                            <div id="${id}-dropdown" class="section-model-dropdown" role="listbox" aria-label="Models" style="display: none;"></div>
+                        </div>
+                        <select id="${id}-value" hidden aria-hidden="true" tabindex="-1"></select>
+                    </div>
+                </div>
+                <div class="section-model-footer">
+                    <span class="section-model-hint" aria-live="polite"></span>
+                    <button type="button" class="btn btn-outline btn-small section-model-reset">Use global default</button>
+                </div>
+            </div>`;
+        const picker = {
+            role: section,
+            input: container.querySelector('input'),
+            dropdown: container.querySelector('.section-model-dropdown'),
+            hidden: container.querySelector(`#${id}-value`),
+            providerSelect: container.querySelector(`#${id}-provider`),
+        };
+        sectionModelPickers.set(section, picker);
+        initSingleModelSearch(section);
+        const chip = container.querySelector('.section-model-chip');
+        const panel = container.querySelector('.section-model-panel');
+        chip.addEventListener('click', () => {
+            panel.hidden = !panel.hidden;
+            chip.setAttribute('aria-expanded', String(!panel.hidden));
+            chip.querySelector('.chip-action').textContent = panel.hidden ? 'Change' : 'Close';
+            if (!panel.hidden) picker.input.focus();
+            else hideModelDropdown(section);
+        });
+        picker.providerSelect.addEventListener('change', () => {
+            const provider = picker.providerSelect.value;
+            const models = allModelsData[provider] || [];
+            const model = models.includes(defaultModels[provider]) ? defaultModels[provider] : models[0];
+            if (model) persistModelSelection(provider, model, section);
+            picker.input.focus();
+            picker.input.select();
+        });
+        container.querySelector('.section-model-reset').addEventListener('click', () => {
+            delete sectionModelOverrides[section];
+            saveSectionModels();
+            hideModelDropdown(section);
+            renderSectionModelSelectors();
+        });
+    });
+    document.getElementById('apply-model-to-all-btn')?.addEventListener('click', () => {
+        setAllSectionModels(getCurrentModelSelection('mut'));
+    });
+    renderSectionModelSelectors();
+}
+
+function renderSectionModelSelectors() {
+    document.querySelectorAll('[data-model-section]').forEach(container => {
+        const section = container.dataset.modelSection;
+        const picker = sectionModelPickers.get(section);
+        if (!picker) return;
+        const current = getSectionModel(section);
+        const inherited = !sectionModelOverrides[section];
+        container.querySelector('.section-model-label').textContent =
+            `${inherited ? 'Default' : 'Model'} ${current.provider}/${current.model}`;
+        container.querySelector('.section-model-hint').textContent = inherited
+            ? 'Following the global default.' : 'Saved for this section.';
+        container.querySelector('.section-model-reset').disabled = inherited;
+        const providers = [...new Set([...Object.keys(allModelsData), current.provider])].sort();
+        picker.providerSelect.replaceChildren(...providers.map(provider => {
+            const option = document.createElement('option');
+            option.value = provider;
+            option.textContent = provider.charAt(0).toUpperCase() + provider.slice(1).replaceAll('_', ' ');
+            return option;
+        }));
+        picker.providerSelect.value = current.provider;
+        updateModelSearchValue(section);
+        hideModelDropdown(section);
+    });
+}
+// End section model settings.
+
 // Dynamic model list - will be populated from API
 let allModelsData = {
     openai: ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.2', 'gpt-5.1-instant', 'gpt-5.1-thinking', 'gpt-5.1-codex', 'gpt-5.1-codex-mini', 'gpt-5.1-codex-max', 'gpt-5.2-pro', 'gpt-5.2-chat', 'gpt-5', 'gpt-5-mini', 'gpt-5-nano', 'gpt-5-pro', 'gpt-5-chat', 'gpt-5-codex', 'gpt-4.1', 'gpt-4.1-mini', 'gpt-4.1-nano', 'gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo', 'gpt-3.5-turbo-instruct', 'gpt-oss-120b', 'gpt-oss-20b', 'gpt-oss-safeguard-20b', 'o3', 'o3-mini', 'o3-pro', 'o3-deep-research', 'o4-mini', 'o1', 'text-embedding-3-small', 'text-embedding-3-large', 'text-embedding-ada-002', 'codex-mini'],
@@ -136,11 +296,12 @@ const defaultModels = {
 
 // Searchable model selector
 let modelSearchInput, modelDropdown, modelSelectHidden;
-let filteredModels = [];
-let selectedModelIndex = -1;
+const modelSearchStates = new Map();
+function modelSearchState(role) {
+    if (!modelSearchStates.has(role)) modelSearchStates.set(role, { models: [], index: -1 });
+    return modelSearchStates.get(role);
+}
 let analysisModelSearchInput, analysisModelDropdown, analysisModelSelectHidden;
-let analysisFilteredModels = [];
-let analysisSelectedModelIndex = -1;
 
 function initModelSearch() {
     modelSearchInput = document.getElementById('model-search');
@@ -151,10 +312,11 @@ function initModelSearch() {
     analysisModelSelectHidden = document.getElementById('analysis-model-select');
     
     initSingleModelSearch('mut');
-    initSingleModelSearch('analysis');
+    initSectionModelSelectors();
 }
 
 function modelPicker(role) {
+    if (sectionModelPickers.has(role)) return sectionModelPickers.get(role);
     if (role === 'analysis') {
         return {
             role,
@@ -174,6 +336,7 @@ function modelPicker(role) {
 }
 
 function modelState(role) {
+    if (MODEL_SECTIONS.includes(role)) return getSectionModel(role);
     if (role === 'analysis') {
         return { provider: analysisProvider, model: analysisModel };
     }
@@ -188,6 +351,7 @@ function initSingleModelSearch(role) {
 
     picker.input.addEventListener('input', function () { handleModelSearch(role); });
     picker.input.addEventListener('focus', function () {
+        picker.input.select();
         if (picker.input.value) {
             handleModelSearch(role);
         } else {
@@ -198,6 +362,7 @@ function initSingleModelSearch(role) {
         setTimeout(function () {
             if (!picker.dropdown.contains(document.activeElement)) {
                 hideModelDropdown(role);
+                updateModelSearchValue(role);
             }
         }, 200);
     });
@@ -232,11 +397,9 @@ function handleModelSearch(role = 'mut') {
     });
     
     // Limit to 50 results for performance
-    if (role === 'analysis') {
-        analysisFilteredModels = filtered.slice(0, 50);
-    } else {
-        filteredModels = filtered.slice(0, 50);
-    }
+    modelSearchState(role).models = filtered.slice(0, 50);
+    modelSearchState(role).index = -1;
+    picker.input.removeAttribute('aria-activedescendant');
     
     renderModelDropdown(role);
     showModelDropdown(role);
@@ -244,7 +407,7 @@ function handleModelSearch(role = 'mut') {
 
 function renderModelDropdown(role = 'mut') {
     const picker = modelPicker(role);
-    const models = role === 'analysis' ? analysisFilteredModels : filteredModels;
+    const models = modelSearchState(role).models;
     if (!picker.dropdown) return;
     
     if (models.length === 0) {
@@ -253,38 +416,37 @@ function renderModelDropdown(role = 'mut') {
     }
     
     const current = modelState(role);
-    let html = '';
+    const items = [];
     let currentProviderGroup = '';
-    
     models.forEach((model, index) => {
-        // Group by provider
         if (model.provider !== currentProviderGroup) {
-            if (currentProviderGroup) html += '</div>';
             currentProviderGroup = model.provider;
-            const providerName = model.provider.charAt(0).toUpperCase() + model.provider.slice(1).replace('_', ' ');
-            html += `<div style="padding: 8px 12px; background: #f5f5f5; font-weight: 600; font-size: 0.85em; color: #666; border-bottom: 1px solid #e5e7eb;">${providerName}</div>`;
+            const group = document.createElement('div');
+            group.className = 'model-search-provider-group';
+            group.textContent = model.provider.charAt(0).toUpperCase() + model.provider.slice(1).replaceAll('_', ' ');
+            items.push(group);
         }
-        
-        const isSelected = model.value === current.model && model.provider === current.provider;
-        html += `
-            <div class="model-option" data-index="${index}" data-value="${model.value}" data-provider="${model.provider}" 
-                 style="padding: 10px 12px; cursor: pointer; border-bottom: 1px solid #f0f0f0; ${isSelected ? 'background: #e8f4f8;' : ''}"
-                 onmouseover="this.style.background='#f8f9fa'" 
-                 onmouseout="this.style.background='${isSelected ? '#e8f4f8' : 'white'}'"
-                 onclick="selectModel('${model.value}', '${model.provider}', '${role}')">
-                <div style="font-weight: ${isSelected ? '600' : '500'}; color: var(--text-primary);">${escapeHtml(model.label)}</div>
-            </div>
-        `;
+        const option = document.createElement('div');
+        option.className = 'model-option';
+        option.id = `model-option-${role}-${index}`;
+        option.dataset.value = model.value;
+        option.dataset.provider = model.provider;
+        option.setAttribute('role', 'option');
+        option.setAttribute('aria-selected', String(model.value === current.model && model.provider === current.provider));
+        option.textContent = model.label;
+        // Keep focus on the combobox so a pointer selection cannot race its blur handler.
+        option.addEventListener('mousedown', event => event.preventDefault());
+        option.addEventListener('click', () => selectModel(model.value, model.provider, role));
+        items.push(option);
     });
-    
-    if (currentProviderGroup) html += '</div>';
-    picker.dropdown.innerHTML = html;
+    picker.dropdown.replaceChildren(...items);
 }
 
 function showModelDropdown(role = 'mut') {
     const picker = modelPicker(role);
     if (picker.dropdown) {
         picker.dropdown.style.display = 'block';
+        picker.input?.setAttribute('aria-expanded', 'true');
     }
 }
 
@@ -293,11 +455,9 @@ function hideModelDropdown(role = 'mut') {
     if (picker.dropdown) {
         picker.dropdown.style.display = 'none';
     }
-    if (role === 'analysis') {
-        analysisSelectedModelIndex = -1;
-    } else {
-        selectedModelIndex = -1;
-    }
+    modelSearchState(role).index = -1;
+    picker.input?.setAttribute('aria-expanded', 'false');
+    picker.input?.removeAttribute('aria-activedescendant');
 }
 
 function resolveModelFromSearchText(text) {
@@ -337,7 +497,10 @@ function getCurrentModelSelection(role = 'mut') {
 
 function persistModelSelection(provider, model, role = 'mut') {
     const picker = modelPicker(role);
-    if (role === 'analysis') {
+    if (MODEL_SECTIONS.includes(role)) {
+        sectionModelOverrides[role] = { provider, model };
+        saveSectionModels();
+    } else if (role === 'analysis') {
         analysisProvider = provider;
         analysisModel = model;
         localStorage.setItem('focalprompt_analysis_provider', provider);
@@ -358,6 +521,7 @@ function persistModelSelection(provider, model, role = 'mut') {
     }
     updateModelSearchValue(role);
     updateModelDisplay();
+    renderSectionModelSelectors();
 }
 
 function selectModel(modelValue, modelProvider, role = 'mut') {
@@ -381,24 +545,8 @@ function updateModelSearchValue(role = 'mut') {
     if (!picker.input) return;
     
     const state = modelState(role);
-    const selectedModel = allModelsFlat.find(m => m.value === state.model && m.provider === state.provider);
-    if (selectedModel) {
-        picker.input.value = selectedModel.label;
-    } else {
-        // Try to find any model with this value
-        const anyModel = allModelsFlat.find(m => m.value === state.model);
-        if (anyModel) {
-            picker.input.value = anyModel.label;
-            if (role === 'analysis') {
-                analysisProvider = anyModel.provider;
-            } else {
-                userProvider = anyModel.provider;
-            }
-        } else {
-            picker.input.value = `${state.provider}/${state.model}`;
-        }
-    }
-    
+    picker.input.value = `${state.provider}/${state.model}`;
+
     if (picker.hidden) {
         picker.hidden.value = modelState(role).model;
     }
@@ -408,9 +556,15 @@ function handleModelSearchKeydown(e, role = 'mut') {
     const picker = modelPicker(role);
     if (!picker.dropdown || picker.dropdown.style.display === 'none') return;
     
+    if (e.key === 'Escape') {
+        hideModelDropdown(role);
+        updateModelSearchValue(role);
+        picker.input.blur();
+        return;
+    }
     const options = picker.dropdown.querySelectorAll('.model-option');
     if (options.length === 0) return;
-    let selectedIndex = role === 'analysis' ? analysisSelectedModelIndex : selectedModelIndex;
+    let selectedIndex = modelSearchState(role).index;
     
     if (e.key === 'ArrowDown') {
         e.preventDefault();
@@ -435,15 +589,12 @@ function handleModelSearchKeydown(e, role = 'mut') {
             const value = option.dataset.value;
             const provider = option.dataset.provider;
             selectModel(value, provider, role);
+            return;
         }
-    } else if (e.key === 'Escape') {
-        hideModelDropdown(role);
-        picker.input.blur();
     }
-    if (role === 'analysis') {
-        analysisSelectedModelIndex = selectedIndex;
-    } else {
-        selectedModelIndex = selectedIndex;
+    modelSearchState(role).index = selectedIndex;
+    if (selectedIndex >= 0 && picker.dropdown.style.display !== 'none') {
+        picker.input.setAttribute('aria-activedescendant', options[selectedIndex].id);
     }
 }
 
@@ -476,9 +627,10 @@ function getModelSelectionForRole(role) {
     return role === 'mut' ? getCurrentModelSelection('mut') : getCurrentModelSelection('analysis');
 }
 
-function selectedModelPayload(role = 'analysis') {
-    const mut = getCurrentModelSelection('mut');
-    const anm = getCurrentModelSelection('analysis');
+function selectedModelPayload(role = 'analysis', section = null) {
+    const selectedModel = typeof section === 'object' && section ? section : getSectionModel(section);
+    const mut = selectedModel;
+    const anm = selectedModel;
     const selected = role === 'mut' ? mut : anm;
     return {
         model_role: role,
@@ -491,8 +643,8 @@ function selectedModelPayload(role = 'analysis') {
     };
 }
 
-function pricingModelPayload(role = 'analysis') {
-    const selected = getModelSelectionForRole(role);
+function pricingModelPayload(role = 'analysis', section = null) {
+    const selected = getSectionModel(section);
     return {
         model: selected.model,
         provider: selected.provider,
@@ -500,7 +652,7 @@ function pricingModelPayload(role = 'analysis') {
 }
 
 function updateModelDisplay() {
-    const displayText = formattedModelPair();
+    const displayText = 'Default ' + shortModelSelection('mut');
     const chipLabel = document.getElementById('model-chip-label');
     if (chipLabel) {
         chipLabel.textContent = displayText;
@@ -517,21 +669,16 @@ function updateCostDisplay() {
     const costEstimate = document.getElementById('cost-estimate');
     if (!costEstimate || !modelPricingCache) return;
 
-    const mut = getModelSelectionForRole('mut');
-    const anm = getModelSelectionForRole('analysis');
-    const estimates = [
-        ['MUT', mut.provider, mut.model],
-        ['ANM', anm.provider, anm.model],
-    ].map(function (row) {
-        const providerData = modelPricingCache[row[1]];
-        const modelData = providerData && providerData.models.find(function (m) { return m.id === row[2]; });
-        if (!modelData || !modelData.pricing) return row[0] + ': -';
-        const pricing = modelData.pricing;
-        const estimatedCost = (1000 * pricing.input_per_1k / 1000) + (500 * pricing.output_per_1k / 1000);
-        return row[0] + ': $' + estimatedCost.toFixed(4);
-    });
-    costEstimate.textContent = estimates.join(' · ');
-    costEstimate.title = 'Estimated cost for a typical request per configured model role (1000 input + 500 output tokens)';
+    const selected = getSectionModel(null);
+    const providerData = modelPricingCache[selected.provider];
+    const pricing = providerData?.models?.[selected.model];
+    if (!pricing) {
+        costEstimate.textContent = '-';
+        return;
+    }
+    const estimatedCost = pricing.input_per_1k + 0.5 * pricing.output_per_1k;
+    costEstimate.textContent = '$' + estimatedCost.toFixed(4);
+    costEstimate.title = 'Global default: 1000 input + 500 output tokens';
 }
 
 // Helper function to get API request headers
@@ -542,9 +689,9 @@ function getApiHeaders() {
 }
 
 // Helper: request body with selected model/provider (BYO credentials live server-side via env)
-function getApiBody(additionalData = {}, role = 'analysis') {
+function getApiBody(additionalData = {}, role = 'analysis', section = null) {
     const body = { ...additionalData };
-    return { ...body, ...selectedModelPayload(role) };
+    return { ...body, ...selectedModelPayload(role, section) };
 }
 
 // DOM Elements
@@ -1257,6 +1404,7 @@ window.addEventListener('DOMContentLoaded', async () => {
         updateModelSearchValue('mut');
         updateModelSearchValue('analysis');
         updateModelDisplay();
+        renderSectionModelSelectors();
         console.log('Model selector updated with gateway models');
     }
     
@@ -1439,20 +1587,12 @@ window.addEventListener('DOMContentLoaded', async () => {
     if (saveSettingsBtn) {
         saveSettingsBtn.addEventListener('click', () => {
             const mut = getCurrentModelSelection('mut');
-            const anm = getCurrentModelSelection('analysis');
-            const validMut = allModelsFlat.some(function (m) {
-                return m.provider === mut.provider && m.value === mut.model;
-            });
-            const validAnm = allModelsFlat.some(function (m) {
-                return m.provider === anm.provider && m.value === anm.model;
-            });
-            if (!validMut || !validAnm) {
-                apiKeyStatus.textContent = '⚠ Pick both models from the search lists';
-                apiKeyStatus.style.color = '#ffc107';
+            const validMut = allModelsFlat.some(m => m.provider === mut.provider && m.value === mut.model);
+            if (!validMut) {
+                apiKeyStatus.textContent = 'Pick a model from the search list';
                 return;
             }
             persistModelSelection(mut.provider, mut.model, 'mut');
-            persistModelSelection(anm.provider, anm.model, 'analysis');
             updateModelDisplay();
             
             apiKeyStatus.textContent = '✓ Model selection saved';
@@ -1686,7 +1826,7 @@ detectFociBtn.addEventListener('click', async () => {
             body: JSON.stringify({
                 estimated_input_tokens: Math.ceil(prompt.length / 4) + 500, // Rough estimate: prompt + system message
                 estimated_output_tokens: 1000, // Estimate for foci detection response
-                ...pricingModelPayload('analysis')
+                ...pricingModelPayload('analysis', 'foci')
             })
         });
         
@@ -1718,7 +1858,7 @@ detectFociBtn.addEventListener('click', async () => {
         const response = await fetch('/api/detect-foci', {
             method: 'POST',
             headers: getApiHeaders(),
-            body: JSON.stringify(getApiBody({ scenario: scenario })),
+            body: JSON.stringify(getApiBody({ scenario: scenario }, 'analysis', 'foci')),
         });
         
         // Check content-type before parsing JSON
@@ -2827,7 +2967,7 @@ generateOutputBtn.addEventListener('click', async () => {
             body: JSON.stringify({
                 estimated_input_tokens: Math.ceil(prompt.length / 4) + 500, // Rough estimate: prompt + system message
                 estimated_output_tokens: 500, // Estimate for generated output
-                ...pricingModelPayload('mut')
+                ...pricingModelPayload('mut', 'output')
             })
         });
         
@@ -2853,7 +2993,7 @@ generateOutputBtn.addEventListener('click', async () => {
         const response = await fetch('/api/generate-output', {
             method: 'POST',
             headers: getApiHeaders(),
-            body: JSON.stringify(getApiBody({ scenario: scenario }, 'mut')),
+            body: JSON.stringify(getApiBody({ scenario: scenario }, 'mut', 'output')),
         });
         
         const data = await response.json();
@@ -2932,7 +3072,7 @@ assessBtn.addEventListener('click', async () => {
             body: JSON.stringify({
                 estimated_input_tokens: estimatedInputTokens,
                 estimated_output_tokens: estimatedOutputTokens,
-                ...pricingModelPayload('analysis')
+                ...pricingModelPayload('analysis', 'reported')
             })
         });
         
@@ -2958,7 +3098,7 @@ assessBtn.addEventListener('click', async () => {
                 scenario: scenario,
                 output,
                 foci: foci.length > 0 ? foci : undefined
-            })),
+            }, 'analysis', 'reported')),
         });
         
         const data = await response.json();
@@ -3417,7 +3557,7 @@ if (rewritePromptBtn) {
                 body: JSON.stringify({
                     estimated_input_tokens: estimatedInputTokens,
                     estimated_output_tokens: estimatedOutputTokens,
-                    ...pricingModelPayload('analysis')
+                    ...pricingModelPayload('analysis', 'adjust')
                 })
             });
             
@@ -3442,7 +3582,7 @@ if (rewritePromptBtn) {
                 body: JSON.stringify(getApiBody({
                     scenario: scenario,
                     foci: weights
-                })),
+                }, 'analysis', 'adjust')),
             });
             
             const data = await response.json();
@@ -3517,7 +3657,7 @@ if (generateFocusedOutputBtn) {
                 body: JSON.stringify({
                     estimated_input_tokens: estimatedInputTokens,
                     estimated_output_tokens: estimatedOutputTokens,
-                    ...pricingModelPayload('mut')
+                    ...pricingModelPayload('mut', 'adjust')
                 })
             });
             
@@ -3542,7 +3682,7 @@ if (generateFocusedOutputBtn) {
                 body: JSON.stringify(getApiBody(
                     rewrittenScenario ? { scenario: rewrittenScenario } : { prompt: rewrittenPromptText },
                     'mut'
-                )),
+                , 'adjust')),
             });
             
             const data = await response.json();
@@ -3686,7 +3826,7 @@ function sleepMs(ms) {
     return new Promise(function (resolve) { setTimeout(resolve, ms); });
 }
 
-async function fetchAblationSample(inference, fociList, kind, focusIndex, temperature, controller, inputs) {
+async function fetchAblationSample(inference, fociList, kind, focusIndex, temperature, controller, inputs, modelSelection) {
     const maxAttempts = 8;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
         const response = await fetch('/api/ablation-sample', {
@@ -3698,7 +3838,7 @@ async function fetchAblationSample(inference, fociList, kind, focusIndex, temper
                 focus_index: focusIndex,
                 temperature: temperature,
                 inputs: inputs || undefined
-            }, typeof inference === 'string' ? { prompt: inference } : { scenario: inference }), 'mut')),
+            }, typeof inference === 'string' ? { prompt: inference } : { scenario: inference }), 'mut', modelSelection)),
             signal: controller.signal
         });
         const data = await response.json();
@@ -3752,7 +3892,8 @@ function isClientAttributableFocus(focus) {
     return true;
 }
 
-async function runPacedAblation(inference, fociList, cfg, onProgress, inputs) {
+async function runPacedAblation(inference, fociList, cfg, onProgress, inputs, section = 'ablation') {
+    const modelSelection = { ...getSectionModel(section) };
     const report = typeof onProgress === 'function'
         ? onProgress
         : function (msg) { showLoading(msg); };
@@ -3777,7 +3918,7 @@ async function runPacedAblation(inference, fociList, cfg, onProgress, inputs) {
         report('Generating samples (0 of ' + jobs.length + ')…');
         const samples = await mapPool(jobs, concurrency, async function (job) {
             const sample = await fetchAblationSample(
-                inference, fociList, job.kind, job.focusIndex, cfg.temperature, controller, inputs
+                inference, fociList, job.kind, job.focusIndex, cfg.temperature, controller, inputs, modelSelection
             );
             completed += 1;
             report('Generating samples (' + completed + ' of ' + jobs.length + ')…');
@@ -3822,7 +3963,7 @@ async function runPacedAblation(inference, fociList, cfg, onProgress, inputs) {
                 output_tokens: outputTokens
             }, typeof inference === 'string'
                 ? { prompt: inference }
-                : { scenario: boundScenario || inference }), 'mut')),
+                : { scenario: boundScenario || inference }), 'mut', modelSelection)),
             signal: controller.signal
         });
         const data = await response.json();
@@ -4046,7 +4187,7 @@ function bindReportedFocusDynamicsHandlers(data) {
                     baseline_outputs: baselines,
                     ablated_outputs: ablatedMap,
                     association_focus: associationFocus || null
-                }, scenario ? { scenario: scenario } : { prompt: prompt })))
+                }, scenario ? { scenario: scenario } : { prompt: prompt }), 'analysis', 'ablation'))
             });
             const result = await response.json();
             if (!response.ok) {
@@ -4290,7 +4431,7 @@ async function runShuffleRobustnessForFocus(focusIndex, data, focusNameHint) {
                 permutation_seed: data.permutation_seed,
                 temperature: cfg.temperature,
                 inputs: inputs
-            }, 'mut'))
+            }, 'mut', 'ablation'))
         });
         const result = await response.json();
         if (!response.ok) {
@@ -4443,7 +4584,7 @@ async function runRefineAblationStability(focusIndex, data) {
                 permutation_seed: data.permutation_seed,
                 behavioral_criterion: criterion,
                 run_behavioral_judge: runJudge,
-            }, scenario ? { scenario: scenario } : { prompt: prompt }), 'mut')),
+            }, scenario ? { scenario: scenario } : { prompt: prompt }), 'mut', 'ablation')),
         });
         const result = await response.json();
         if (!response.ok) {
@@ -4486,7 +4627,7 @@ async function runAblationOutcomeDispersion(data) {
                 baseline_outputs: baselines,
                 ablated_outputs: ablatedMap,
                 behavioral_criterion: criterion,
-            })),
+            }, 'analysis', 'ablation')),
         });
         const result = await response.json();
         if (!response.ok) {
@@ -4550,7 +4691,7 @@ function bindBehavioralDifferenceReviewHandlers(data) {
                         blind: true,
                         n_judges: 1,
                         api_key: userApiKey,
-                    })),
+                    }, 'analysis', 'ablation')),
                 });
                 const result = await response.json();
                 if (!response.ok) {
@@ -4729,7 +4870,7 @@ async function refreshExperimentCComparison(options) {
                 perturbation: perturbation,
                 tagged_foci: foci || [],
                 influence_scores: perturbation.influence_scores
-            }))
+            }, 'analysis', 'ablation'))
         });
         const data = await response.json();
         if (!response.ok) {
@@ -4847,7 +4988,7 @@ if (explainExperimentCBtn) {
                     comparison: window.experimentCComparison,
                     prompt: promptInput ? promptInput.value : '',
                     temperature: 0.3
-                }))
+                }, 'analysis', 'ablation'))
             });
             const data = await response.json();
             if (!response.ok) {
@@ -5138,7 +5279,7 @@ async function updateFocusOrderCostEstimate() {
                 run_position_sweep: focusOrderRunSweep && focusOrderRunSweep.checked,
                 run_behavioral_judge: focusOrderRunJudge && focusOrderRunJudge.checked,
                 baseline_outputs: baselines,
-            }, 'mut')),
+            }, 'mut', 'order')),
         });
         const est = await response.json();
         if (response.ok) {
@@ -5208,7 +5349,7 @@ if (runFocusOrderBtn) {
                     focus_index_for_sweep: runSweep ? parseInt(sweepFocus, 10) : null,
                     run_behavioral_judge: runJudge,
                     behavioral_criterion: criterion,
-                }, 'mut')),
+                }, 'mut', 'order')),
             });
             const data = await response.json();
             if (!response.ok) {
@@ -5265,7 +5406,7 @@ if (runQualityEvalBtn) {
                     temperature: 0.2,
                     evaluation_scope: 'experiment_b',
                     sample_pct: samplePct,
-                }))
+                }, 'analysis', 'quality'))
             });
             const data = await response.json();
             if (!response.ok) {
@@ -5372,7 +5513,7 @@ if (agentDetectFociBtn) {
             const response = await fetch('/api/detect-foci', {
                 method: 'POST',
                 headers: getApiHeaders(),
-                body: JSON.stringify(getApiBody({ scenario: scenario })),
+                body: JSON.stringify(getApiBody({ scenario: scenario }, 'analysis', 'agent-foci')),
             });
             
             const data = await response.json();
@@ -5432,7 +5573,7 @@ if (assessChatBtn) {
                 body: JSON.stringify(getApiBody({
                     chat_content: chatContent,
                     foci: agentFoci
-                })),
+                }, 'analysis', 'agent-assess')),
             });
             
             const data = await response.json();
@@ -5599,7 +5740,7 @@ if (generateAgentResponseBtn) {
                     all_foci: agentFoci,
                     chat_content: chatContent,
                     chat_weight: window.fociWeightsData.chat_weight,
-                })),
+                }, 'analysis', 'agent-response')),
             });
             
             const buildData = await buildResponse.json();
@@ -5617,7 +5758,7 @@ if (generateAgentResponseBtn) {
                 body: JSON.stringify(getApiBody({
                     scenario: buildData.constructed_scenario,
                     temperature: 0.7
-                }, 'mut')),
+                }, 'mut', 'agent-response')),
             });
             
             const genData = await genResponse.json();
@@ -6068,7 +6209,7 @@ if (batchDetectFociBtn) {
             const response = await fetch('/api/detect-foci', {
                 method: 'POST',
                 headers: getApiHeaders(),
-            body: JSON.stringify(getApiBody({ scenario: getBatchScenario() })),
+            body: JSON.stringify(getApiBody({ scenario: getBatchScenario() }, 'analysis', 'batch-foci')),
             });
             
             const data = await response.json();
@@ -6314,7 +6455,8 @@ async function handleRunBatchAnalysis(e) {
                     function (msg) {
                         setBatchProgress(pairLabel + ': ' + msg);
                     },
-                    pair.inputs
+                    pair.inputs,
+                    'batch-analysis'
                 );
                 pairResults.push(scoreToBatchPairResult(scored, pair, pairIndex));
                 setBatchProgress(
@@ -6346,7 +6488,7 @@ async function handleRunBatchAnalysis(e) {
                 const aggResp = await fetch('/api/batch-aggregate', {
                     method: 'POST',
                     headers: getApiHeaders(),
-                    body: JSON.stringify(getApiBody({ pair_results: pairResults }))
+                    body: JSON.stringify(getApiBody({ pair_results: pairResults }, 'analysis', 'batch-analysis'))
                 });
                 const aggData = await aggResp.json();
                 if (!aggResp.ok) {
@@ -7276,7 +7418,7 @@ if (runBatchAgentBtn) {
                     pairs: batchAgentData.pairs,
                     foci: batchFoci,
                     scenario: getBatchScenario(),
-                }))
+                }, 'analysis', 'agent-batch'))
             });
             
             if (!response.ok) {
@@ -7808,7 +7950,7 @@ if (runLLMEvalBtn) {
                 },
                 body: JSON.stringify(getApiBody({
                     results: batchAgentResultsData,
-                }))
+                }, 'analysis', 'agent-report'))
             });
             
             if (!response.ok) {
@@ -7895,7 +8037,7 @@ if (analyzeOptimizationBtn) {
             // Foci and prompt - use batch foci if available, otherwise regular foci
             foci: batchFoci.length > 0 ? batchFoci : foci,
             scenario: readMainScenario(),
-            ...selectedModelPayload('analysis')
+            ...selectedModelPayload('analysis', 'optimization')
         };
         
         if (!dataToSend.batch_analysis.statistics && 
@@ -8304,9 +8446,10 @@ function collectWorkspaceSession() {
         exported_at: new Date().toISOString(),
         active_tab: currentTab,
         model: { provider: userProvider, model: userModel },
+        model_settings: collectModelSettings(),
         models: {
             mut: getCurrentModelSelection('mut'),
-            analysis: getCurrentModelSelection('analysis'),
+            analysis: getSectionModel(null),
         },
         prompt_analysis: collectPromptAnalysisWorkspace(),
         batch_analysis: {
@@ -8640,17 +8783,7 @@ function restoreAgentBuilderWorkspace(ab) {
 }
 
 function restoreWorkspaceSession(data) {
-    const mut = data.models && data.models.mut ? data.models.mut : data.model;
-    const anm = data.models && data.models.analysis ? data.models.analysis : null;
-    if (mut && mut.provider && mut.model) {
-        persistModelSelection(mut.provider, mut.model, 'mut');
-        updateModelSelector(mut.provider, 'mut');
-    }
-    if (anm && anm.provider && anm.model) {
-        persistModelSelection(anm.provider, anm.model, 'analysis');
-        updateModelSelector(anm.provider, 'analysis');
-    }
-    updateModelDisplay();
+    restoreModelSettings(data);
     restorePromptAnalysisWorkspace(data.prompt_analysis);
     restoreBatchAnalysisWorkspace(data.batch_analysis);
     restoreAgentBuilderWorkspace(data.agent_builder);

@@ -37,7 +37,7 @@
                 <div id="settings-content" style="display: none;">
                     <div class="model-role-grid">
                         <div class="model-role-panel">
-                            <h4>Model under test <span>MUT</span></h4>
+                            <h4>Global default model</h4>
                             <div class="model-role-controls">
                                 <div>
                                     <label for="provider-select" style="display: block; margin-bottom: 6px; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary);">
@@ -82,53 +82,9 @@
                                 </div>
                             </div>
                         </div>
-                        <div class="model-role-panel">
-                            <h4>Analysis model <span>ANM</span></h4>
-                            <div class="model-role-controls">
-                                <div>
-                                    <label for="analysis-provider-select" style="display: block; margin-bottom: 6px; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary);">
-                                        LLM Provider
-                                    </label>
-                                    <select id="analysis-provider-select" style="width: 100%; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 14px; background: white; cursor: pointer; font-family: inherit;">
-                                        <option value="openai">OpenAI</option>
-                                        <option value="anthropic">Anthropic (Claude)</option>
-                                        <option value="google">Google (Gemini)</option>
-                                        <option value="xai">X.AI (Grok)</option>
-                                        <option value="mistral">Mistral</option>
-                                        <option value="meta">Meta (Llama)</option>
-                                        <option value="deepseek">DeepSeek</option>
-                                        <option value="alibaba">Alibaba (Qwen)</option>
-                                        <option value="minimax">MiniMax</option>
-                                        <option value="moonshotai">Moonshot AI</option>
-                                        <option value="perplexity">Perplexity</option>
-                                        <option value="amazon">Amazon (Nova)</option>
-                                        <option value="zai">ZAI (GLM)</option>
-                                        <option value="voyage">Voyage</option>
-                                        <option value="cohere">Cohere</option>
-                                        <option value="morph">Morph</option>
-                                        <option value="nvidia">NVIDIA</option>
-                                        <option value="bfl">BFL</option>
-                                        <option value="vercel">Vercel</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label for="analysis-model-select" style="display: block; margin-bottom: 6px; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary);">Model</label>
-                                    <div style="position: relative;">
-                                        <input
-                                            type="text"
-                                            id="analysis-model-search"
-                                            placeholder="Search analysis models..."
-                                            autocomplete="off"
-                                            style="width: 100%; padding: 10px 30px 10px 12px; border: 1px solid var(--border-color); border-radius: 8px; font-size: 14px; background: white; box-sizing: border-box; font-family: inherit;"
-                                        />
-                                        <span style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); pointer-events: none; color: #999;">🔍</span>
-                                        <div id="analysis-model-dropdown" style="display: none; position: absolute; top: 100%; left: 0; right: 0; max-height: 300px; overflow-y: auto; background: white; border: 1px solid var(--border-color); border-top: none; border-radius: 0 0 8px 8px; z-index: 1000; box-shadow: var(--shadow-lg); margin-top: -1px;"></div>
-                                    </div>
-                                    <select id="analysis-model-select" style="display: none;"></select>
-                                </div>
-                            </div>
-                        </div>
                     </div>
+                    <p class="info-text">Sections use this default unless you choose a different model in that section.</p>
+                    <button id="apply-model-to-all-btn" type="button" class="btn btn-outline">Set all sections to this model</button>
 
                     <div id="cost-preview" style="background: #fff; border: 1px solid var(--border-color); border-radius: 8px; padding: 12px; margin-bottom: 12px;">
                         <div style="display: flex; justify-content: space-between; align-items: center;">
@@ -394,6 +350,7 @@
             <section class="card" id="lab-foci">
                 <div class="card-header">
                     <h2>2. Define Foci</h2>
+                    <div class="section-model-control" data-model-section="foci"></div>
                     <div class="button-group">
                         <button id="detect-foci-btn" class="btn btn-primary">
                             🤖 Auto-Detect Foci
@@ -429,6 +386,7 @@
             <section class="card">
                 <div class="card-header">
                     <h2>3. Enter or Generate Output</h2>
+                    <div class="section-model-control" data-model-section="output"></div>
                     <div class="button-group">
                         <button id="generate-output-btn" class="btn btn-primary">
                             ✨ Generate Output
@@ -449,6 +407,7 @@
             <section class="card" id="lab-experiment-a">
                 <div class="card-header">
                     <h2>4. Experiment A — Reported focus</h2>
+                    <div class="section-model-control" data-model-section="reported"></div>
                     <div class="button-group">
                         <button id="load-assessment-checkpoint-btn" class="btn btn-outline">
                             📂 Load Assessment Checkpoint
@@ -477,6 +436,7 @@
             <section id="focus-control-section" class="card hidden">
                 <div class="card-header">
                     <h2>5. Adjust Focus Distribution</h2>
+                    <div class="section-model-control" data-model-section="adjust"></div>
                     <div class="button-group">
                         <button id="reset-sliders-btn" class="btn btn-outline">
                             🔄 Reset to Current
@@ -522,6 +482,7 @@
             <section class="card" id="lab-experiment-b">
                 <div class="card-header">
                     <h2>6. Experiment B — Perturbation sensitivity</h2>
+                    <div class="section-model-control" data-model-section="ablation"></div>
                     <div class="button-group">
                         <button id="load-ablation-checkpoint-btn" class="btn btn-outline">
                             📂 Load Ablation Checkpoint
@@ -582,6 +543,7 @@
             <section class="card" id="lab-focus-order">
                 <div class="card-header">
                     <h2>7. Focus order sensitivity</h2>
+                    <div class="section-model-control" data-model-section="order"></div>
                     <div class="button-group">
                         <button id="run-focus-order-btn" class="btn btn-primary" type="button" disabled>
                             🔀 Run order sensitivity
@@ -635,6 +597,7 @@
             <section class="card" id="lab-quality">
                 <div class="card-header">
                     <h2>8. Task quality evaluation (LLM)</h2>
+                    <div class="section-model-control" data-model-section="quality"></div>
                     <div class="button-group">
                         <button id="run-quality-eval-btn" class="btn btn-primary" type="button">
                             🎯 Evaluate outputs on criteria
@@ -762,6 +725,7 @@
                 <section class="card">
                     <div class="card-header">
                         <h2>2. Define Foci</h2>
+                    <div class="section-model-control" data-model-section="batch-foci"></div>
                         <div class="button-group">
                         <button id="batch-detect-foci-btn" class="btn btn-primary">
                             🤖 Auto-Detect from First Prompt
@@ -791,6 +755,7 @@
                 <section class="card">
                     <div class="card-header">
                         <h2>3. Run Analysis</h2>
+                    <div class="section-model-control" data-model-section="batch-analysis"></div>
                         <div class="button-group">
                             <button id="run-batch-analysis-btn" class="btn btn-primary" disabled>
                                 🔬 Run Batch Analysis
@@ -895,6 +860,7 @@
                 <section class="card">
                     <div class="card-header">
                         <h2>2. Define Foci</h2>
+                    <div class="section-model-control" data-model-section="agent-foci"></div>
                         <div class="button-group">
                             <button id="agent-detect-foci-btn" class="btn btn-primary">
                                 🤖 Auto-Detect Foci
@@ -921,6 +887,7 @@
                 <section class="card">
                     <div class="card-header">
                         <h2>3. Assess Chat & Select Foci</h2>
+                    <div class="section-model-control" data-model-section="agent-assess"></div>
                         <div class="button-group">
                             <button id="assess-chat-btn" class="btn btn-primary" disabled>
                                 🔍 Assess Chat & Select Foci
@@ -938,6 +905,7 @@
                 <section class="card">
                     <div class="card-header">
                         <h2>4. Generate Response</h2>
+                    <div class="section-model-control" data-model-section="agent-response"></div>
                         <div class="button-group">
                             <button id="generate-agent-response-btn" class="btn btn-success" disabled>
                                 ✨ Generate Response
@@ -955,6 +923,7 @@
                 <section class="card" style="margin-top: 24px; border-top: 3px solid var(--primary-color);">
                     <div class="card-header">
                         <h2>5. Batch Agent Building</h2>
+                    <div class="section-model-control" data-model-section="agent-batch"></div>
                         <div class="button-group">
                             <button id="import-batch-results-btn" class="btn btn-primary">
                                 📥 Import from Batch Analysis
@@ -996,6 +965,7 @@
                 <section class="card" id="batch-agent-reporting-section" style="display: none;">
                     <div class="card-header">
                         <h2>6. Batch Agent Reporting</h2>
+                    <div class="section-model-control" data-model-section="agent-report"></div>
                         <div class="button-group">
                             <button id="export-batch-agent-results-btn" class="btn btn-outline" disabled>
                                 💾 Export Results
@@ -1013,6 +983,7 @@
                 <section class="card" id="prompt-optimization-section" style="display: none;">
                     <div class="card-header">
                         <h2>7. Prompt Optimization Recommendations</h2>
+                    <div class="section-model-control" data-model-section="optimization"></div>
                         <div class="button-group">
                             <button id="analyze-optimization-btn" class="btn btn-primary">
                                 🤖 Get Optimization Recommendations

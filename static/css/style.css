@@ -3256,3 +3256,55 @@ circle.fp-series-7 { fill: #8a8a8a; }
 .coverage-indicator {
     font-size: 0.85em;
 }
+
+/* Model overrides use the same chip and provider/search interaction as the header. */
+.section-model-control { margin: 8px 0 12px; min-width: 0; }
+.section-model-chip { max-width: 100%; text-align: left; }
+.section-model-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.section-model-panel { margin-top: 10px; max-width: 680px; }
+.section-model-panel[hidden] { display: none; }
+.section-model-panel label {
+    display: block;
+    margin-bottom: 6px;
+    font-weight: 600;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-secondary);
+}
+.section-model-panel select, .section-model-panel input {
+    width: 100%;
+    min-width: 0;
+    padding: 10px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    font: inherit;
+    font-size: 14px;
+    background: white;
+    box-sizing: border-box;
+}
+.section-model-panel input { padding-right: 30px; }
+.section-model-search-wrap { position: relative; }
+.section-model-search-icon {
+    position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+    pointer-events: none; color: var(--text-secondary);
+}
+.section-model-dropdown {
+    position: absolute; top: 100%; left: 0; right: 0;
+    max-height: 300px; overflow-y: auto;
+    background: white; border: 1px solid var(--border-color);
+    border-radius: 0 0 8px 8px; z-index: 1000; box-shadow: var(--shadow-lg);
+}
+.model-search-provider-group {
+    padding: 8px 12px; background: #f5f5f5;
+    font-weight: 600; font-size: 0.85em; color: var(--text-secondary);
+    border-bottom: 1px solid var(--border-color);
+}
+.model-option { padding: 10px 12px; cursor: pointer; border-bottom: 1px solid #f0f0f0; color: var(--text-primary); }
+.model-option:hover { background: #f8f9fa; }
+.model-option[aria-selected="true"] { background: #e8f4f8; font-weight: 600; }
+.section-model-footer { display: flex; gap: 12px; justify-content: space-between; align-items: center; flex-wrap: wrap; margin-top: 12px; }
+.section-model-hint { font-size: 13px; color: var(--text-secondary); }
+#apply-model-to-all-btn { margin-bottom: 12px; }
+.section-model-control:has(.section-model-panel:not([hidden])) { flex-basis: 100%; }
+.card:has(.section-model-panel:not([hidden])) { overflow: visible; position: relative; z-index: 2; }
