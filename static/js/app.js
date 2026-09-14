@@ -761,7 +761,9 @@ function adjustFociForPromptEdit(fociList, previousText, nextText) {
         }
         const nextSpans = spans.map(function (span) {
             if (span.message_id && span.message_id !== activeScenarioMessageId) {
-                return { span: span, changed: false, needsReview: false };
+                // Spans in other messages are untouched by this edit; keep the span
+                // itself (a wrapper object here would be dropped by the filter below).
+                return span;
             }
             const result = promptEdit.adjustSpanForPromptEdit(span, edit);
             changed = changed || result.changed;
@@ -798,27 +800,6 @@ function adjustFociForPromptEdit(fociList, previousText, nextText) {
     return { foci: adjusted, changed, needsReview };
 }
 
-function remapFocusMessageId(previousId, nextId) {
-    if (!previousId || previousId === nextId) return;
-    foci = foci.map(function (focus) {
-        const updated = { ...focus };
-        if (updated.message_id === previousId) updated.message_id = nextId;
-        if (Array.isArray(updated.message_ids)) {
-            updated.message_ids = updated.message_ids.map(function (id) {
-                return id === previousId ? nextId : id;
-            });
-        }
-        if (Array.isArray(updated.spans)) {
-            updated.spans = updated.spans.map(function (span) {
-                return span.message_id === previousId
-                    ? { ...span, message_id: nextId }
-                    : span;
-            });
-        }
-        return updated;
-    });
-    if (activeScenarioMessageId === previousId) activeScenarioMessageId = nextId;
-}
 
 function removeFocusSpansForMessage(messageId) {
     foci = foci.map(function (focus) {
@@ -957,7 +938,6 @@ function scenarioMessageCardHtml(message, index) {
         <div class="scenario-order-rail" aria-hidden="true">${index + 1}</div>
         <div class="scenario-message-body">
             <div class="scenario-message-controls">
-                <input class="scenario-message-id" value="${escapeScenarioAttribute(message.id)}" aria-label="Message ID">
                 <select class="scenario-role" aria-label="Message role">${roles.map(function (role) {
                     return `<option value="${role}"${role === message.role ? ' selected' : ''}>${role[0].toUpperCase() + role.slice(1)}</option>`;
                 }).join('')}</select>
@@ -967,7 +947,6 @@ function scenarioMessageCardHtml(message, index) {
                 <input class="scenario-input-name${message.analysis_mode === 'analyse' ? ' hidden' : ''}" value="${escapeScenarioAttribute(inputName)}" placeholder="Input name" aria-label="Named batch input">
                 <button type="button" class="scenario-move-up btn btn-outline btn-small" aria-label="Move message up">↑</button>
                 <button type="button" class="scenario-move-down btn btn-outline btn-small" aria-label="Move message down">↓</button>
-    validateScenarioOutputContract();
                 <button type="button" class="scenario-delete btn btn-outline btn-small">Delete</button>
             </div>
             <textarea${index === 0 ? ' id="prompt-input"' : ''} class="textarea-large scenario-content" rows="${message.analysis_mode === 'analyse' ? 6 : 4}">${escapeHtml(message.content || '')}</textarea>
@@ -978,6 +957,29 @@ function scenarioMessageCardHtml(message, index) {
 function setMainScenario(scenario) {
     const normalized = scenario && Array.isArray(scenario.messages) ? scenario : defaultInferenceScenario();
     const container = document.getElementById('scenario-messages');
+    if (!container) return;
+    container.innerHTML = normalized.messages.map(scenarioMessageCardHtml).join('');
+    const enabled = document.getElementById('scenario-contract-enabled');
+    const fields = document.getElementById('scenario-contract-fields');
+    const name = document.getElementById('scenario-contract-name');
+    const schema = document.getElementById('scenario-contract-schema');
+    if (enabled) enabled.checked = !!normalized.output_contract;
+    if (fields) fields.classList.toggle('hidden', !normalized.output_contract);
+    if (normalized.output_contract) {
+        if (name) name.value = normalized.output_contract.name || 'model_output';
+        if (schema) schema.value = JSON.stringify(normalized.output_contract.schema || {}, null, 2);
+    }
+    validateScenarioOutputContract();
+    promptInput = container.querySelector('.scenario-message-card[data-message-id="' + CSS.escape(activeScenarioMessageId) + '"] .scenario-content')
+        || container.querySelector('.scenario-message-card .scenario-content');
+    if (promptInput) {
+        activeScenarioMessageId = promptInput.closest('.scenario-message-card').dataset.messageId;
+        syncPromptSpanTracking();
+    }
+    updateScenarioOrderRails();
+    updateManualInputFields();
+}
+
 function validateScenarioOutputContract() {
     const enabled = document.getElementById('scenario-contract-enabled');
     const schemaInput = document.getElementById('scenario-contract-schema');
@@ -1016,33 +1018,11 @@ function validateScenarioOutputContract() {
     };
 }
 
-    if (!container) return;
-    container.innerHTML = normalized.messages.map(scenarioMessageCardHtml).join('');
-    const enabled = document.getElementById('scenario-contract-enabled');
-    const fields = document.getElementById('scenario-contract-fields');
-    const name = document.getElementById('scenario-contract-name');
-    const schema = document.getElementById('scenario-contract-schema');
-    if (enabled) enabled.checked = !!normalized.output_contract;
-    if (fields) fields.classList.toggle('hidden', !normalized.output_contract);
-    if (normalized.output_contract) {
-        if (name) name.value = normalized.output_contract.name || 'model_output';
-        if (schema) schema.value = JSON.stringify(normalized.output_contract.schema || {}, null, 2);
-    }
-    promptInput = container.querySelector('.scenario-message-card[data-message-id="' + CSS.escape(activeScenarioMessageId) + '"] .scenario-content')
-        || container.querySelector('.scenario-message-card .scenario-content');
-    if (promptInput) {
-        activeScenarioMessageId = promptInput.closest('.scenario-message-card').dataset.messageId;
-        syncPromptSpanTracking();
-    }
-    updateScenarioOrderRails();
-    updateManualInputFields();
-}
-
 function readMainScenario(options) {
     const config = options || {};
     const cards = Array.from(document.querySelectorAll('#scenario-messages .scenario-message-card'));
     const messages = cards.map(function (card, index) {
-        const id = card.querySelector('.scenario-message-id').value.trim();
+        const id = card.dataset.messageId;
         const role = card.querySelector('.scenario-role').value;
         const analysisMode = card.querySelector('.scenario-analysis-mode').value;
         const content = card.querySelector('.scenario-content').value;
@@ -1059,7 +1039,6 @@ function readMainScenario(options) {
         throw new Error('Message IDs must be unique.');
     }
     const inputNames = messages.map(function (message) { return message.input_name; }).filter(Boolean);
-    if (validation.contract) scenario.output_contract = validation.contract;
     if (new Set(inputNames).size !== inputNames.length) {
         throw new Error('Named inputs must be unique.');
     }
@@ -1082,6 +1061,7 @@ function readMainScenario(options) {
     if (validation.error && !config.allowInvalidContract) {
         throw new Error('Output contract: ' + validation.error);
     }
+    if (validation.contract) scenario.output_contract = validation.contract;
     return scenario;
 }
 
@@ -1111,6 +1091,21 @@ function getBatchScenario() {
     return scenario;
 }
 
+// Prompt content for a batch run comes from the main scenario's Analyse messages;
+// the batch prompt input is only an optional override of the first one.
+function batchScenarioReadiness() {
+    try {
+        const analysed = getBatchScenario().messages
+            .filter(function (message) { return message.analysis_mode === 'analyse'; })
+            .map(function (message) { return String(message.content || ''); })
+            .join('\n')
+            .trim();
+        return { hasPrompt: !!analysed, promptChars: analysed.length, error: '' };
+    } catch (error) {
+        return { hasPrompt: false, promptChars: 0, error: error.message };
+    }
+}
+
 function scenarioWithAgentInput(chatContent) {
     const scenario = JSON.parse(JSON.stringify(readMainScenario()));
     const target = scenario.messages.slice().reverse().find(function (message) {
@@ -1126,7 +1121,6 @@ function scenarioWithAgentInput(chatContent) {
 function updateScenarioOrderRails() {
     document.querySelectorAll('#scenario-messages .scenario-message-card').forEach(function (card, index) {
         card.querySelector('.scenario-order-rail').textContent = String(index + 1);
-        card.dataset.messageId = card.querySelector('.scenario-message-id').value.trim();
     });
 }
 
@@ -1168,12 +1162,6 @@ if (scenarioEditor) {
             lastPromptTextForSpanTracking = nextPromptText;
             selectionToolbar.classList.add('hidden');
         }
-        if (event.target.matches('.scenario-message-id')) {
-            const previousId = card.dataset.messageId;
-            const nextId = event.target.value.trim();
-            remapFocusMessageId(previousId, nextId);
-            updateScenarioOrderRails();
-        }
         if (event.target.matches('.scenario-input-name')) {
             updateManualInputFields();
         }
@@ -1208,12 +1196,8 @@ if (scenarioEditor) {
         } else if (event.target.closest('.scenario-move-down') && card.nextElementSibling) {
             card.parentNode.insertBefore(card.nextElementSibling, card);
         }
-        validateScenarioOutputContract();
         updateScenarioOrderRails();
         updateManualInputFields();
-document.querySelectorAll('#scenario-contract-schema, #scenario-contract-name').forEach(function (input) {
-    input.addEventListener('input', validateScenarioOutputContract);
-});
         updateCoverageVisualization();
         updateCoverageStats();
     });
@@ -1224,8 +1208,8 @@ if (scenarioAddMessage) {
     scenarioAddMessage.addEventListener('click', function () {
         const container = document.getElementById('scenario-messages');
         const index = container.children.length;
-        const existingIds = new Set(Array.from(container.querySelectorAll('.scenario-message-id')).map(function (input) {
-            return input.value.trim();
+        const existingIds = new Set(Array.from(container.querySelectorAll('.scenario-message-card')).map(function (card) {
+            return card.dataset.messageId;
         }));
         let suffix = index + 1;
         while (existingIds.has('message-' + suffix)) suffix += 1;
@@ -1241,8 +1225,12 @@ const scenarioContractEnabled = document.getElementById('scenario-contract-enabl
 if (scenarioContractEnabled) {
     scenarioContractEnabled.addEventListener('change', function () {
         document.getElementById('scenario-contract-fields').classList.toggle('hidden', !scenarioContractEnabled.checked);
+        validateScenarioOutputContract();
     });
 }
+document.querySelectorAll('#scenario-contract-schema, #scenario-contract-name').forEach(function (input) {
+    input.addEventListener('input', validateScenarioOutputContract);
+});
 window.getInferenceScenario = readMainScenario;
 window.setInferenceScenario = setMainScenario;
 
@@ -1361,7 +1349,8 @@ function loadBatchAnalysis() {
     
     try {
         const data = JSON.parse(saved);
-        if (data.scenario) setMainScenario(data.scenario);
+        // The main scenario is restored independently; a saved batch payload only
+        // owns its prompt override, foci and pairs.
         if (batchPromptInput && data.prompt) {
             batchPromptInput.value = data.prompt;
         }
@@ -1485,7 +1474,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     if (savedBatch) {
         try {
             const data = JSON.parse(savedBatch);
-            if (data.scenario) setMainScenario(data.scenario);
+            // Never replace the independently restored main scenario here.
             if (batchPromptInput && data.prompt) {
                 batchPromptInput.value = data.prompt;
             }
@@ -2822,7 +2811,7 @@ function getScenarioCoverageData() {
             return card.querySelector('.scenario-analysis-mode').value === 'analyse';
         }).map(function (card) {
             return {
-                id: card.querySelector('.scenario-message-id').value.trim(),
+                id: card.dataset.messageId,
                 role: card.querySelector('.scenario-role').value,
                 content: card.querySelector('.scenario-content').value
             };
@@ -3235,76 +3224,41 @@ assessBtn.addEventListener('click', async () => {
     }
 });
 
-// Helper function to match assessed foci to original foci
-function matchFocus(originalFocus, assessedFoci) {
-    // Try exact name match first
-    let match = assessedFoci.find(af => 
-        af.focus.toLowerCase().trim() === originalFocus.focus.toLowerCase().trim()
-    );
-    if (match) return match;
-    
-    // Try matching by prompt_section (exact or substring)
-    const originalSection = originalFocus.prompt_section.toLowerCase().trim();
-    match = assessedFoci.find(af => {
-        const assessedSection = (af.prompt_section || '').toLowerCase().trim();
-        return assessedSection.includes(originalSection) || 
-               originalSection.includes(assessedSection) ||
-               assessedSection === originalSection;
-    });
-    if (match) return match;
-    
-    // Try fuzzy name matching (contains check)
-    match = assessedFoci.find(af => {
-        const originalName = originalFocus.focus.toLowerCase();
-        const assessedName = af.focus.toLowerCase();
-        return originalName.includes(assessedName) || 
-               assessedName.includes(originalName);
-    });
-    if (match) return match;
-    
-    return null;
-}
-
 // Render Assessment Results
 function renderAssessment(data) {
-    const totalPoints = data.foci.reduce((sum, f) => sum + f.score, 0);
-    
-    // Merge assessment results with all original foci
-    // This ensures all foci are shown, even if they got 0 points
-    const allFoci = [];
-    
-    // For each original focus, try to find a matching assessed focus
-    foci.forEach(originalFocus => {
-        const matched = matchFocus(originalFocus, data.foci);
-        
-        if (matched) {
-            // Use the matched assessment result, but keep original focus name and section
-            allFoci.push({
-                focus: originalFocus.focus,
-                prompt_section: originalFocus.prompt_section,
-                score: matched.score || 0,
-                explanation: matched.explanation || 'Not addressed in the output'
-            });
+    const results = Array.isArray(data.foci) ? data.foci : [];
+    const totalPoints = results.reduce(function (sum, item) { return sum + (Number(item.score) || 0); }, 0);
+
+    // Identity is focus_index into the submitted foci array — display names repeat,
+    // so never join on them. Canonical spans / message ids come from the response.
+    const byIndex = new Map();
+    const extraFoci = [];
+    results.forEach(function (item, position) {
+        const index = Number.isInteger(item.focus_index) ? item.focus_index : position;
+        if (index >= 0 && index < foci.length && !byIndex.has(index)) {
+            byIndex.set(index, item);
         } else {
-            // No match found - this focus wasn't assessed (got 0 points)
-            allFoci.push({
-                focus: originalFocus.focus,
-                prompt_section: originalFocus.prompt_section,
-                score: 0,
-                explanation: 'Not addressed in the output - this focus was not found in the assessment results'
-            });
+            extraFoci.push(Object.assign({ focus_index: null }, item));
         }
     });
-    
-    // Also include any assessed foci that don't match original foci (in case assessment found new ones)
-    data.foci.forEach(assessedFocus => {
-        const alreadyIncluded = allFoci.some(f => 
-            matchFocus({focus: f.focus, prompt_section: f.prompt_section}, [assessedFocus])
-        );
-        if (!alreadyIncluded) {
-            allFoci.push(assessedFocus);
+
+    const allFoci = foci.map(function (originalFocus, index) {
+        const assessed = byIndex.get(index);
+        const merged = Object.assign({}, originalFocus, {
+            focus_index: index,
+            score: assessed ? (Number(assessed.score) || 0) : 0,
+            explanation: assessed
+                ? (assessed.explanation || 'Not addressed in the output')
+                : 'Not scored in the assessment response; treated as 0.'
+        });
+        if (assessed) {
+            if (assessed.prompt_section) merged.prompt_section = assessed.prompt_section;
+            if (Array.isArray(assessed.spans)) merged.spans = assessed.spans;
+            if (assessed.message_id) merged.message_id = assessed.message_id;
+            if (Array.isArray(assessed.message_ids)) merged.message_ids = assessed.message_ids;
         }
-    });
+        return merged;
+    }).concat(extraFoci);
     
     // Store for sliders and workspace export
     assessmentFoci = allFoci;
@@ -3468,7 +3422,7 @@ function renderSliders() {
     slidersContainer.innerHTML = assessmentFoci.map((focus, index) => {
         const weight = focusWeights[index] || 0;
         // Find color for this focus
-        const focusColor = foci.find(f => f.focus === focus.focus);
+        const focusColor = Number.isInteger(focus.focus_index) ? foci[focus.focus_index] : null;
         const colorDark = focusColor ? focusColor.colorDark : '#64748b';
         
         return `
@@ -3614,6 +3568,31 @@ if (resetSlidersBtn) {
     });
 }
 
+// Rewrite payload: current slider values as rewrite_weight (not stale
+// assessment-only scores) plus canonical provenance resolved by submitted index,
+// so duplicate display names keep their own spans.
+function buildRewriteFociPayload() {
+    return assessmentFoci.map(function (focus, index) {
+        // Use Number() so an explicit 0 is preserved (|| would also keep 0, but be explicit).
+        const rewriteWeight = Number(focusWeights[index]);
+        const weight = Number.isFinite(rewriteWeight) ? rewriteWeight : 0;
+        const sourceFocus = Number.isInteger(focus.focus_index) ? foci[focus.focus_index] : null;
+        const merged = Object.assign({}, sourceFocus || {}, focus);
+        delete merged.score;
+        delete merged.explanation;
+        return Object.assign(merged, {
+            focus: focus.focus,
+            prompt_section: focus.prompt_section,
+            reported_focus_score: (typeof focus.reported_focus_score === 'number')
+                ? focus.reported_focus_score
+                : (focus.score || 0),
+            rewrite_weight: weight,
+            // Legacy alias still accepted by the service:
+            weight: weight,
+        });
+    });
+}
+
 // Rewrite prompt with emphasis
 if (rewritePromptBtn) {
     rewritePromptBtn.addEventListener('click', async () => {
@@ -3628,24 +3607,7 @@ if (rewritePromptBtn) {
             return;
         }
         
-        // Send current slider values as rewrite_weight (not stale assessment-only scores).
-        const weights = assessmentFoci.map((focus, index) => {
-            // Use Number() so an explicit 0 is preserved (|| would also keep 0, but be explicit).
-            const rewriteWeight = Number(focusWeights[index]);
-            const weight = Number.isFinite(rewriteWeight) ? rewriteWeight : 0;
-            const sourceFocus = foci.find(function (item) { return item.focus === focus.focus; }) || {};
-            return {
-                ...sourceFocus,
-                focus: focus.focus,
-                prompt_section: focus.prompt_section,
-                reported_focus_score: (typeof focus.reported_focus_score === 'number')
-                    ? focus.reported_focus_score
-                    : (focus.score || 0),
-                rewrite_weight: weight,
-                // Legacy alias still accepted by the service:
-                weight: weight,
-            };
-        });
+        const weights = buildRewriteFociPayload();
 
         if (weights.some(w => w.rewrite_weight <= 0)) {
             const proceed = confirm(
@@ -4924,8 +4886,10 @@ function getExperimentAReportedPayload() {
         });
     }
     return {
-        foci: source.map(function (f) {
-            const matched = assessed.length ? matchFocus(f, assessed) : null;
+        foci: source.map(function (f, index) {
+            const matched = source === assessed
+                ? f
+                : (assessed.find(function (a) { return a.focus_index === index; }) || null);
             const score = matched
                 ? (typeof matched.score === 'number' ? matched.score : (matched.reported_focus_score || 0))
                 : (typeof f.score === 'number' ? f.score : (f.reported_focus_score || null));
@@ -5819,6 +5783,25 @@ function renderFociWeights(data) {
     fociWeightsResults.innerHTML = html;
 }
 
+// Weighted foci posted to /api/build-agent-prompt. Identity comes from the
+// submitted-array index (display names repeat across foci); legacy responses
+// without focus_index still fall back to a name lookup.
+function buildAgentFociPayload(fociWeights) {
+    return (fociWeights || []).map(function (fw) {
+        const index = Number.isInteger(fw.focus_index) ? fw.focus_index : -1;
+        const originalFocus = index >= 0
+            ? agentFoci[index]
+            : agentFoci.find(function (f) { return f.focus === fw.focus; });
+        if (!originalFocus) {
+            console.warn('No submitted focus for weighted focus', fw);
+            return { focus: fw.focus, weight: fw.weight };
+        }
+        const item = Object.assign({}, originalFocus, { weight: fw.weight });
+        if (index >= 0) item.focus_index = index;
+        return item;
+    });
+}
+
 // Agent Builder: Generate Response
 if (generateAgentResponseBtn) {
     generateAgentResponseBtn.addEventListener('click', async () => {
@@ -5846,16 +5829,7 @@ if (generateAgentResponseBtn) {
                 },
                 body: JSON.stringify(getApiBody({
                     scenario: agentScenario,
-                    foci: window.fociWeightsData.foci_weights.map(fw => {
-                        const originalFocus = agentFoci.find(f => f.focus === fw.focus);
-                        if (!originalFocus) {
-                            console.warn(`Could not find original focus for: ${fw.focus}`);
-                        }
-                        return Object.assign({}, originalFocus || { focus: fw.focus }, {
-                            focus: fw.focus,
-                            weight: fw.weight
-                        });
-                    }),
+                    foci: buildAgentFociPayload(window.fociWeightsData.foci_weights),
                     all_foci: agentFoci,
                     chat_content: chatContent,
                     chat_weight: window.fociWeightsData.chat_weight,
@@ -5934,9 +5908,11 @@ function renderAgentResponse(buildData, genData, totalCost, assessCost, generate
         html += '</div>';
     }
     
+    // /api/build-agent-prompt is always called with a scenario, so it always
+    // answers with the complete constructed scenario.
     const constructedScenario = buildData.constructed_scenario
         ? JSON.stringify(buildData.constructed_scenario, null, 2)
-        : buildData.constructed_prompt;
+        : '';
     html += `
         <div class="constructed-prompt-display">
             <h4 style="margin: 0 0 12px 0; color: var(--primary-color);">Constructed Scenario:</h4>
@@ -6206,12 +6182,7 @@ if (clearPairsBtn) {
 function updateBatchAnalysisButton() {
     const btn = document.getElementById('run-batch-analysis-btn');
     if (btn) {
-        let hasPrompt = false;
-        try {
-            hasPrompt = getBatchScenario().messages.some(function (message) {
-                return message.analysis_mode === 'analyse' && message.content.trim();
-            });
-        } catch (_error) {}
+        const hasPrompt = batchScenarioReadiness().hasPrompt;
         
         const shouldBeDisabled = batchPairs.length === 0 || batchFoci.length === 0 || !hasPrompt;
         
@@ -6347,13 +6318,17 @@ if (batchImportFociBtn) {
 // Batch Analysis: Auto-Detect Foci
 if (batchDetectFociBtn) {
     batchDetectFociBtn.addEventListener('click', async () => {
-        const prompt = batchPromptInput ? batchPromptInput.value.trim() : '';
-        if (!prompt) {
-            showErrorModal('Please enter the prompt first.');
+        const readiness = batchScenarioReadiness();
+        if (readiness.error) {
+            showErrorModal(readiness.error);
+            return;
+        }
+        if (!readiness.hasPrompt) {
+            showErrorModal('Add Analyse content to the Inference Scenario (or a batch prompt override) first.');
             return;
         }
         
-        showLoading('Detecting foci from first prompt...');
+        showLoading('Detecting foci from the batch scenario...');
         
         try {
             const response = await fetch('/api/detect-foci', {
@@ -6401,7 +6376,7 @@ function renderBatchFoci() {
     if (!batchFociContainer) return;
     
     if (batchFoci.length === 0) {
-        batchFociContainer.innerHTML = '<p class="empty-state">No foci defined yet. Click "Auto-Detect from First Prompt" or "Import from Prompt Analysis" to get started.</p>';
+        batchFociContainer.innerHTML = '<p class="empty-state">No foci defined yet. Click "Auto-Detect from Scenario" or "Import from Prompt Analysis" to get started.</p>';
         updateBatchAnalysisButton();
         if (window.FocalPromptExperiment) window.FocalPromptExperiment.refreshAll();
         return;
@@ -6792,30 +6767,23 @@ function attachBatchAnalysisHandler() {
         console.log('=== DOCUMENT-LEVEL CLICK DETECTED ===');
         console.log('Button disabled?', btn.disabled);
         console.log('Pairs:', batchPairs.length, 'Foci:', batchFoci.length);
-        console.log('Prompt:', batchPromptInput ? batchPromptInput.value.trim().length : 'no input element');
         
         // ALWAYS prevent default and stop propagation
         e.preventDefault();
         e.stopPropagation();
         
-        // Check state directly - can use prompt input OR reconstruct from foci
-        const hasPromptInput = batchPromptInput ? batchPromptInput.value.trim().length > 0 : false;
-        const canReconstructFromFoci = batchFoci.length > 0 && batchFoci.every(f => f.prompt_section && f.prompt_section.trim().length > 0);
-        const hasPrompt = hasPromptInput || canReconstructFromFoci;
-        const shouldBeDisabled = batchPairs.length === 0 || batchFoci.length === 0 || !hasPrompt;
-        
-        console.log('Should be disabled?', shouldBeDisabled);
-        console.log('Has prompt input?', hasPromptInput, 'Can reconstruct?', canReconstructFromFoci);
-        
+        // The main scenario is the source of prompt content; the batch prompt input
+        // is only an optional override of the first Analyse message.
+        const readiness = batchScenarioReadiness();
+        const shouldBeDisabled = batchPairs.length === 0 || batchFoci.length === 0 || !readiness.hasPrompt;
+
+        console.log('Should be disabled?', shouldBeDisabled, 'Analyse chars:', readiness.promptChars);
+
         if (shouldBeDisabled) {
-            console.warn('Cannot run - missing requirements');
-            let promptMsg = 'No prompt';
-            if (hasPromptInput) {
-                promptMsg = 'Prompt input: ' + (batchPromptInput.value.trim().length) + ' chars';
-            } else if (canReconstructFromFoci) {
-                promptMsg = 'Can reconstruct from ' + batchFoci.length + ' foci';
-            }
-            showErrorModal('Please ensure you have:\n- At least one pair (you have ' + batchPairs.length + ')\n- At least one focus (you have ' + batchFoci.length + ')\n- A prompt: ' + promptMsg);
+            const promptMsg = readiness.error
+                ? 'scenario invalid (' + readiness.error + ')'
+                : readiness.promptChars + ' chars of Analyse content';
+            showErrorModal('Please ensure you have:\n- At least one pair (you have ' + batchPairs.length + ')\n- At least one focus (you have ' + batchFoci.length + ')\n- Analyse content in the scenario: ' + promptMsg);
             return;
         }
         
@@ -8213,7 +8181,7 @@ if (analyzeOptimizationBtn) {
             }
             
             const data = await response.json();
-            displayOptimizationRecommendations(data.recommendations, data.analysis_summary, data.cost_breakdown, data.optimized_prompt);
+            displayOptimizationRecommendations(data);
             
         } catch (error) {
             showError('Error getting recommendations: ' + error.message);
@@ -8225,7 +8193,13 @@ if (analyzeOptimizationBtn) {
 }
 
 // Display Optimization Recommendations
-function displayOptimizationRecommendations(recommendations, analysisSummary, costBreakdown, optimizedPrompt) {
+function displayOptimizationRecommendations(result) {
+    const payload = result || {};
+    const recommendations = payload.recommendations || {};
+    const analysisSummary = payload.analysis_summary;
+    const costBreakdown = payload.cost_breakdown;
+    const optimizedScenario = payload.optimized_scenario || null;
+    window.lastOptimizedScenario = optimizedScenario;
     if (!optimizationResults) return;
     
     // Show the section
@@ -8424,18 +8398,9 @@ function displayOptimizationRecommendations(recommendations, analysisSummary, co
         html += '</div>';
     }
     
-    // Optimized Prompt
-    if (optimizedPrompt) {
-        html += '<div style="margin-bottom: 24px; padding: 16px; background: #d1fae5; border-radius: 6px; border: 1px solid #10b981;">';
-        html += '<h3 style="margin-bottom: 12px;">✨ Optimized Prompt</h3>';
-        html += '<p style="margin-bottom: 12px; color: #065f46; font-size: 0.9em;">This is a ready-to-use optimized version of your prompt based on all the analysis data and recommendations.</p>';
-        html += '<div style="position: relative;">';
-        html += '<textarea id="optimized-prompt-text" readonly style="width: 100%; min-height: 300px; padding: 12px; font-family: \'Courier New\', monospace; font-size: 0.9em; line-height: 1.5; border: 1px solid #10b981; border-radius: 4px; background: white; white-space: pre-wrap; word-wrap: break-word; resize: vertical;">';
-        html += escapeHtml(optimizedPrompt);
-        html += '</textarea>';
-        html += '<button onclick="copyOptimizedPrompt()" class="btn btn-primary" style="margin-top: 8px; background: #10b981; border-color: #10b981;">📋 Copy Optimized Prompt</button>';
-        html += '</div>';
-        html += '</div>';
+    // Optimized Scenario (complete: roles, Analyse/Retain modes, retained inputs, contract)
+    if (optimizedScenario) {
+        html += renderOptimizedScenarioHtml(optimizedScenario, payload.scenario_warnings);
     }
     
     // Cost Breakdown
@@ -8453,28 +8418,100 @@ function displayOptimizationRecommendations(recommendations, analysisSummary, co
     optimizationResults.innerHTML = html;
 }
 
-// Copy optimized prompt to clipboard
-function copyOptimizedPrompt() {
-    const textarea = document.getElementById('optimized-prompt-text');
-    if (textarea) {
-        textarea.select();
-        textarea.setSelectionRange(0, 99999); // For mobile devices
+function optimizedScenarioMessageLabel(message, index) {
+    const mode = message.analysis_mode === 'retain' ? 'Retain' : 'Analyse';
+    const inputName = message.input_name ? ' · input: ' + message.input_name : '';
+    return (index + 1) + '. ' + (message.role || 'user') + ' · ' + mode + inputName;
+}
+
+function renderOptimizedScenarioHtml(scenario, warnings) {
+    const messages = Array.isArray(scenario.messages) ? scenario.messages : [];
+    let html = '<div style="margin-bottom: 24px; padding: 16px; background: #d1fae5; border-radius: 6px; border: 1px solid #10b981;">';
+    html += '<h3 style="margin-bottom: 12px;">✨ Optimized Scenario</h3>';
+    html += '<p style="margin-bottom: 12px; color: #065f46; font-size: 0.9em;">Every message keeps its role and Analyse/Retain mode, retained inputs are unchanged, and any output contract is preserved. Copy the scenario JSON to reuse it verbatim.</p>';
+    (warnings || []).forEach(function (warning) {
+        html += `<p class="optimized-scenario-warning">⚠️ ${escapeHtml(warning)}</p>`;
+    });
+    messages.forEach(function (message, index) {
+        html += '<div class="optimized-scenario-message">';
+        html += `<div class="optimized-scenario-message-header">${escapeHtml(optimizedScenarioMessageLabel(message, index))}</div>`;
+        html += `<textarea class="optimized-scenario-content" readonly rows="6" data-message-id="${escapeScenarioAttribute(message.id)}">${escapeHtml(message.content || '')}</textarea>`;
+        html += '</div>';
+    });
+    if (scenario.output_contract) {
+        html += '<div class="optimized-scenario-message">';
+        html += `<div class="optimized-scenario-message-header">Output contract · ${escapeHtml(scenario.output_contract.name || 'model_output')}</div>`;
+        html += `<textarea class="optimized-scenario-content" readonly rows="6">${escapeHtml(JSON.stringify(scenario.output_contract.schema || {}, null, 2))}</textarea>`;
+        html += '</div>';
+    }
+    html += '<details class="optimized-scenario-json-details"><summary>Scenario JSON</summary>';
+    html += `<textarea id="optimized-scenario-json" class="optimized-scenario-json" readonly rows="10" aria-label="Optimized scenario JSON">${escapeHtml(JSON.stringify(scenario, null, 2))}</textarea>`;
+    html += '</details>';
+    html += '<button type="button" onclick="copyOptimizedScenario(this)" class="btn btn-primary" style="margin-top: 8px; background: #10b981; border-color: #10b981;">📋 Copy Optimized Scenario</button>';
+    html += '</div>';
+    return html;
+}
+
+async function copyOptimizationText(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
         try {
-            document.execCommand('copy');
-            // Show temporary success message
-            const btn = event.target;
-            const originalText = btn.textContent;
-            btn.textContent = '✓ Copied!';
-            btn.style.background = '#10b981';
-            setTimeout(() => {
-                btn.textContent = originalText;
-                btn.style.background = '#10b981';
-            }, 2000);
-        } catch (err) {
-            alert('Failed to copy. Please select and copy manually.');
+            await navigator.clipboard.writeText(text);
+            return text;
+        } catch (_error) {
+            // Fall back when the Clipboard API is unavailable or denied.
         }
     }
+    // A textarea inside collapsed Scenario JSON cannot supply a selection.
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.left = '-9999px';
+    document.body.appendChild(textarea);
+    try {
+        textarea.select();
+        return document.execCommand('copy') ? text : '';
+    } catch (_error) {
+        return '';
+    } finally {
+        textarea.remove();
+    }
 }
+
+// Copies the complete optimized scenario (roles, retained messages, contract),
+// never a flattened prompt projection. Resolves to copied text ('' on failure).
+async function copyOptimizedScenario(btn) {
+    const scenario = window.lastOptimizedScenario;
+    if (!scenario) {
+        showErrorModal('No optimized scenario available yet. Run the optimization analysis first.');
+        return '';
+    }
+    const text = JSON.stringify(scenario, null, 2);
+    const copied = await copyOptimizationText(text);
+    if (!copied) {
+        alert('Failed to copy. Please open Scenario JSON and copy manually.');
+        return '';
+    }
+    if (btn) {
+        const originalText = btn.textContent;
+        btn.textContent = '✓ Copied!';
+        setTimeout(function () { btn.textContent = originalText; }, 2000);
+    }
+    return copied;
+}
+
+// Legacy workspace exports (saved before scenario optimization) restore HTML that
+// still contains a flat #optimized-prompt-text textarea with an inline call.
+async function copyOptimizedPrompt() {
+    const textarea = document.getElementById('optimized-prompt-text');
+    if (!textarea) return '';
+    const copied = await copyOptimizationText(textarea.value);
+    if (!copied) alert('Failed to copy. Please select and copy manually.');
+    return copied;
+}
+
+window.copyOptimizedScenario = copyOptimizedScenario;
+window.copyOptimizedPrompt = copyOptimizedPrompt;
+window.getOptimizedScenario = function () { return window.lastOptimizedScenario || null; };
 
 // Export Batch Agent Results
 if (exportBatchAgentResultsBtn) {
@@ -8588,6 +8625,29 @@ function collectPromptAnalysisWorkspace() {
     };
 }
 
+// The optimized scenario (not just its flattened prompt) is part of the session:
+// a restored workspace can still copy the complete scenario.
+function collectOptimizationWorkspace() {
+    return {
+        html: optimizationResults ? optimizationResults.innerHTML : '',
+        optimized_scenario: window.lastOptimizedScenario || null,
+        visible: promptOptimizationSection
+            ? promptOptimizationSection.style.display !== 'none'
+            : false,
+    };
+}
+
+function restoreOptimizationWorkspace(opt) {
+    const optimization = opt || {};
+    window.lastOptimizedScenario = optimization.optimized_scenario || null;
+    if (optimizationResults) {
+        optimizationResults.innerHTML = optimization.html || '';
+    }
+    if (promptOptimizationSection) {
+        promptOptimizationSection.style.display = optimization.visible ? 'block' : 'none';
+    }
+}
+
 function collectWorkspaceSession() {
     const batchTab = document.getElementById('batch-analysis-tab');
     return {
@@ -8617,12 +8677,7 @@ function collectWorkspaceSession() {
             results: batchAgentResultsData,
             cost_breakdown: window.batchAgentCostBreakdown || null,
         },
-        optimization: {
-            html: optimizationResults ? optimizationResults.innerHTML : '',
-            visible: promptOptimizationSection
-                ? promptOptimizationSection.style.display !== 'none'
-                : false,
-        },
+        optimization: collectOptimizationWorkspace(),
     };
 }
 
@@ -8854,7 +8909,8 @@ function restoreBatchAnalysisWorkspace(ba) {
     if (!ba) {
         return;
     }
-    if (ba.scenario) setMainScenario(ba.scenario);
+    // The main scenario belongs to prompt_analysis; batch only owns its prompt
+    // override, so a batch payload never replaces the restored main scenario.
     if (batchPromptInput && ba.prompt != null) {
         batchPromptInput.value = ba.prompt;
     }
@@ -8937,14 +8993,7 @@ function restoreWorkspaceSession(data) {
     restorePromptAnalysisWorkspace(data.prompt_analysis);
     restoreBatchAnalysisWorkspace(data.batch_analysis);
     restoreAgentBuilderWorkspace(data.agent_builder);
-    if (data.optimization) {
-        if (optimizationResults) {
-            optimizationResults.innerHTML = data.optimization.html || '';
-        }
-        if (promptOptimizationSection) {
-            promptOptimizationSection.style.display = data.optimization.visible ? 'block' : 'none';
-        }
-    }
+    restoreOptimizationWorkspace(data.optimization);
     if (data.active_tab) {
         switchTab(data.active_tab);
     }

@@ -1,10 +1,17 @@
 """Smoke tests for high-level focalprompt.api helpers (mocked assessor)."""
 
-from unittest.mock import MagicMock, patch
+import json
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
-from focalprompt.api import _compare_reported_vs_revealed, analyze, generate_output
+from focalprompt.api import (
+    _compare_reported_vs_revealed,
+    analyze,
+    assess_focus,
+    detect_foci,
+    generate_output,
+)
 
 
 def test_compare_reported_vs_revealed():
@@ -84,3 +91,85 @@ def test_generate_output_rejects_prompt_and_scenario_together():
                 ],
             },
         )
+
+
+def _detecting_assessor(prompt_section):
+    assessor = Mock()
+    assessor.model = 'gpt-4o-mini'
+    assessor.provider_name = 'openai'
+    assessor.provider = Mock()
+    assessor.provider.chat_completion.return_value = {
+        'content': json.dumps({
+            'foci': [{
+                'focus': 'Brevity',
+                'evidence_quote': prompt_section,
+                'prompt_section': prompt_section,
+                'description': 'Desc',
+            }]
+        }),
+        'usage': {},
+    }
+    return assessor
+
+
+def test_detect_foci_legacy_prompt_keeps_flat_coverage_and_quality():
+    """Legacy prompts keep the flat report; the scenario path has no equivalent."""
+    prompt = 'Answer briefly. Never mention cats.'
+    assessor = _detecting_assessor('Answer briefly.')
+    with patch('focalprompt.api.get_assessor', return_value=assessor):
+        result = detect_foci(prompt)
+
+    uncovered = result['coverage']['uncovered_spans']
+    assert any(span['text'].strip() == 'Never mention cats.' for span in uncovered)
+    assert result['quality']['overlap_count'] == 0
+    assert result['quality']['span_size_distribution']['count'] == 1
+    assert 'messages' not in result['coverage']
+
+
+def test_assess_focus_grounds_scenario_foci_against_scenario_text():
+    """A span-only focus must reach the judge carrying its scenario evidence."""
+    rules = 'Answer briefly. Say BANANAS when greeted.'
+    scenario = {
+        'version': 1,
+        'messages': [
+            {'id': 'rules', 'role': 'system', 'content': rules, 'analysis_mode': 'analyse'},
+            {'id': 'chat', 'role': 'user', 'content': 'Hi', 'analysis_mode': 'retain'},
+        ],
+    }
+    start = rules.index('Say BANANAS')
+    focus = {
+        'focus': 'Greeting rule',
+        'spans': [{
+            'message_id': 'rules',
+            'char_start': start,
+            'char_end': len(rules),
+            'text_snapshot': rules[start:],
+        }],
+    }
+    assessor = Mock()
+    assessor.model = 'gpt-4o-mini'
+    assessor.provider_name = 'openai'
+    assessor.provider = Mock()
+    assessor.provider.chat_completion.return_value = {
+        'content': json.dumps({
+            'foci': [
+                {'focus_index': 0, 'focus': 'Greeting rule', 'score': 100,
+                 'explanation': 'said it'},
+            ],
+            'overall_summary': 'ok',
+        }),
+        'usage': {},
+    }
+    from core.focal_assessor import FocalAssessor
+    real = FocalAssessor.__new__(FocalAssessor)
+    assessor._build_assessment_prompt_with_foci = (
+        lambda p, o, f, m=None: real._build_assessment_prompt_with_foci(p, o, f, m)
+    )
+
+    with patch('focalprompt.api.get_assessor', return_value=assessor):
+        result = assess_focus(output='BANANAS', foci=[focus], scenario=scenario)
+
+    judge_message = assessor.provider.chat_completion.call_args.kwargs['messages'][1]['content']
+    assert 'Say BANANAS when greeted.' in judge_message
+    assert result['foci'][0]['focus_index'] == 0
+    assert result['foci'][0]['message_ids'] == ['rules']

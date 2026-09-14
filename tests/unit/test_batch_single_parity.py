@@ -104,7 +104,7 @@ def test_score_from_samples_normalized_sums_to_100(mock_provider, deterministic_
     assert abs(sum(norms) - 100.0) < 1e-6
 
 
-def test_batch_pair_matches_score_from_samples(mock_provider, deterministic_embeddings, monkeypatch):
+def test_batch_pair_matches_score_from_samples(mock_provider, deterministic_embeddings):
     baseline, ablated = _fixed_samples()
     seed = 11
     n_perm = 128
@@ -124,16 +124,13 @@ def test_batch_pair_matches_score_from_samples(mock_provider, deterministic_embe
         max_workers=1,
     )
 
-    calls = {'n': 0}
-
-    def fake_sample(prompt, n, temperature):
-        calls['n'] += 1
-        if calls['n'] == 1:
-            return list(baseline), 1, 1
-        focus_idx = calls['n'] - 2
-        return list(ablated[focus_idx]), 1, 1
-
-    monkeypatch.setattr(batch, '_sample_outputs', fake_sample)
+    samples = list(baseline) + [
+        output for focus_index in sorted(ablated) for output in ablated[focus_index]
+    ]
+    mock_provider.chat_completion.side_effect = [
+        {'content': output, 'usage': {'prompt_tokens': 1, 'completion_tokens': 1}}
+        for output in samples
+    ]
 
     pair = batch.process_single_pair(
         {'prompt': PROMPT, 'output': 'x'},

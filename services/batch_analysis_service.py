@@ -6,10 +6,11 @@ Per-pair subtractive ablation with a permutation test.
 """
 
 import json
+import threading
 import time
-from typing import Any, List, Dict, Mapping, Optional, Generator
+from typing import Any, Callable, List, Dict, Mapping, Optional, Generator
 from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from services.embedding_service import EmbeddingService
 from services.cost_calculator import CostCalculator
 from services.checkpoint_service import CheckpointService
@@ -36,6 +37,9 @@ from utils.inference_scenario import (
     validate_scenario,
 )
 
+
+class BatchRunCancelled(Exception):
+    """Raised inside a worker row when its own run has been cancelled."""
 
 
 def _sse_safe_pair_result(result: Dict) -> Dict:
@@ -80,7 +84,8 @@ class BatchAnalysisService:
         self.checkpoint_service = checkpoint_service or CheckpointService()
         self.assessment_service = assessment_service
         self.provider_name = provider_name or 'openai'
-        self.executor = ThreadPoolExecutor(max_workers=max_workers)
+        self.max_workers = max(1, int(max_workers))
+        self.executor = ThreadPoolExecutor(max_workers=self.max_workers)
     
     def _complete(self, prompt: str, temperature: float) -> Dict:
         if not (prompt or '').strip():
@@ -97,7 +102,14 @@ class BatchAnalysisService:
             temperature=temperature,
         )
     
-    def _sample_outputs(self, prompt: str, n: int, temperature: float):
+    def _sample_outputs(
+        self,
+        prompt: str,
+        n: int,
+        temperature: float,
+        *,
+        before_sample: Optional[Callable[[int], None]] = None,
+    ):
         # Whole-prompt ablation yields an empty string; do not hit the gateway.
         if not (prompt or '').strip():
             return [''] * n, 0, 0
@@ -107,6 +119,8 @@ class BatchAnalysisService:
         for i in range(n):
             if i > 0:
                 time.sleep(SAMPLE_GAP_SECONDS)
+            if before_sample is not None:
+                before_sample(i)
             response = self._complete(prompt, temperature)
             outputs.append(response['content'])
             if 'usage' in response:
@@ -126,6 +140,7 @@ class BatchAnalysisService:
         permutation_seed: Optional[int] = None,
         temperature: float = 0.7,
         scenario: Optional[Mapping[str, Any]] = None,
+        cancel_event: Optional[threading.Event] = None,
     ) -> Dict:
         """
         Process one pair.
@@ -134,7 +149,13 @@ class BatchAnalysisService:
         assessment, then delegate statistical scoring to
         ``AblationService.score_from_samples`` (canonical single-run scorer).
         """
+        def before_sample(_index: int = 0) -> None:
+            """Abort before paying for another sample once this run is cancelled."""
+            if cancel_event is not None and cancel_event.is_set():
+                raise BatchRunCancelled(f'Batch run cancelled before pair {pair_idx}')
+
         try:
+            before_sample()
             require_stochastic_temperature(temperature)
             prompt = pair_data.get('prompt', '')
             if scenario is None and not (prompt or '').strip():
@@ -163,13 +184,16 @@ class BatchAnalysisService:
                 classified = normalize_scenario_foci(bound_scenario, foci_list)
                 baseline_outputs, input_tokens, output_tokens, baseline_metadata = (
                     scorer._sample_scenario_outputs(
-                        bound_scenario, n_baseline, temperature
+                        bound_scenario,
+                        n_baseline,
+                        temperature,
+                        before_sample=before_sample,
                     )
                 )
             else:
                 classified = classify_foci_for_ablation(prompt, foci_list)
                 baseline_outputs, input_tokens, output_tokens = self._sample_outputs(
-                    prompt, n_baseline, temperature
+                    prompt, n_baseline, temperature, before_sample=before_sample
                 )
                 baseline_metadata = []
             baseline_output = baseline_outputs[0]
@@ -180,10 +204,13 @@ class BatchAnalysisService:
                 provided_out = (pair_data.get('output') or '').strip()
                 output_for_assessment = provided_out if provided_out else baseline_output
                 assessment_source = 'provided_output' if provided_out else 'generated_baseline'
+                # Reported-focus evidence must come from the grounded foci so the
+                # assessor sees the same spans ablation deletes.
                 user_foci_for_assess = [
                     {'focus': f.get('focus', ''), 'prompt_section': f.get('prompt_section', '')}
-                    for f in foci_list
+                    for f in classified
                 ]
+                before_sample()
                 try:
                     fd = self.assessment_service.assess_focus(
                         scenario_analysis_document(bound_scenario) if bound_scenario else prompt,
@@ -199,6 +226,8 @@ class BatchAnalysisService:
                     if usage_fd:
                         input_tokens += usage_fd.get('prompt_tokens', 0) or usage_fd.get('input_tokens', 0)
                         output_tokens += usage_fd.get('completion_tokens', 0) or usage_fd.get('output_tokens', 0)
+                except BatchRunCancelled:
+                    raise
                 except Exception as ex:
                     assessment_error = str(ex)
 
@@ -207,10 +236,14 @@ class BatchAnalysisService:
             for i, focus in enumerate(classified):
                 if not focus.get('attributable'):
                     continue
+                before_sample()
                 if bound_scenario is not None:
                     ablated, deletion = ablate_scenario(bound_scenario, focus)
                     texts, tin, tout, metadata = scorer._sample_scenario_outputs(
-                        ablated, n_ablated, temperature
+                        ablated,
+                        n_ablated,
+                        temperature,
+                        before_sample=before_sample,
                     )
                     ablated_metadata[str(i)] = {
                         'scenario_metadata': metadata,
@@ -221,7 +254,10 @@ class BatchAnalysisService:
                         prompt, focus['char_start'], focus['char_end']
                     )
                     texts, tin, tout = self._sample_outputs(
-                        ablated_prompt, n_ablated, temperature
+                        ablated_prompt,
+                        n_ablated,
+                        temperature,
+                        before_sample=before_sample,
                     )
                 input_tokens += tin
                 output_tokens += tout
@@ -301,9 +337,19 @@ class BatchAnalysisService:
                 }
                 out['reproducibility'] = scored.get('reproducibility')
             return out
+        except BatchRunCancelled as cancelled:
+            return {
+                'success': False,
+                'pair_index': pair_idx,
+                'cancelled': True,
+                'error': str(cancelled),
+            }
         except (StructuredOutputError, ProviderCapabilityError):
-            # A required contract failure invalidates the experiment. Let the
-            # stream abort instead of silently continuing with incomparable arms.
+            # A required contract failure invalidates the experiment. Cancel this
+            # run at the source — before the future resolves — so a row the
+            # executor starts next sees the cancellation and pays for nothing.
+            if cancel_event is not None:
+                cancel_event.set()
             raise
         except Exception as e:
             return {
@@ -353,81 +399,120 @@ class BatchAnalysisService:
         
         yield f"data: {json.dumps({'type': 'progress', 'stage': 'processing', 'message': f'Processing {total_pairs} pairs...'})}\n\n"
         
-        futures = {}
-        for pair_idx, pair in enumerate(pairs):
-            if pair_idx in completed_pairs:
-                continue
-            
-            future = self.executor.submit(
-                self.process_single_pair,
-                pair,
-                pair_idx,
-                foci_list,
-                n_baseline,
-                n_ablated,
-                n_permutations,
-                alpha,
-                permutation_seed,
-                temperature,
-                normalized_scenario,
-            )
-            futures[future] = pair_idx
-        
-        for future in as_completed(futures):
-            pair_idx = futures[future]
-            result = future.result()
-            pair_results.append(result)
-            completed_count += 1
-            if result.get('success') and result.get('tokens'):
-                total_input_tokens += result['tokens'].get('input', 0)
-                total_output_tokens += result['tokens'].get('output', 0)
-                total_embedding_tokens += result['tokens'].get('embedding', 0)
-            
-            checkpoint_data = {
-                'session_id': session_id,
-                'timestamp': datetime.now().isoformat(),
-                'type': 'batch_analysis',
-                'completed': completed_count,
-                'total_pairs': total_pairs,
-                'pair_results': pair_results,
-                'complete': completed_count >= total_pairs
-            }
-            if normalized_scenario is not None:
-                checkpoint_data['scenario'] = normalized_scenario
-                checkpoint_data['workspace_version'] = 2
-            self.checkpoint_service.save_checkpoint(session_id, checkpoint_data, 'batch_analysis')
-            
-            progress_event = {
-                'type': 'progress',
-                'stage': 'processing',
-                'message': 'Processing pairs',
-                'completed': completed_count,
-                'total': total_pairs,
-                'pair_index': pair_idx,
-            }
-            yield f"data: {json.dumps(progress_event)}\n\n"
+        # Bounded scheduling: only as many rows as the executor can run are
+        # queued, so a fatal contract failure stops the run before any further
+        # row pays for samples. Cancellation is scoped to this stream's event,
+        # so unrelated runs sharing the executor keep going.
+        cancel_event = threading.Event()
+        window = max(1, self.max_workers)
+        pending = [
+            (pair_idx, pair)
+            for pair_idx, pair in enumerate(pairs)
+            if pair_idx not in completed_pairs
+        ]
+        next_pending = 0
+        inflight: Dict[Future, int] = {}
 
-            if result.get('success'):
-                # Stream a UI-sized payload (drop raw sample texts) so the
-                # browser can render even if the final complete event is cut.
-                pair_event = {
-                    'type': 'pair_result',
-                    'pair_index': pair_idx,
-                    'completed': completed_count,
-                    'total': total_pairs,
-                    'result': _sse_safe_pair_result(result),
-                }
-                yield f"data: {json.dumps(pair_event)}\n\n"
-            else:
-                err = result.get('error', 'Unknown error')
-                err_event = {
-                    'type': 'error',
-                    'pair_index': pair_idx,
-                    'error': err,
-                    'message': err,
-                }
-                yield f"data: {json.dumps(err_event)}\n\n"
-        
+        def submit_pending() -> None:
+            nonlocal next_pending
+            while (
+                not cancel_event.is_set()
+                and next_pending < len(pending)
+                and len(inflight) < window
+            ):
+                idx, pair = pending[next_pending]
+                next_pending += 1
+                future = self.executor.submit(
+                    self.process_single_pair,
+                    pair,
+                    idx,
+                    foci_list,
+                    n_baseline,
+                    n_ablated,
+                    n_permutations,
+                    alpha,
+                    permutation_seed,
+                    temperature,
+                    normalized_scenario,
+                    cancel_event,
+                )
+                inflight[future] = idx
+
+        def abandon_run() -> None:
+            cancel_event.set()
+            for queued in list(inflight):
+                queued.cancel()
+            inflight.clear()
+
+        submit_pending()
+        try:
+            while inflight:
+                done, _not_done = wait(list(inflight), return_when=FIRST_COMPLETED)
+                for future in done:
+                    pair_idx = inflight.pop(future)
+                    try:
+                        result = future.result()
+                    except (StructuredOutputError, ProviderCapabilityError):
+                        # A required contract failure invalidates the experiment:
+                        # drop queued rows and stop active rows before more samples.
+                        abandon_run()
+                        raise
+                    pair_results.append(result)
+                    completed_count += 1
+                    if result.get('success') and result.get('tokens'):
+                        total_input_tokens += result['tokens'].get('input', 0)
+                        total_output_tokens += result['tokens'].get('output', 0)
+                        total_embedding_tokens += result['tokens'].get('embedding', 0)
+
+                    checkpoint_data = {
+                        'session_id': session_id,
+                        'timestamp': datetime.now().isoformat(),
+                        'type': 'batch_analysis',
+                        'completed': completed_count,
+                        'total_pairs': total_pairs,
+                        'pair_results': pair_results,
+                        'complete': completed_count >= total_pairs
+                    }
+                    if normalized_scenario is not None:
+                        checkpoint_data['scenario'] = normalized_scenario
+                        checkpoint_data['workspace_version'] = 2
+                    self.checkpoint_service.save_checkpoint(session_id, checkpoint_data, 'batch_analysis')
+
+                    progress_event = {
+                        'type': 'progress',
+                        'stage': 'processing',
+                        'message': 'Processing pairs',
+                        'completed': completed_count,
+                        'total': total_pairs,
+                        'pair_index': pair_idx,
+                    }
+                    yield f"data: {json.dumps(progress_event)}\n\n"
+
+                    if result.get('success'):
+                        # Stream a UI-sized payload (drop raw sample texts) so the
+                        # browser can render even if the final complete event is cut.
+                        pair_event = {
+                            'type': 'pair_result',
+                            'pair_index': pair_idx,
+                            'completed': completed_count,
+                            'total': total_pairs,
+                            'result': _sse_safe_pair_result(result),
+                        }
+                        yield f"data: {json.dumps(pair_event)}\n\n"
+                    else:
+                        err = result.get('error', 'Unknown error')
+                        err_event = {
+                            'type': 'error',
+                            'pair_index': pair_idx,
+                            'error': err,
+                            'message': err,
+                        }
+                        yield f"data: {json.dumps(err_event)}\n\n"
+                submit_pending()
+        finally:
+            # Client disconnect or abort must not leave rows paying for samples.
+            abandon_run()
+
         yield f"data: {json.dumps({'type': 'progress', 'stage': 'calculating_statistics', 'message': 'Calculating statistics...'})}\n\n"
         
         statistics = calculate_statistics_from_results(pair_results)

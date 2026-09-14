@@ -226,3 +226,46 @@ def test_static_scenario_accepts_output_only_rows_and_reports_extra_columns():
     body, status = parse_result_to_response(extra)
     assert status == 200
     assert body['unused_input_columns'] == ['note']
+
+
+def test_case_distinct_named_inputs_bind_to_exact_headers():
+    result = parse_batch_csv_bytes(
+        b'Question,question,output\nDisplay,lower,Answer\n',
+        expected_input_names=['Question', 'question'],
+    )
+    body, status = parse_result_to_response(result)
+    assert status == 200
+    assert body['pairs'][0]['inputs'] == {'Question': 'Display', 'question': 'lower'}
+
+
+def test_case_insensitive_fallback_binds_when_unambiguous():
+    result = parse_batch_csv_bytes(
+        b'QUESTION,output\nWhat?,Answer\n',
+        expected_input_names=['Question'],
+    )
+    body, status = parse_result_to_response(result)
+    assert status == 200
+    assert body['pairs'][0]['inputs'] == {'Question': 'What?'}
+    assert body['missing_input_columns'] == []
+
+
+def test_ambiguous_case_only_headers_are_rejected():
+    result = parse_batch_csv_bytes(
+        b'Question,QUESTION,output\na,b,Answer\n',
+        expected_input_names=['question'],
+    )
+    body, status = parse_result_to_response(result)
+    assert status == 400
+    assert 'Ambiguous' in ' '.join(body['errors'])
+
+
+def test_ambiguous_configured_names_reject_case_only_header():
+    result = parse_batch_csv_bytes(
+        b'QUESTION,output\nWhat?,Answer\n',
+        expected_input_names=['Question', 'question'],
+    )
+    body, status = parse_result_to_response(result)
+    assert status == 400
+    joined = ' '.join(body['errors'])
+    assert 'Ambiguous' in joined
+    assert 'Question' in joined and 'question' in joined

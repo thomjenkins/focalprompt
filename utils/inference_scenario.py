@@ -100,11 +100,11 @@ def _validate_output_contract(contract: Any) -> Optional[Dict[str, Any]]:
     if not isinstance(schema, Mapping):
         raise ScenarioValidationError('output_contract.schema must be a JSON Schema object')
     try:
-        from jsonschema.validators import validator_for
+        import jsonschema
     except ImportError as exc:  # pragma: no cover - packaging guard
         raise RuntimeError('jsonschema is required for structured output contracts') from exc
     try:
-        validator_for(dict(schema)).check_schema(dict(schema))
+        jsonschema.validators.validator_for(schema).check_schema(schema)
     except Exception as exc:
         raise ScenarioValidationError(f'output_contract.schema is invalid: {exc}') from exc
     return copy.deepcopy(dict(contract))
@@ -358,11 +358,14 @@ def validate_structured_response(
         raise StructuredOutputError(f'Model returned malformed JSON: {exc}') from exc
     try:
         import jsonschema
+        from referencing import Registry
 
         validator_class = jsonschema.validators.validator_for(contract['schema'])
         validator = validator_class(
             contract['schema'],
             format_checker=jsonschema.FormatChecker(),
+            # An explicit empty registry resolves bundled refs but never fetches.
+            registry=Registry(),
         )
         validator.validate(parsed)
     except Exception as exc:

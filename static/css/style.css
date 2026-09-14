@@ -3221,7 +3221,6 @@ circle.fp-series-7 { fill: #8a8a8a; }
     background: #fff;
     font: inherit;
 }
-.scenario-message-id { width: 170px; }
 .scenario-input-name { width: 180px; }
 .scenario-content { margin: 0; resize: vertical; }
 .scenario-output-contract {
@@ -3260,8 +3259,8 @@ circle.fp-series-7 { fill: #8a8a8a; }
 }
 #scenario-contract-fields.hidden { display: none; }
 #scenario-contract-fields label { display: grid; gap: 6px; font-weight: 600; }
-#scenario-contract-fields [aria-invalid="true"] { border-color: var(--danger-color); }
 .scenario-contract-error { margin: 0; color: var(--danger-color); }
+#scenario-contract-fields [aria-invalid="true"] { border-color: var(--danger-color); }
 @media (max-width: 720px) {
     .scenario-message-card { grid-template-columns: 28px minmax(0, 1fr); }
     .scenario-message-controls > input,
@@ -3322,3 +3321,28 @@ circle.fp-series-7 { fill: #8a8a8a; }
 #apply-model-to-all-btn { margin-bottom: 12px; }
 .section-model-control:has(.section-model-panel:not([hidden])) { flex-basis: 100%; }
 .card:has(.section-model-panel:not([hidden])) { overflow: visible; position: relative; z-index: 2; }
+
+/* Optimized scenario result: one readonly card per message plus the full JSON. */
+.optimized-scenario-message { margin-bottom: 12px; }
+.optimized-scenario-message-header {
+    font-weight: 600;
+    font-size: 0.85em;
+    color: #065f46;
+    margin-bottom: 4px;
+}
+.optimized-scenario-content,
+.optimized-scenario-json {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 10px 12px;
+    border: 1px solid #10b981;
+    border-radius: 4px;
+    background: white;
+    font-family: 'Courier New', monospace;
+    font-size: 0.9em;
+    line-height: 1.5;
+    resize: vertical;
+}
+.optimized-scenario-json-details { margin: 12px 0; }
+.optimized-scenario-json-details > summary { cursor: pointer; font-weight: 600; color: #065f46; }
+.optimized-scenario-warning { margin: 0 0 8px; color: #92400e; font-size: 0.9em; }

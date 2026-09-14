@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -33,7 +34,12 @@ def test_lab_and_experiments(client):
     assert b'JSON schema' in r.data
 
 
-def test_open_lab_in_chrome(monkeypatch, capsys):
+@pytest.mark.parametrize('host, expected_hostname', [
+    ('0.0.0.0', '127.0.0.1'),
+    ('::1', '::1'),
+    ('[::1]', '::1'),
+])
+def test_open_lab_in_chrome(host, expected_hostname, monkeypatch):
     from app_new import open_lab_in_chrome
 
     command = []
@@ -43,14 +49,13 @@ def test_open_lab_in_chrome(monkeypatch, capsys):
         lambda args, **_kwargs: command.append(args),
     )
 
-    open_lab_in_chrome('0.0.0.0', 5001)
+    open_lab_in_chrome(host, 5001)
 
-    assert command == [
-        ['open', '-a', 'Google Chrome', 'http://127.0.0.1:5001/lab']
-    ]
-    assert 'Opened Focal Prompt lab in Chrome: http://127.0.0.1:5001/lab' in (
-        capsys.readouterr().err
-    )
+    target = urlsplit(command[0][-1])
+    assert target.scheme == 'http'
+    assert target.hostname == expected_hostname
+    assert target.port == 5001
+    assert target.path == '/lab'
 
 
 def test_canonical_json_loads():

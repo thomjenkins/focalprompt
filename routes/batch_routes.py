@@ -16,7 +16,13 @@ from utils.data_processing import (
 )
 from routes.http_errors import internal_error
 from utils.request_inference import request_inference_fields
-from utils.inference_scenario import ScenarioValidationError, named_inputs, validate_scenario
+from utils.inference_scenario import (
+    ProviderCapabilityError,
+    ScenarioValidationError,
+    StructuredOutputError,
+    named_inputs,
+    validate_scenario,
+)
 
 
 batch_bp = Blueprint('batch', __name__)
@@ -205,6 +211,17 @@ def batch_analysis_stream():
             ):
                 yield chunk
 
+        except (ProviderCapabilityError, StructuredOutputError) as e:
+            # The run was cancelled mid-flight: report it as fatal so the UI
+            # stops instead of presenting a partial experiment as complete.
+            fatal = {
+                'type': 'error',
+                'fatal': True,
+                'code': 'inference_contract_error',
+                'error': str(e),
+                'message': str(e),
+            }
+            yield f"data: {json.dumps(fatal)}\n\n"
         except (ScenarioValidationError, ValueError) as e:
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
         except Exception as e:

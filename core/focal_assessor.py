@@ -7,7 +7,7 @@ addresses different aspects (foci) of a given prompt.
 
 import json
 from typing import Any, List, Dict, Mapping, Optional
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 # OpenAI import removed - we use AI Gateway now via LLMProvider abstraction
 
 
@@ -18,6 +18,54 @@ class FocusScore:
     prompt_section: str  # Specific section of prompt this focus relates to
     score: float  # Points out of 100 (total must equal 100)
     explanation: str
+    # Stable identity of the submitted focus this score belongs to. Display
+    # names repeat, so name matching is never a valid join key.
+    focus_index: Optional[int] = None
+    # Canonical scenario provenance, copied from the grounded input focus.
+    spans: Optional[List[Dict[str, Any]]] = None
+    message_id: Optional[str] = None
+    message_ids: Optional[List[str]] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Legacy keys always; provenance only when the input carried it."""
+        data: Dict[str, Any] = {
+            'focus': self.focus,
+            'prompt_section': self.prompt_section,
+            'score': self.score,
+            'explanation': self.explanation,
+        }
+        if self.focus_index is not None:
+            data['focus_index'] = self.focus_index
+        if self.spans:
+            data['spans'] = self.spans
+        if self.message_id:
+            data['message_id'] = self.message_id
+        if self.message_ids:
+            data['message_ids'] = self.message_ids
+        return data
+
+
+def focus_evidence_text(focus: Mapping[str, Any]) -> str:
+    """Source text a judge may rely on for one focus.
+
+    Canonical span snapshots are authoritative; ``prompt_section`` is the
+    legacy carrier. A focus grounded only by spans must still reach the judge
+    with its evidence, otherwise the judge scores a bare label.
+    """
+    snippets = []
+    for span in focus.get('spans') or []:
+        if not isinstance(span, Mapping):
+            continue
+        snippet = str(span.get('text_snapshot') or span.get('text') or '').strip()
+        if snippet:
+            snippets.append(snippet)
+    if snippets:
+        return '\n…\n'.join(snippets)
+    section = str(focus.get('prompt_section') or '').strip()
+    if section:
+        return section
+    return str(focus.get('text_snapshot') or '').strip()
+
 
 
 @dataclass
@@ -29,7 +77,7 @@ class FocusAssessment:
     def to_dict(self) -> Dict:
         """Convert to dictionary for JSON serialization."""
         return {
-            'foci': [asdict(f) for f in self.foci],
+            'foci': [f.to_dict() for f in self.foci],
             'overall_summary': self.overall_summary
         }
     
@@ -198,9 +246,10 @@ class FocalAssessor:
                 focus=item['focus'],
                 prompt_section=item.get('prompt_section', ''),
                 score=float(item['score']),
-                explanation=item['explanation']
+                explanation=item['explanation'],
+                focus_index=index,
             )
-            for item in result['foci']
+            for index, item in enumerate(result['foci'])
         ]
         
         # Verify total equals 100
@@ -229,13 +278,17 @@ class FocalAssessor:
         foci_lines = []
         for i, f in enumerate(user_foci):
             name = f.get('focus', 'Unknown')
-            section = (f.get('prompt_section') or '').strip()
+            index = f.get('focus_index')
+            if not isinstance(index, int):
+                index = i
+            section = focus_evidence_text(f)
             if len(section) > 160:
                 section = section[:157].rstrip() + '...'
+            header = f"{i+1}. focus_index: {index}\n   Focus: {name}"
             if section:
-                foci_lines.append(f"{i+1}. Focus: {name}\n   Excerpt: {section}")
+                foci_lines.append(f"{header}\n   Excerpt: {section}")
             else:
-                foci_lines.append(f"{i+1}. Focus: {name}")
+                foci_lines.append(header)
         foci_list_text = '\n'.join(foci_lines)
 
         # Foci excerpts + output are enough; pasting the full ORIGINAL PROMPT
@@ -260,6 +313,7 @@ Return your analysis as a JSON object with this EXACT structure (three keys per 
 {{
   "foci": [
     {{
+      "focus_index": 0,
       "focus": "The exact focus name from the user-defined list above",
       "score": 35.0,
       "explanation": "Brief explanation referencing the output (keep under 2 sentences)"
@@ -269,9 +323,10 @@ Return your analysis as a JSON object with this EXACT structure (three keys per 
 }}
 
 CRITICAL REQUIREMENTS:
-- You MUST include ALL {len(user_foci)} foci from the user-defined list
+- You MUST include ALL {len(user_foci)} foci from the user-defined list, exactly once each
+- Copy focus_index verbatim from the list above; focus names may repeat, focus_index never does
 - Use the EXACT focus names provided above
-- Each focus object may ONLY have: focus, score, explanation
+- Each focus object may ONLY have: focus_index, focus, score, explanation
 - Do NOT include prompt_section, excerpt, quote, or any other keys
 - Do NOT copy Excerpt text into the JSON
 - Keep explanations short so the JSON response stays complete

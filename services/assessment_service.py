@@ -12,9 +12,13 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
-from core.focal_assessor import FocalAssessor, FocusScore, FocusAssessment
+from core.focal_assessor import (
+    FocalAssessor,
+    FocusAssessment,
+    FocusScore,
+)
 from utils.prompt_builder import get_pair_inputs
 from utils.span_alignment import compute_coverage_report, verify_focus
 from utils.llm_json import parse_llm_json
@@ -586,20 +590,94 @@ Only mark as dynamic if confidence > 0.6.""",
 
         return {'foci': updated_foci, 'suggestions': suggestions}
 
+    def _prepare_user_foci(
+        self,
+        user_foci: Sequence[Mapping[str, Any]],
+        scenario: Optional[Mapping[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Stamp stable identity and, for scenarios, canonical grounded evidence.
+
+        Scenario foci are grounded before any provider call: a span pointing at
+        a retained message, or one that no longer matches the scenario text, is
+        a hard error instead of a judge call with no source text.
+        """
+        from utils.inference_scenario import (
+            ScenarioValidationError,
+            normalize_scenario_foci,
+        )
+
+        if scenario is not None:
+            grounded = normalize_scenario_foci(scenario, list(user_foci))
+        else:
+            grounded = [dict(focus) for focus in user_foci]
+
+        prepared: List[Dict[str, Any]] = []
+        for index, focus in enumerate(grounded):
+            item = dict(focus)
+            item['focus'] = (item.get('focus') or '').strip()
+            item['focus_index'] = index
+            if scenario is not None and not item.get('attributable'):
+                raise ScenarioValidationError(
+                    f"Focus '{item['focus'] or index}' has no scenario-grounded "
+                    'source text to assess'
+                )
+            prepared.append(item)
+        return prepared
+
+    @staticmethod
+    def _align_assessed_items(
+        prepared: Sequence[Mapping[str, Any]],
+        items: Sequence[Mapping[str, Any]],
+    ) -> List[Optional[Mapping[str, Any]]]:
+        """Match explicit identities, accepting legacy names only when unique."""
+        matched: List[Optional[Mapping[str, Any]]] = [None] * len(prepared)
+        indices_by_name: Dict[str, List[int]] = {}
+        for index, focus in enumerate(prepared):
+            name = (focus.get('focus') or '').strip().casefold()
+            indices_by_name.setdefault(name, []).append(index)
+        for item in items:
+            if not isinstance(item, Mapping):
+                continue
+            index = item.get('focus_index')
+            if index is None:
+                name = (item.get('focus') or '').strip().casefold()
+                candidates = indices_by_name.get(name, [])
+                if not candidates:
+                    continue
+                if len(candidates) != 1:
+                    raise ValueError('Repeated focus names require explicit focus_index values')
+                index = candidates[0]
+            if (
+                isinstance(index, bool)
+                or not isinstance(index, int)
+                or not 0 <= index < len(matched)
+                or matched[index] is not None
+            ):
+                raise ValueError('Assessment focus_index values must be unique valid integers')
+            matched[index] = item
+        return matched
+
     def assess_focus(
         self,
         prompt: str,
         output: str,
         user_foci: Optional[List[Dict]] = None,
         max_foci: Optional[int] = None,
+        *,
+        scenario: Optional[Mapping[str, Any]] = None,
     ) -> Dict:
-        """Assess focus distribution in output relative to prompt."""
+        """Assess focus distribution in output relative to prompt.
+
+        ``scenario`` grounds every submitted focus against the canonical
+        Analyse messages so span-only foci still reach the judge with evidence.
+        """
         from utils.llm_json import parse_assessment_json
 
         usage = None
         if user_foci and len(user_foci) > 0:
+            prepared = self._prepare_user_foci(user_foci, scenario)
             assessment_prompt = self.assessor._build_assessment_prompt_with_foci(
-                prompt, output, user_foci, max_foci
+                prompt, output, prepared, max_foci
             )
             provider = self.assessor.provider
             provider_name = getattr(self.assessor, 'provider_name', 'openai')
@@ -614,8 +692,9 @@ Only mark as dynamic if confidence > 0.6.""",
                             'content': (
                                 'You assess how LLM outputs address named foci. '
                                 'Return complete valid JSON only. Each focus object '
-                                'may only include focus, score, and explanation — '
-                                'never prompt_section or quoted prompt text.'
+                                'may only include focus_index, focus, score and '
+                                'explanation — never prompt_section or quoted '
+                                'prompt text. Echo each focus_index exactly as given.'
                             ),
                         },
                         {'role': 'user', 'content': user_content},
@@ -634,15 +713,17 @@ Only mark as dynamic if confidence > 0.6.""",
             raw = response.get('content', '')
             try:
                 result = parse_assessment_json(raw)
+                matched = self._align_assessed_items(prepared, result.get('foci') or [])
             except ValueError:
                 # One retry with an explicit anti-echo instruction — models still
                 # sometimes paste long Role spans into prompt_section and truncate.
                 retry_prompt = (
                     assessment_prompt
-                    + '\n\nCRITICAL RETRY: Your previous JSON was invalid or truncated '
+                    + '\n\nCRITICAL RETRY: Your previous JSON was invalid, ambiguous or truncated '
                     'because it included long prompt text. Return ONLY '
-                    '{"foci":[{"focus":"...","score":0,"explanation":"..."}],'
-                    '"overall_summary":"..."} with ALL foci. No prompt_section keys.'
+                    '{"foci":[{"focus_index":0,"focus":"...","score":0,'
+                    '"explanation":"..."}],"overall_summary":"..."} with ALL foci '
+                    'and their given focus_index values. No prompt_section keys.'
                 )
                 response = _chat(retry_prompt)
                 if response.get('usage') and usage:
@@ -654,39 +735,38 @@ Only mark as dynamic if confidence > 0.6.""",
                 elif response.get('usage'):
                     usage = response.get('usage')
                 result = parse_assessment_json(response.get('content', ''))
+                matched = self._align_assessed_items(prepared, result.get('foci') or [])
 
-            # Reattach known prompt spans by focus name — never rely on the model
-            # echoing long prompt_section strings (common truncation / invalid JSON).
-            section_by_name = {
-                (f.get('focus') or '').strip(): (f.get('prompt_section') or '')
-                for f in user_foci
-            }
+            # Provenance and source text always come from the submitted foci —
+            # the model never echoes long spans back without truncating them.
             foci_list = []
-            for item in result.get('foci') or []:
-                name = (item.get('focus') or '').strip()
+            for focus, item in zip(prepared, matched):
+                score = 0.0
+                explanation = 'Not scored in model response; defaulted to 0.'
+                if item is not None:
+                    try:
+                        score = float(item.get('score', 0) or 0)
+                    except (TypeError, ValueError):
+                        score = 0.0
+                    explanation = item.get('explanation') or ''
+                spans = [
+                    dict(span) for span in (focus.get('spans') or [])
+                    if isinstance(span, Mapping)
+                ]
+                message_ids = [str(mid) for mid in (focus.get('message_ids') or []) if mid]
+                message_id = focus.get('message_id')
                 foci_list.append(
                     FocusScore(
-                        focus=name,
-                        prompt_section=section_by_name.get(
-                            name, item.get('prompt_section', '')
-                        ),
-                        score=float(item.get('score', 0)),
-                        explanation=item.get('explanation') or '',
+                        focus=focus.get('focus') or '',
+                        prompt_section=focus.get('prompt_section') or '',
+                        score=score,
+                        explanation=explanation,
+                        focus_index=focus['focus_index'],
+                        spans=spans or None,
+                        message_id=str(message_id) if message_id else None,
+                        message_ids=message_ids or None,
                     )
                 )
-            # Ensure every user focus appears (model may have dropped some after recovery)
-            seen = {f.focus for f in foci_list}
-            for f in user_foci:
-                name = (f.get('focus') or '').strip()
-                if name and name not in seen:
-                    foci_list.append(
-                        FocusScore(
-                            focus=name,
-                            prompt_section=f.get('prompt_section') or '',
-                            score=0.0,
-                            explanation='Not scored in model response; defaulted to 0.',
-                        )
-                    )
             total = sum(f.score for f in foci_list)
             if abs(total - 100.0) > 0.1 and total > 0:
                 for focus in foci_list:

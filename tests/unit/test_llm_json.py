@@ -105,6 +105,19 @@ def test_parse_assessment_json_strips_residual_prompt_section():
     assert 'prompt_section' not in result['foci'][0]
 
 
+def test_truncated_assessment_preserves_repeated_focus_identities():
+    raw = (
+        '{"foci":['
+        '{"focus_index":1,"focus":"Rule","score":25,"explanation":"Second rule"},'
+        '{"focus_index":0,"focus":"Rule","score":75,"explanation":"First rule"}'
+        '],"overall_summary":"unfinished'
+    )
+    parsed = parse_assessment_json(raw)
+    assert [(item['focus_index'], item['score']) for item in parsed['foci']] == [
+        (1, 25), (0, 75),
+    ]
+
+
 def test_recover_quality_evaluations_from_truncated_response():
     truncated = (
         '{\n  "evaluations": [\n    {\n'

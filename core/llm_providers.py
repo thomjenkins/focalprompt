@@ -89,6 +89,21 @@ def _merge_conversation_roles(
     return merged, records
 
 
+def _normalized_finish_reason(raw: Any) -> Optional[str]:
+    """Render a provider finish reason as a stable lowercase identifier.
+
+    SDK enums stringify inconsistently (``FinishReason.MAX_TOKENS`` on the
+    google-genai types, a bare ordinal on protobuf enums), so downstream
+    truncation detection must never depend on ``str(value)``.
+    """
+    if raw is None:
+        return None
+    name = getattr(raw, 'name', None)
+    text = name if isinstance(name, str) else str(raw)
+    text = text.rsplit('.', 1)[-1].strip().lower()
+    return text or None
+
+
 class LLMProvider(ABC):
     """Abstract base class for LLM providers."""
     
@@ -294,16 +309,19 @@ class AnthropicProvider(LLMProvider):
 
 
 class GoogleProvider(LLMProvider):
-    """Google (Gemini) provider implementation."""
-    
+    """Google (Gemini) provider implementation on the google-genai SDK."""
+
     def __init__(self, api_key: str):
         try:
-            import google.generativeai as genai
-            genai.configure(api_key=api_key)
-            self.genai = genai
+            from google import genai
+            from google.genai import types as genai_types
         except ImportError:
-            raise ImportError("google-generativeai package not installed. Install with: pip install google-generativeai")
-    
+            raise ImportError(
+                "google-genai package not installed. Install with: pip install google-genai"
+            )
+        self.types = genai_types
+        self.client = genai.Client(api_key=api_key)
+
     def chat_completion(
         self,
         messages: List[Dict[str, str]],
@@ -312,6 +330,7 @@ class GoogleProvider(LLMProvider):
         response_format: Optional[Dict] = None,
         max_tokens: Optional[int] = None,
     ) -> Dict[str, Any]:
+        types = self.types
         instruction_blocks = [
             msg['content'] for msg in messages
             if msg['role'] in ('system', 'developer')
@@ -319,62 +338,78 @@ class GoogleProvider(LLMProvider):
         conversation, role_merges = _merge_conversation_roles([
             msg for msg in messages if msg['role'] not in ('system', 'developer')
         ])
-        system_instruction = '\n\n'.join(instruction_blocks) or None
-        try:
-            generative_model = self.genai.GenerativeModel(
-                model,
-                system_instruction=system_instruction,
-            )
-        except TypeError as exc:
-            if system_instruction:
-                raise ProviderCapabilityError(
-                    'Installed Gemini SDK cannot preserve system/developer instructions'
-                ) from exc
-            generative_model = self.genai.GenerativeModel(model)
-
         if not conversation or conversation[-1]['role'] != 'user':
             raise ProviderCapabilityError(
                 'Gemini generation requires the ordered conversation to end with a user message'
             )
-        history = [
-            {
-                'role': 'model' if msg['role'] == 'assistant' else 'user',
-                'parts': [msg['content']],
-            }
-            for msg in conversation[:-1]
+
+        contents = [
+            types.Content(
+                role='model' if msg['role'] == 'assistant' else 'user',
+                parts=[types.Part(text=msg['content'])],
+            )
+            for msg in conversation
         ]
-        last_user_message = conversation[-1]['content']
-        chat = generative_model.start_chat(history=history)
-        
-        # Generate response
-        generation_config = {
+
+        config_kwargs: Dict[str, Any] = {
             'temperature': temperature,
+            # No tools are ever sent, so the SDK's automatic function-calling
+            # wrapper only adds a request loop and a spurious warning.
+            'automatic_function_calling': types.AutomaticFunctionCallingConfig(
+                disable=True
+            ),
         }
+        system_instruction = '\n\n'.join(instruction_blocks)
+        if system_instruction:
+            config_kwargs['system_instruction'] = system_instruction
         if max_tokens is not None:
-            generation_config['max_output_tokens'] = max_tokens
-        
+            config_kwargs['max_output_tokens'] = max_tokens
+
         schema = _structured_schema(response_format)
         if schema is not None:
-            generation_config['response_mime_type'] = 'application/json'
-            generation_config['response_schema'] = schema
+            # response_json_schema takes standard JSON Schema (including
+            # `additionalProperties: false` and `required`) unchanged; the
+            # legacy `response_schema` field is a lossy proto Schema that
+            # rejects the contract outright.
+            if 'response_json_schema' not in types.GenerateContentConfig.model_fields:
+                raise ProviderCapabilityError(
+                    'Installed google-genai SDK cannot express the required JSON Schema '
+                    'structured output; upgrade to google-genai>=1.21'
+                )
+            config_kwargs['response_mime_type'] = 'application/json'
+            config_kwargs['response_json_schema'] = schema
         elif response_format and response_format.get('type') == 'json_object':
-            generation_config['response_mime_type'] = 'application/json'
-        
-        response = chat.send_message(last_user_message, generation_config=generation_config)
-        
-        # Extract content
-        content = response.text
-        
-        # Estimate token usage (Gemini doesn't provide exact counts in free tier)
-        # Rough estimate: 1 token ≈ 4 characters
-        prompt_chars = sum(len(m['content']) for m in messages)
-        response_chars = len(content)
-        
+            config_kwargs['response_mime_type'] = 'application/json'
+
+        response = self.client.models.generate_content(
+            model=model,
+            contents=contents,
+            config=types.GenerateContentConfig(**config_kwargs),
+        )
+
+        candidate = next(iter(getattr(response, 'candidates', None) or []), None)
+        parts = getattr(getattr(candidate, 'content', None), 'parts', None) or []
+        content = ''.join(
+            part.text for part in parts
+            if getattr(part, 'text', None) and not getattr(part, 'thought', False)
+        )
+
+        usage = getattr(response, 'usage_metadata', None)
+        prompt_tokens = int(getattr(usage, 'prompt_token_count', None) or 0)
+        completion_tokens = int(getattr(usage, 'candidates_token_count', None) or 0)
+        completion_tokens += int(getattr(usage, 'thoughts_token_count', None) or 0)
+        total_tokens = int(
+            getattr(usage, 'total_token_count', None) or prompt_tokens + completion_tokens
+        )
+
         return {
             'content': content,
-            'finish_reason': str(
-                getattr((getattr(response, 'candidates', None) or [None])[0], 'finish_reason', '')
-                or ''
+            'finish_reason': _normalized_finish_reason(
+                getattr(candidate, 'finish_reason', None)
+                if candidate is not None
+                else getattr(
+                    getattr(response, 'prompt_feedback', None), 'block_reason', None
+                )
             ),
             'provider_metadata': {
                 'provider_translation': 'gemini_generate_content',
@@ -383,15 +418,15 @@ class GoogleProvider(LLMProvider):
                     if msg['role'] in ('system', 'developer')
                 ],
                 'role_merges': role_merges,
-                'structured_output': 'response_schema' if schema is not None else None,
+                'structured_output': 'response_json_schema' if schema is not None else None,
             },
             'usage': {
-                'prompt_tokens': int(prompt_chars / 4),
-                'completion_tokens': int(response_chars / 4),
-                'total_tokens': int((prompt_chars + response_chars) / 4)
-            }
+                'prompt_tokens': prompt_tokens,
+                'completion_tokens': completion_tokens,
+                'total_tokens': total_tokens,
+            },
         }
-    
+
     def list_models(self) -> List[str]:
         return [
             'gemini-3-pro-preview',

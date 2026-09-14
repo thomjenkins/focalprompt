@@ -87,6 +87,75 @@ def _map_columns(fieldnames: Sequence[str]) -> Dict[str, Optional[str]]:
     return mapping
 
 
+def _bind_named_columns(
+    fieldnames: Sequence[str],
+    expected: Sequence[str],
+    skip: set,
+) -> Tuple[Dict[str, str], List[str]]:
+    """Bind header columns to configured input names.
+
+    Exact header/name matches win, so case-distinct inputs (``Question`` and
+    ``question``) bind separately. A case-insensitive fallback only applies when
+    it is unambiguous on both sides: exactly one unbound configured name and
+    exactly one remaining header for that lowercased key.
+    """
+    named_columns: Dict[str, str] = {}
+    errors: List[str] = []
+    expected_names = list(expected)
+
+    candidates: List[Tuple[str, str]] = []
+    for header in fieldnames:
+        if header is None or header in skip:
+            continue
+        key = header.strip()
+        if not key:
+            continue
+        candidates.append((header, key))
+
+    exact_names = set(expected_names)
+    remaining: List[Tuple[str, str]] = []
+    for header, key in candidates:
+        if key not in exact_names:
+            remaining.append((header, key))
+            continue
+        if key in named_columns:
+            errors.append(f'Duplicate input column: {key}')
+            return {}, errors
+        named_columns[key] = header
+
+    headers_by_lower: Dict[str, List[str]] = {}
+    for _header, key in remaining:
+        headers_by_lower.setdefault(key.lower(), []).append(key)
+
+    for header, key in remaining:
+        lowered = key.lower()
+        rivals = [
+            name for name in expected_names
+            if name not in named_columns and name.lower() == lowered
+        ]
+        if len(rivals) > 1:
+            errors.append(
+                f"Ambiguous input column '{key}': matches configured inputs "
+                + ', '.join(rivals)
+                + ' only by case. Rename the header to match one exactly.'
+            )
+            return {}, errors
+        if rivals and len(headers_by_lower.get(lowered, [])) > 1:
+            errors.append(
+                f"Ambiguous input columns {', '.join(headers_by_lower[lowered])}: "
+                f"more than one header matches configured input '{rivals[0]}' "
+                'only by case. Rename the header to match it exactly.'
+            )
+            return {}, errors
+        name = rivals[0] if rivals else key
+        if name in named_columns:
+            errors.append(f'Duplicate input column: {name}')
+            return {}, errors
+        named_columns[name] = header
+
+    return named_columns, errors
+
+
 def parse_batch_csv_bytes(
     raw: bytes,
     expected_input_names: Optional[Sequence[str]] = None,
@@ -150,19 +219,12 @@ def parse_batch_csv_bytes(
         value for key, value in mapping.items()
         if key not in ('output', 'prompt') and value is not None
     } if not scenario_mode else set()
-    expected_by_lower = {name.lower(): name for name in expected}
-    named_columns: Dict[str, str] = {}
-    for header in fieldnames:
-        if header is None or header in reserved_original or header in legacy_original:
-            continue
-        normalized_header = header.strip().lower()
-        name = expected_by_lower.get(normalized_header, normalized_header)
-        if not name:
-            continue
-        if name in named_columns:
-            result.errors.append(f'Duplicate input column after normalization: {name}')
-            return result
-        named_columns[name] = header
+    named_columns, binding_errors = _bind_named_columns(
+        fieldnames, expected, reserved_original | legacy_original
+    )
+    if binding_errors:
+        result.errors.extend(binding_errors)
+        return result
     result.missing_input_columns = [name for name in expected if name not in named_columns]
     result.unused_input_columns = (
         [name for name in named_columns if name not in set(expected)]

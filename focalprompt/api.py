@@ -50,7 +50,7 @@ def detect_foci(
 ) -> Dict[str, Any]:
     loaded = _load_scenario(scenario) if scenario is not None else None
     text = _load_prompt(prompt) if prompt is not None else None
-    resolved, _legacy = normalize_scenario_input(scenario=loaded, prompt=text)
+    resolved, is_legacy = normalize_scenario_input(scenario=loaded, prompt=text)
     assessor = get_assessor(
         model=model,
         provider=provider,
@@ -58,7 +58,12 @@ def detect_foci(
         api_key=api_key,
         base_url=base_url,
     )
-    return AssessmentService(assessor).detect_foci_scenario(resolved)
+    service = AssessmentService(assessor)
+    if is_legacy:
+        # Legacy prompts keep the flat report: coverage.uncovered_spans and the
+        # span-size / overlap quality keys have no per-message equivalent.
+        return service.detect_foci(str(text))
+    return service.detect_foci_scenario(resolved)
 
 
 def assess_focus(
@@ -77,8 +82,8 @@ def assess_focus(
         raise ValueError('Output is required')
     loaded = _load_scenario(scenario) if scenario is not None else None
     text = _load_prompt(prompt) if prompt is not None else None
-    resolved, _legacy = normalize_scenario_input(scenario=loaded, prompt=text)
-    analysis_text = str(text) if _legacy else scenario_analysis_document(resolved)
+    resolved, is_legacy = normalize_scenario_input(scenario=loaded, prompt=text)
+    analysis_text = str(text) if is_legacy else scenario_analysis_document(resolved)
     assessor = get_assessor(
         model=model,
         provider=provider,
@@ -87,7 +92,10 @@ def assess_focus(
         base_url=base_url,
     )
     return AssessmentService(assessor).assess_focus(
-        analysis_text, output, user_foci=foci
+        analysis_text,
+        output,
+        user_foci=foci,
+        scenario=None if is_legacy else resolved,
     )
 
 

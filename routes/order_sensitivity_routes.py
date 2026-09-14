@@ -65,21 +65,36 @@ def run_focus_order_sensitivity():
 
         fields = request_inference_fields(data, model_role='mut')
         assessor = get_assessor(data=fields)
-        analysis_fields = request_inference_fields(data, model_role='analysis')
-        analysis_assessor = get_assessor(data=analysis_fields)
+
+        behavioral_criterion = data.get('behavioral_criterion') or data.get('eval_criteria')
+        run_behavioral_judge = bool(data.get('run_behavioral_judge'))
+        run_reported_focus = bool(data.get('run_reported_focus'))
+        needs_analysis_model = run_reported_focus or (
+            run_behavioral_judge and bool(str(behavioral_criterion or '').strip())
+        )
+
+        judge_kwargs = {}
+        analysis_assessor = None
+        if needs_analysis_model:
+            analysis_fields = request_inference_fields(data, model_role='analysis')
+            analysis_assessor = get_assessor(data=analysis_fields)
+            judge_kwargs = dict(
+                judge_provider=analysis_assessor.provider,
+                judge_model=analysis_fields['model'],
+                judge_provider_name=getattr(
+                    analysis_assessor, 'provider_name', analysis_fields['provider']
+                ),
+            )
+
         svc = OrderSensitivityService(
             assessor.provider,
             fields['model'],
             provider_name=getattr(assessor, 'provider_name', fields['provider']),
-            judge_provider=analysis_assessor.provider,
-            judge_model=analysis_fields['model'],
-            judge_provider_name=getattr(
-                analysis_assessor, 'provider_name', analysis_fields['provider']
-            ),
+            **judge_kwargs,
         )
 
         assessment_service = None
-        if data.get('run_reported_focus'):
+        if run_reported_focus:
             from services.assessment_service import AssessmentService
             assessment_service = AssessmentService(analysis_assessor)
 
@@ -94,13 +109,13 @@ def run_focus_order_sensitivity():
             temperature=float(data.get('temperature') or 0.7),
             inputs=data.get('inputs'),
             user_policies=data.get('ordering_policy'),
-            behavioral_criterion=data.get('behavioral_criterion') or data.get('eval_criteria'),
+            behavioral_criterion=behavioral_criterion,
             task_context=data.get('task_context') or '',
             focus_index_for_sweep=data.get('focus_index_for_sweep'),
             run_position_sweep=bool(data.get('run_position_sweep')),
-            run_behavioral_judge=bool(data.get('run_behavioral_judge')),
+            run_behavioral_judge=run_behavioral_judge,
             assessment_service=assessment_service,
-            run_reported_focus=bool(data.get('run_reported_focus')),
+            run_reported_focus=run_reported_focus,
         )
         if is_legacy:
             result = svc.run_focus_order_experiment(prompt=prompt, **experiment_kwargs)

@@ -15,7 +15,8 @@ _PROMPT_SECTION_FIELD_RE = re.compile(
 )
 
 _FOCUS_OBJECT_RE = re.compile(
-    r'\{\s*"focus"\s*:\s*"(?P<focus>(?:\\.|[^"\\])*)"\s*,'
+    r'\{\s*(?:"focus_index"\s*:\s*-?\d+\s*,\s*)?'
+    r'"focus"\s*:\s*"(?P<focus>(?:\\.|[^"\\])*)"\s*,'
     r'(?:[^}]*?"score"\s*:\s*(?P<score>-?\d+(?:\.\d+)?)[^}]*?)'
     r'(?:[^}]*?"explanation"\s*:\s*"(?P<explanation>(?:\\.|[^"\\])*)")?'
     r'[^}]*\}',
@@ -86,6 +87,12 @@ def recover_assessment_foci(text: str) -> Optional[Dict[str, Any]]:
             'focus': _unescape_json_string(match.group('focus')),
             'score': float(score_raw),
         }
+        try:
+            recovered = json.loads(match.group(0))
+        except json.JSONDecodeError:
+            recovered = {}
+        if 'focus_index' in recovered:
+            item['focus_index'] = recovered['focus_index']
         expl = match.group('explanation')
         if expl is not None:
             item['explanation'] = _unescape_json_string(expl)
@@ -225,6 +232,9 @@ def parse_llm_json(content: str, *, truncation_hint: Optional[str] = None) -> An
         except json.JSONDecodeError:
             pass
 
+    recovered = recover_assessment_foci(text)
+    if recovered is not None:
+        return recovered
     start = text.find('[')
     end = text.rfind(']')
     if start >= 0 and end > start:
@@ -233,9 +243,6 @@ def parse_llm_json(content: str, *, truncation_hint: Optional[str] = None) -> An
         except json.JSONDecodeError:
             pass
 
-    recovered = recover_assessment_foci(text)
-    if recovered is not None:
-        return recovered
 
     hint = ''
     stripped_tail = text.rstrip()

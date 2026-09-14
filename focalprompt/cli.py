@@ -5,8 +5,61 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
+
+
+_STARTUP_LOGO = (
+    '██████▄▄▄      ▄▄▄██████',
+    '█       ▀██▄▄██▀       █',
+    '██        ▄██▄        ██',
+    '▀█       ██▄▄██       █▀',
+    ' ██   ▄███▀▀▀▀███▄   ██ ',
+    '  ▀██▀▀ █  ▄▄  █ ▀▀██▀  ',
+    '  ▄██▄▄ █  ▀▀  █ ▄▄██▄  ',
+    ' ██   ▀███▄▄▄▄███▀   ██ ',
+    '▄█       ██▀▀██       █▄',
+    '██        ▀██▀        ██',
+    '█       ▄██▀▀██▄       █',
+    '██████▀▀▀      ▀▀▀██████',
+)
+
+
+def print_startup_banner() -> None:
+    """Render the pixel mark on terminals; keep redirected logs plain."""
+    stream = sys.stderr
+    if not stream.isatty() or os.environ.get('TERM') == 'dumb':
+        print('\nFocal Prompt\n', file=stream)
+        return
+    try:
+        '█▀▄'.encode(stream.encoding or 'utf-8')
+    except (UnicodeEncodeError, LookupError):
+        print('\nFocal Prompt\n', file=stream)
+        return
+
+    color = 'NO_COLOR' not in os.environ
+    reset = '\033[0m' if color else ''
+    heading = '\033[1;38;2;230;218;177m' if color else ''
+    muted = '\033[38;2;156;163;175m' if color else ''
+    lines = [f'\n  {heading}Focal Prompt{reset}\n']
+    stops = ((226, 85, 190), (139, 92, 246), (73, 190, 214))
+    for y, row in enumerate(_STARTUP_LOGO):
+        pixels = ['  ']
+        for x, char in enumerate(row):
+            if color and char != ' ':
+                position = (x + y) / 17
+                segment = min(int(position), 1)
+                fraction = position - segment
+                rgb = tuple(
+                    round(a + (b - a) * fraction)
+                    for a, b in zip(stops[segment], stops[segment + 1])
+                )
+                pixels.append(f'\033[38;2;{rgb[0]};{rgb[1]};{rgb[2]}m')
+            pixels.append(char)
+        lines.append(''.join(pixels) + reset)
+    lines.append(f'\n  {muted}Local analysis lab{reset}\n')
+    print('\n'.join(lines), file=stream)
 
 
 def _add_inference_args(p: argparse.ArgumentParser) -> None:
@@ -44,7 +97,8 @@ def main(argv: list[str] | None = None) -> int:
     _add_inference_args(p_foci)
 
     p_assess = sub.add_parser('assess', help='Model-assessed focus distribution')
-    _add_prompt_or_scenario(p_assess)
+    p_assess.add_argument('prompt', nargs='?', help='Legacy prompt text or file')
+    p_assess.add_argument('--scenario', metavar='FILE', help='Versioned inference scenario JSON file')
     p_assess.add_argument('completion', help='Model output to score against foci')
     p_assess.add_argument('--foci-json', default=None)
     _add_inference_args(p_assess)
@@ -72,15 +126,26 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser('mcp', help='Start the Model Context Protocol server (stdio)')
 
-    args = parser.parse_args(argv)
+    arguments = sys.argv[1:] if argv is None else argv
+    if arguments and arguments[0] == 'assess':
+        # Parse this command on its own so options can separate its positionals.
+        args = p_assess.parse_intermixed_args(arguments[1:])
+        args.cmd = 'assess'
+        if (args.prompt is None) == (args.scenario is None):
+            p_assess.error('provide exactly one of prompt or --scenario')
+    else:
+        args = parser.parse_args(arguments)
 
     if args.cmd == 'ui':
-        import os
         os.environ.setdefault('HOST', args.host)
         os.environ.setdefault('PORT', str(args.port))
         from app_new import app, open_lab_in_chrome
         from waitress import serve
-        print(f'Focal Prompt UI → http://{args.host}:{args.port}/', file=sys.stderr)
+        print_startup_banner()
+        display_host = args.host
+        if ':' in display_host and not display_host.startswith('['):
+            display_host = f'[{display_host}]'
+        print(f'Focal Prompt UI → http://{display_host}:{args.port}/', file=sys.stderr)
         open_lab_in_chrome(args.host, args.port)
         serve(app, host=args.host, port=args.port)
         return 0

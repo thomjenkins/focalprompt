@@ -23,6 +23,15 @@ from utils.inference_scenario import (
 )
 
 
+def _input_text(value: Any) -> str:
+    """Render one named input value as text for analysis prompts."""
+    if isinstance(value, str):
+        return value
+    if value is None:
+        return ''
+    return json.dumps(value, ensure_ascii=False)
+
+
 class AgentBuilderService:
     """Service for building optimized agents."""
     
@@ -172,7 +181,7 @@ CRITICAL REQUIREMENTS:
         for item in result_foci_weights:
             print(f"  - LLM focus: '{item.get('focus', '')}' weight: {item.get('weight', 0.0)}", file=sys.stderr)
         
-        for focus in foci_list:
+        for focus_index, focus in enumerate(foci_list):
             focus_name = focus.get('focus', '')
             # Try multiple matching strategies
             matched = None
@@ -206,6 +215,7 @@ CRITICAL REQUIREMENTS:
                 weight = float(matched.get('weight', 0.0))
                 foci_weights.append({
                     'focus': focus_name,
+                    'focus_index': focus_index,
                     'weight': weight,
                     'explanation': matched.get('explanation', '')
                 })
@@ -214,6 +224,7 @@ CRITICAL REQUIREMENTS:
                 # If not found, add with 0 weight
                 foci_weights.append({
                     'focus': focus_name,
+                    'focus_index': focus_index,
                     'weight': 0.0,
                     'explanation': 'Not assessed - focus name did not match LLM response'
                 })
@@ -318,19 +329,36 @@ CRITICAL REQUIREMENTS:
         """
         normalized = validate_scenario(scenario)
         classified = normalize_scenario_foci(normalized, foci_list)
-        weights = {
-            str(item.get('focus') or ''): float(item.get('weight') or 0)
-            for item in (foci_weights or [])
-        }
+        # ``focus_index`` is the identity of a focus in the submitted order, so
+        # repeated display names keep their own weights.
+        weights_by_index: Dict[int, float] = {}
+        weights_by_name: Dict[str, float] = {}
+        for item in (foci_weights or []):
+            weight = float(item.get('weight') or 0)
+            raw_index = item.get('focus_index')
+            index: Optional[int] = None
+            if isinstance(raw_index, int) and not isinstance(raw_index, bool):
+                index = raw_index
+            elif isinstance(raw_index, str) and raw_index.strip().lstrip('-').isdigit():
+                index = int(raw_index)
+            if index is not None and 0 <= index < len(classified):
+                weights_by_index[index] = weight
+            weights_by_name[str(item.get('focus') or '')] = weight
         all_ranges: Dict[str, List[tuple[int, int]]] = {}
         selected_ranges: Dict[str, List[tuple[int, int]]] = {}
         selected_names: List[str] = []
-        for focus in classified:
+        selected_indices: List[int] = []
+        for focus_index, focus in enumerate(classified):
             if not focus.get('attributable'):
                 continue
-            selected = weights.get(str(focus.get('focus') or ''), 0.0) > 0.1
+            focus_name = str(focus.get('focus') or '')
+            weight = weights_by_index.get(
+                focus_index, weights_by_name.get(focus_name, 0.0)
+            )
+            selected = weight > 0.1
             if selected:
-                selected_names.append(str(focus.get('focus') or ''))
+                selected_names.append(focus_name)
+                selected_indices.append(focus_index)
             for span in focus.get('spans') or []:
                 pair = (int(span['char_start']), int(span['char_end']))
                 all_ranges.setdefault(span['message_id'], []).append(pair)
@@ -365,6 +393,7 @@ CRITICAL REQUIREMENTS:
         result['messages'] = result_messages
         return validate_scenario(result), {
             'selected_focus_names': selected_names,
+            'selected_focus_indices': selected_indices,
             'changed_analyse_message_ids': changed_ids,
             'removed_analyse_message_ids': removed_ids,
         }
@@ -388,55 +417,67 @@ CRITICAL REQUIREMENTS:
             Dict with results
         """
         try:
-            inputs = get_pair_inputs(pair_data)
-            chat_content = inputs.get('chat_content', '')
             if scenario is not None:
                 raw_inputs = dict(pair_data.get('inputs') or {})
                 chat_content = '\n\n'.join(
-                    f'{name}: {value}' for name, value in raw_inputs.items()
-                    if str(value).strip()
+                    f'{name}: {_input_text(value)}'
+                    for name, value in raw_inputs.items()
+                    if _input_text(value).strip()
                 )
+                # The relevance prompt reads prompt_section, which only the
+                # canonical form carries: ground the foci on the scenario first.
+                assessment_foci = normalize_scenario_foci(scenario, foci_list)
+            else:
+                inputs = get_pair_inputs(pair_data)
+                chat_content = inputs.get('chat_content', '')
+                assessment_foci = list(foci_list or [])
             expected_output = pair_data.get('output', '')
-            
+
             # Assess chat foci
-            assessment = self.assess_chat_foci(chat_content, foci_list)
-            relevant_foci = []
-            
-            for weight_item in assessment['foci_weights']:
-                focus_name = weight_item['focus']
-                weight = weight_item['weight']
-                
-                # Find the full focus data
-                for focus in foci_list:
-                    if focus.get('focus', '') == focus_name:
-                        relevant_foci.append({
-                            'focus': focus_name,
-                            'weight': weight,
-                            'prompt_section': focus.get('prompt_section', '')
-                        })
-                        break
-            
-            # Build prompt
-            constructed_prompt = build_prompt_with_dynamic_foci(
-                relevant_foci,
-                foci_list,
-                inputs,
-                assessment['chat_weight']
-            )
-            
-            # Generate response
+            assessment = self.assess_chat_foci(chat_content, assessment_foci)
+
             if scenario is not None:
+                # Scenario agents never flatten to a legacy prompt string.
+                constructed_prompt = None
                 constructed_scenario, construction = self.build_agent_scenario(
                     scenario,
-                    foci_list,
+                    assessment_foci,
                     assessment['foci_weights'],
                 )
                 generation = self.generate_agent_response(
                     scenario=constructed_scenario,
-                    inputs=pair_data.get('inputs') or {},
+                    inputs=raw_inputs,
                 )
                 generated_output = generation['output']
             else:
+                relevant_foci = []
+                for weight_item in assessment['foci_weights']:
+                    focus_name = weight_item['focus']
+                    raw_index = weight_item.get('focus_index')
+                    source = None
+                    if isinstance(raw_index, int) and 0 <= raw_index < len(assessment_foci):
+                        candidate = assessment_foci[raw_index]
+                        if candidate.get('focus', '') == focus_name:
+                            source = candidate
+                    if source is None:
+                        source = next(
+                            (f for f in assessment_foci if f.get('focus', '') == focus_name),
+                            None,
+                        )
+                    if source is not None:
+                        relevant_foci.append({
+                            'focus': focus_name,
+                            'weight': weight_item['weight'],
+                            'prompt_section': source.get('prompt_section', '')
+                        })
+
+                # Build prompt
+                constructed_prompt = build_prompt_with_dynamic_foci(
+                    relevant_foci,
+                    foci_list,
+                    inputs,
+                    assessment['chat_weight']
+                )
                 generation = None
                 generated_output = self.generate_agent_response(constructed_prompt)
             
@@ -445,10 +486,11 @@ CRITICAL REQUIREMENTS:
                 'pair_index': pair_idx,
                 'foci_weights': assessment['foci_weights'],
                 'chat_weight': assessment['chat_weight'],
-                'constructed_prompt': constructed_prompt,
                 'generated_output': generated_output,
                 'expected_output': expected_output
             }
+            if constructed_prompt is not None:
+                result['constructed_prompt'] = constructed_prompt
             if generation is not None:
                 result['constructed_scenario'] = generation['scenario']
                 result['scenario_metadata'] = {

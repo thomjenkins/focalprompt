@@ -270,3 +270,159 @@ def test_end_to_end_fake_provider_changes_only_selected_analysed_span(monkeypatc
     assert baseline[0] == {'role': 'system', 'content': 'Be safe. Be concise.'}
     assert ablated[0] == {'role': 'system', 'content': 'Be safe. '}
     assert all(call[-1]['content'] == 'My dog is coughing' for call in calls)
+
+
+def two_analysed_messages_scenario():
+    return {
+        'version': 1,
+        'messages': [
+            {
+                'id': 'rules',
+                'role': 'system',
+                'content': 'Alpha rule.',
+                'analysis_mode': 'analyse',
+            },
+            {
+                'id': 'guide',
+                'role': 'system',
+                'content': 'Beta rule.',
+                'analysis_mode': 'analyse',
+            },
+            {
+                'id': 'question',
+                'role': 'user',
+                'content': 'template',
+                'analysis_mode': 'retain',
+                'input_name': 'customer_message',
+            },
+        ],
+    }
+
+
+def fake_embeddings():
+    embeddings = Mock()
+    embeddings.batch_embeddings_with_usage.side_effect = lambda texts: (
+        [np.array([1.0, float(index + 1)]) for index, _ in enumerate(texts)], len(texts)
+    )
+    return embeddings
+
+
+def test_cross_message_focus_keeps_attribution_and_influence_when_scored():
+    raw = two_analysed_messages_scenario()
+    focus = {
+        'focus': 'Cross',
+        'spans': [
+            {
+                'message_id': 'rules', 'char_start': 0, 'char_end': 5,
+                'text_snapshot': 'Alpha',
+            },
+            {
+                'message_id': 'guide', 'char_start': 0, 'char_end': 4,
+                'text_snapshot': 'Beta',
+            },
+        ],
+    }
+    service = AblationService(
+        Mock(), 'model', provider_name='openai', embedding_service=fake_embeddings()
+    )
+
+    result = service.score_scenario_from_samples(
+        raw, [focus], ['one', 'two', 'three'], {0: ['a', 'b']}, n_permutations=32
+    )
+
+    assert [item['focus'] for item in result['influence_scores']] == ['Cross']
+    item = result['influence_scores'][0]
+    assert item['span_count'] == 2
+    assert item['is_multi_span'] is True
+    assert sorted(item['message_ids']) == ['guide', 'rules']
+    assert item['normalized_influence'] == pytest.approx(100.0)
+    row = result['ablation_results'][0]
+    assert row['verified'] is True
+    assert row['attributable'] is True
+    assert [message['content'] for message in row['ablated_scenario']['messages']] == [
+        ' rule.', ' rule.', 'template',
+    ]
+
+
+def test_scenario_scoring_rejects_spans_that_do_not_match_their_message():
+    raw = two_analysed_messages_scenario()
+    focus = {
+        'focus': 'Forged',
+        'verified': True,
+        'attributable': True,
+        'spans': [{
+            'message_id': 'rules', 'char_start': 0, 'char_end': 5,
+            'text_snapshot': 'Gamma',
+        }],
+    }
+    service = AblationService(
+        Mock(), 'model', provider_name='openai', embedding_service=fake_embeddings()
+    )
+
+    with pytest.raises(ScenarioValidationError):
+        service.score_scenario_from_samples(
+            raw, [focus], ['one', 'two', 'three'], {0: ['a', 'b']}, n_permutations=32
+        )
+
+
+def test_scenario_refinement_resamples_only_the_selected_focus(monkeypatch):
+    raw = two_analysed_messages_scenario()
+    foci = [
+        {
+            'focus': 'Alpha',
+            'spans': [{
+                'message_id': 'rules', 'char_start': 0, 'char_end': 5,
+                'text_snapshot': 'Alpha',
+            }],
+        },
+        {
+            'focus': 'Beta',
+            'spans': [{
+                'message_id': 'guide', 'char_start': 0, 'char_end': 4,
+                'text_snapshot': 'Beta',
+            }],
+        },
+    ]
+    calls = []
+    provider = Mock()
+
+    def respond(**kwargs):
+        calls.append(deepcopy(kwargs['messages']))
+        return {
+            'content': f'reply {len(calls)}',
+            'usage': {'prompt_tokens': 3, 'completion_tokens': 2},
+        }
+
+    provider.chat_completion.side_effect = respond
+    monkeypatch.setattr('services.ablation_service.time.sleep', lambda *_args: None)
+    service = AblationService(
+        provider, 'model', provider_name='openai', embedding_service=fake_embeddings()
+    )
+
+    result = service.refine_scenario_focus_stability_samples(
+        raw,
+        foci,
+        1,
+        ['one', 'two', 'three'],
+        ['a', 'b'],
+        2,
+        inputs={'customer_message': 'My dog is coughing'},
+        n_permutations=32,
+    )
+
+    assert result['focus_index'] == 1
+    assert result['focus'] == 'Beta'
+    assert result['n_ablated_samples'] == 4
+    assert result['n_additional_generated'] == 2
+    assert result['ablation_stability'] is not None
+    assert result['permutation']['p_value'] is not None
+    assert result['behavioral_outcome'] is None
+    assert result['cost_breakdown'] is not None
+    assert 'score' not in result
+    assert result['message_ids'] == ['guide']
+    assert result['scenario']['messages'][2]['content'] == 'My dog is coughing'
+    # Only the Beta arm was sampled: Alpha text is intact in every request.
+    assert len(calls) == 2
+    assert all(call[0]['content'] == 'Alpha rule.' for call in calls)
+    assert all(call[1]['content'] == ' rule.' for call in calls)
+    assert all(call[2]['content'] == 'My dog is coughing' for call in calls)

@@ -4,6 +4,7 @@ Flask web application for Focal Prompt — research toolkit UI + optional hosted
 """
 
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -37,8 +38,12 @@ except Exception as e:
     # Any other error loading .env, just log and continue
     print(f"Warning: Could not load .env file: {e}", file=sys.stderr)
 
+# Configure stderr before Flask installs a fallback handler.
+logging.basicConfig(format='[%(asctime)s] %(levelname)s: %(message)s')
+
 # Initialize Flask app first
 app = Flask(__name__)
+app.logger.setLevel(logging.DEBUG)
 
 # Import CORS and enable it
 try:
@@ -53,20 +58,9 @@ except ImportError as e:
 
 # Register blueprints with error handling
 try:
-    print("🔄 Attempting to import assessment_bp...", file=sys.stderr)
     from routes.assessment_routes import assessment_bp
-    print("✅ assessment_bp imported successfully", file=sys.stderr)
-    print(f"   Blueprint name: {assessment_bp.name}", file=sys.stderr)
-    print(f"   Blueprint routes before registration: {len(list(assessment_bp.deferred_functions))}", file=sys.stderr)
     
     app.register_blueprint(assessment_bp)
-    print("✅ assessment_bp registered with app", file=sys.stderr)
-    
-    # Count actual routes registered
-    assessment_routes = [r for r in app.url_map.iter_rules() if 'assessment' in r.endpoint]
-    print(f"✅ Registered assessment_bp with {len(assessment_routes)} routes", file=sys.stderr)
-    for route in assessment_routes:
-        print(f"   - {list(route.methods)} {route}", file=sys.stderr)
 except ImportError as e:
     print(f"❌ ImportError registering assessment_bp: {e}", file=sys.stderr)
     import traceback
@@ -91,10 +85,6 @@ except Exception as e:
 try:
     from routes.batch_routes import batch_bp
     app.register_blueprint(batch_bp)
-    batch_routes = [r for r in app.url_map.iter_rules() if 'batch' in r.endpoint]
-    print(f"✅ Registered batch_bp with {len(batch_routes)} routes", file=sys.stderr)
-    for route in batch_routes:
-        print(f"   - {list(route.methods)} {route}", file=sys.stderr)
 except Exception as e:
     print(f"❌ Error registering batch_bp: {type(e).__name__}: {e}", file=sys.stderr)
     import traceback
@@ -140,6 +130,8 @@ except Exception as e:
 def open_lab_in_chrome(host: str, port: int) -> None:
     """Open the local analysis lab in Chrome without delaying server startup."""
     browser_host = '127.0.0.1' if host in {'0.0.0.0', '::'} else host
+    if ':' in browser_host and not browser_host.startswith('['):
+        browser_host = f'[{browser_host}]'
     url = f'http://{browser_host}:{port}/lab'
     if sys.platform == 'darwin':
         command = ['open', '-a', 'Google Chrome', url]
@@ -256,6 +248,17 @@ def _hosted_live_gate():
     if ok:
         return None
     return jsonify(err), 503
+
+
+@app.after_request
+def _log_request(response):
+    app.logger.debug(
+        'HTTP %s %r -> %s',
+        request.method,
+        request.path,
+        response.status_code,
+    )
+    return response
 
 
 @app.route('/')
@@ -385,27 +388,12 @@ def not_found(error):
             import traceback
             traceback.print_exc(file=sys.stderr)
     
-    # Log for debugging
-    print(f"❌ 404 for {request.method} {request.path}", file=sys.stderr)
     # Get all registered routes
     all_routes = list(app.url_map.iter_rules())
     api_routes = [r for r in all_routes if str(r).startswith('/api/')]
-    print(f"Total registered routes: {len(all_routes)}", file=sys.stderr)
-    print(f"API routes: {len(api_routes)}", file=sys.stderr)
     
     # Check if the route exists with different method
     matching_routes = [r for r in all_routes if request.path in str(r)]
-    if matching_routes:
-        print(f"⚠️ Routes matching path (different method?):", file=sys.stderr)
-        for route in matching_routes:
-            print(f"   {list(route.methods)} {route} (endpoint: {route.endpoint})", file=sys.stderr)
-    
-    # Specifically check for generate-output
-    if '/api/generate-output' in request.path:
-        generate_output_routes = [r for r in all_routes if '/api/generate-output' in str(r)]
-        print(f"🔍 generate-output routes found: {len(generate_output_routes)}", file=sys.stderr)
-        for route in generate_output_routes:
-            print(f"   {list(route.methods)} {route} (endpoint: {route.endpoint})", file=sys.stderr)
     
     if request.path.startswith('/api/'):
         return jsonify({
@@ -469,7 +457,6 @@ def test():
 @app.route('/api/routes', methods=['GET'])
 def list_routes():
     """List all registered routes for debugging."""
-    import sys
     routes_info = []
     for rule in app.url_map.iter_rules():
         routes_info.append({
@@ -482,12 +469,7 @@ def list_routes():
     # Sort by path
     routes_info.sort(key=lambda x: x['path'])
     
-    # Log to stderr for Vercel logs
-    print(f"Total routes registered: {len(routes_info)}", file=sys.stderr)
     api_routes = [r for r in routes_info if r['is_api']]
-    print(f"API routes: {len(api_routes)}", file=sys.stderr)
-    for route in api_routes[:20]:  # First 20
-        print(f"  {route['methods']} {route['path']}", file=sys.stderr)
     
     return jsonify({
         'total_routes': len(routes_info),
@@ -498,8 +480,10 @@ def list_routes():
 
 if __name__ == '__main__':
     from waitress import serve
+    from focalprompt.cli import print_startup_banner
     port = int(os.environ.get('PORT', 5001))
     host = os.environ.get('HOST', '127.0.0.1')
+    print_startup_banner()
     open_lab_in_chrome(host, port)
     # Use waitress with 10-minute timeout for long-running ablation analysis
     serve(app, host=host, port=port, threads=4, channel_timeout=600)

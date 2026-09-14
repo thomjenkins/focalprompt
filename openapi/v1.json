@@ -107,7 +107,7 @@
                 "inputs": { "type": "object", "additionalProperties": { "type": "string" } },
                 "n_baseline": { "type": "integer", "minimum": 1, "default": 10 },
                 "n_ablated": { "type": "integer", "minimum": 1, "default": 5 },
-                "temperature": { "type": "number", "exclusiveMinimum": 0, "default": 0.7 }
+                "temperature": { "type": "number", "minimum": 0, "exclusiveMinimum": true, "default": 0.7 }
               } }
             ]
           } } }

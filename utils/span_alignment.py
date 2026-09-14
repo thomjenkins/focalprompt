@@ -724,37 +724,13 @@ def build_shuffled_remaining_prompt(
     return ablated, empty, doc_order, shuffled_order
 
 
-def classify_foci_for_ablation(prompt: str, foci: List[Dict]) -> List[Dict]:
-    """
-    Verify spans and exclude dynamic / unverified foci.
-
-    Overlapping foci remain attributable. Overlap is recorded on each focus
-    (``overlap_with``, ``overlap_details``) so ablations can warn that shared
-    text is not an independent intervention.
-    """
+def _annotate_overlaps(classified: List[Dict]) -> List[Dict]:
+    """Record pairwise overlap between verified, non-dynamic foci (in place)."""
     from utils.focus_spans import (
         focus_union_tuples,
-        normalize_focus,
         pairwise_overlap,
         spans_overlap as fs_spans_overlap,
     )
-
-    classified = []
-    for focus in foci or []:
-        item = verify_focus(prompt, focus)
-        item = normalize_focus(item, prompt=prompt)
-        item['overlap_with'] = []
-        item['overlap_details'] = []
-        if item.get('is_dynamic'):
-            item['attributable'] = False
-            item['reason'] = 'dynamic_slot'
-        elif not item.get('verified'):
-            item['attributable'] = False
-            item['reason'] = 'unverified'
-        else:
-            item['attributable'] = True
-            item['reason'] = None
-        classified.append(item)
 
     n = len(classified)
     for i in range(n):
@@ -802,3 +778,97 @@ def classify_foci_for_ablation(prompt: str, foci: List[Dict]) -> List[Dict]:
             b['has_overlap'] = True
 
     return classified
+
+
+def classify_foci_for_ablation(prompt: str, foci: List[Dict]) -> List[Dict]:
+    """
+    Verify spans and exclude dynamic / unverified foci.
+
+    Overlapping foci remain attributable. Overlap is recorded on each focus
+    (``overlap_with``, ``overlap_details``) so ablations can warn that shared
+    text is not an independent intervention.
+    """
+    from utils.focus_spans import normalize_focus
+
+    classified = []
+    for focus in foci or []:
+        item = verify_focus(prompt, focus)
+        item = normalize_focus(item, prompt=prompt)
+        item['overlap_with'] = []
+        item['overlap_details'] = []
+        if item.get('is_dynamic'):
+            item['attributable'] = False
+            item['reason'] = 'dynamic_slot'
+        elif not item.get('verified'):
+            item['attributable'] = False
+            item['reason'] = 'unverified'
+        else:
+            item['attributable'] = True
+            item['reason'] = None
+        classified.append(item)
+
+    return _annotate_overlaps(classified)
+
+
+def classify_grounded_foci(prompt: str, foci: List[Dict]) -> List[Dict]:
+    """
+    Classify foci whose ``spans`` are already exact offsets into ``prompt``.
+
+    For callers that grounded spans against a canonical source (an ordered
+    scenario projected to a single analysis document) quote alignment would
+    re-derive — and for multi-span foci lose — attribution. Trust is still
+    earned here: every span must carry a text snapshot that matches
+    ``prompt[char_start:char_end]`` exactly, otherwise the focus is marked
+    unverified and non-attributable instead of being ablated blindly.
+    """
+    from utils.focus_spans import normalize_focus
+
+    classified = []
+    for focus in foci or []:
+        candidate = dict(focus)
+        raw_spans = candidate.get('spans')
+        if not isinstance(raw_spans, list) or not raw_spans:
+            # Never synthesise a span from caller-supplied legacy offsets here:
+            # only spans the caller already grounded may be ablated.
+            candidate['spans'] = []
+            for legacy in ('char_start', 'char_end', 'start', 'end'):
+                candidate.pop(legacy, None)
+        item = normalize_focus(candidate, prompt=None)
+        item['overlap_with'] = []
+        item['overlap_details'] = []
+        spans = item.get('spans') or []
+        failure = None
+        if not spans:
+            failure = 'unverified'
+        elif item.get('is_dynamic'):
+            failure = 'dynamic_slot'
+        else:
+            for span in spans:
+                start = span.get('char_start')
+                end = span.get('char_end')
+                snapshot = span.get('text_snapshot', span.get('text'))
+                if (
+                    not isinstance(start, int) or not isinstance(end, int)
+                    or start < 0 or end <= start or end > len(prompt)
+                ):
+                    failure = 'span_out_of_bounds'
+                    break
+                if snapshot is None or str(snapshot) != prompt[start:end]:
+                    failure = 'span_text_mismatch'
+                    break
+        if failure is not None:
+            item['verified'] = False
+            item['attributable'] = False
+            item['reason'] = failure
+        else:
+            item = normalize_focus(item, prompt=prompt)
+            item['overlap_with'] = []
+            item['overlap_details'] = []
+            item['verified'] = True
+            item['attributable'] = True
+            item['reason'] = None
+            item['grounding_method'] = item.get('grounding_method') or 'grounded_spans'
+            item['grounding_confidence'] = 1.0
+        classified.append(item)
+
+    return _annotate_overlaps(classified)

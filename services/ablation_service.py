@@ -9,11 +9,12 @@ Significance: permutation test of centroid cosine distance.
 import numpy as np
 import time
 import random
-from typing import Any, List, Dict, Mapping, Optional
+from typing import Any, Callable, List, Dict, Mapping, Optional
 from services.embedding_service import EmbeddingService
 from services.cost_calculator import CostCalculator
 from utils.span_alignment import (
     classify_foci_for_ablation,
+    classify_grounded_foci,
     delete_span,
     build_shuffled_remaining_prompt,
     compute_coverage_report,
@@ -87,7 +88,14 @@ class AblationService:
             )
         return response
     
-    def _sample_outputs(self, prompt: str, n: int, temperature: float):
+    def _sample_outputs(
+        self,
+        prompt: str,
+        n: int,
+        temperature: float,
+        *,
+        before_sample: Optional[Callable[[int], None]] = None,
+    ):
         # Whole-prompt ablation can leave an empty string; do not call the gateway.
         if not (prompt or '').strip():
             return [''] * n, 0, 0
@@ -97,6 +105,8 @@ class AblationService:
         for i in range(n):
             if i > 0:
                 time.sleep(SAMPLE_GAP_SECONDS)
+            if before_sample is not None:
+                before_sample(i)
             response = self._complete(prompt, temperature)
             outputs.append(response['content'])
             if 'usage' in response:
@@ -127,6 +137,8 @@ class AblationService:
         scenario: Mapping[str, Any],
         n: int,
         temperature: float,
+        *,
+        before_sample: Optional[Callable[[int], None]] = None,
     ):
         outputs: List[str] = []
         metadata: List[Dict[str, Any]] = []
@@ -135,6 +147,8 @@ class AblationService:
         for i in range(n):
             if i > 0:
                 time.sleep(SAMPLE_GAP_SECONDS)
+            if before_sample is not None:
+                before_sample(i)
             response = self._complete_scenario(scenario, temperature)
             outputs.append(response['content'])
             metadata.append(dict(response.get('scenario_metadata') or {}))
@@ -373,12 +387,18 @@ class AblationService:
         temperature: float = 0.7,
         input_tokens: int = 0,
         output_tokens: int = 0,
+        grounded_spans: bool = False,
     ) -> Dict:
         """Permutation + BH on already-collected sample texts. Does not call the chat model.
 
         ``normalized_influence`` is in percentage points on [0, 100]: attributable
         foci share the observed influence mass so their values sum to 100 (equal
         shares of 100/n when all raw influences are zero).
+
+        ``grounded_spans`` marks ``foci_list`` as already grounded to exact
+        offsets in ``prompt`` (an ordered scenario projected to its analysis
+        document); span snapshots are re-checked against ``prompt`` instead of
+        re-aligning quoted text, which would drop multi-message attribution.
         """
         require_stochastic_temperature(temperature)
         baseline_outputs = [str(t) for t in baseline_outputs if t is not None and str(t).strip()]
@@ -389,7 +409,10 @@ class AblationService:
         for key, vals in (ablated_outputs or {}).items():
             ablated_map[int(key)] = [str(t) for t in vals]
 
-        classified = classify_foci_for_ablation(prompt, foci_list)
+        classified = (
+            classify_grounded_foci(prompt, foci_list) if grounded_spans
+            else classify_foci_for_ablation(prompt, foci_list)
+        )
         n_ablated = 0
         for i, focus in enumerate(classified):
             if not focus.get('attributable'):
@@ -748,6 +771,7 @@ class AblationService:
             projected_foci,
             baseline_outputs,
             ablated_outputs,
+            grounded_spans=True,
             **kwargs,
         )
         for index, row in enumerate(result.get('ablation_results') or []):
@@ -840,48 +864,29 @@ class AblationService:
         }
         return result
 
-    def refine_focus_stability_samples(
+    def _refined_stability_payload(
         self,
-        prompt: str,
-        foci_list: List[Dict],
+        *,
+        focus_name: Optional[str],
         focus_index: int,
         baseline_outputs: List[str],
         existing_ablated_outputs: List[str],
+        new_texts: List[str],
         n_additional: int,
-        *,
-        n_permutations: int = DEFAULT_N_PERMUTATIONS,
-        alpha: float = DEFAULT_ALPHA,
-        permutation_seed: Optional[int] = None,
-        temperature: float = 0.7,
-        behavioral_criterion: Optional[str] = None,
-        task_context: str = '',
-        run_behavioral_judge: bool = False,
+        sample_input_tokens: int,
+        sample_output_tokens: int,
+        n_permutations: int,
+        alpha: float,
+        permutation_seed: Optional[int],
+        behavioral_criterion: Optional[str],
+        task_context: str,
+        run_behavioral_judge: bool,
     ) -> Dict:
-        """
-        Generate extra ablated samples for one focus and refresh stability + permutation.
+        """Refresh stability + permutation for one focus from merged ablated samples.
 
-        Does not re-sample baseline or other foci.
+        Shared by the legacy prompt and ordered scenario refinement paths so both
+        report identical statistics and identical top-level fields.
         """
-        require_stochastic_temperature(temperature)
-        n_additional = int(n_additional)
-        if n_additional < 1:
-            raise ValueError('n_additional must be at least 1')
-        idx = int(focus_index)
-        classified = classify_foci_for_ablation(prompt, foci_list)
-        if idx < 0 or idx >= len(classified):
-            raise ValueError('focus_index out of range')
-        focus = classified[idx]
-        if not focus.get('attributable'):
-            raise ValueError(
-                f"Focus '{focus.get('focus')}' is not attributable ({focus.get('reason')})"
-            )
-
-        ablated_prompt, prompt_empty, _collapsed, ablated_ranges = delete_focus_spans(
-            prompt, focus
-        )
-        new_texts, tin, tout = self._sample_outputs(
-            ablated_prompt, n_additional, temperature
-        )
         merged = list(existing_ablated_outputs or []) + list(new_texts)
         merged = [str(t) for t in merged if str(t).strip()]
         if len(merged) < 2:
@@ -940,8 +945,8 @@ class AblationService:
         )
 
         influence_row = enrich_influence_item_for_review({
-            'focus': focus.get('focus'),
-            'focus_index': idx,
+            'focus': focus_name,
+            'focus_index': focus_index,
             't_obs': float(t_obs),
             'influence': float(t_obs),
             'p_value': bh['p_value'],
@@ -954,15 +959,19 @@ class AblationService:
         })
 
         cost_breakdown = self.cost_calculator.calculate_cost(
-            tin, tout, base_tokens + abl_tokens, self.model, self.provider_name
+            int(sample_input_tokens),
+            int(sample_output_tokens),
+            base_tokens + abl_tokens,
+            self.model,
+            self.provider_name,
         )
 
         return {
-            'focus_index': idx,
-            'focus': focus.get('focus'),
+            'focus_index': focus_index,
+            'focus': focus_name,
             'ablated_outputs': merged,
             'n_ablated_samples': len(merged),
-            'n_additional_generated': n_additional,
+            'n_additional_generated': int(n_additional),
             'ablation_stability': stab,
             'semantic_perturbation': influence_row.get('semantic_perturbation'),
             'permutation': {
@@ -981,6 +990,135 @@ class AblationService:
                 'BH q-value here is single-focus (not re-corrected across all foci).'
             ),
         }
+
+    def refine_focus_stability_samples(
+        self,
+        prompt: str,
+        foci_list: List[Dict],
+        focus_index: int,
+        baseline_outputs: List[str],
+        existing_ablated_outputs: List[str],
+        n_additional: int,
+        *,
+        n_permutations: int = DEFAULT_N_PERMUTATIONS,
+        alpha: float = DEFAULT_ALPHA,
+        permutation_seed: Optional[int] = None,
+        temperature: float = 0.7,
+        behavioral_criterion: Optional[str] = None,
+        task_context: str = '',
+        run_behavioral_judge: bool = False,
+    ) -> Dict:
+        """
+        Generate extra ablated samples for one focus and refresh stability + permutation.
+
+        Does not re-sample baseline or other foci.
+        """
+        require_stochastic_temperature(temperature)
+        n_additional = int(n_additional)
+        if n_additional < 1:
+            raise ValueError('n_additional must be at least 1')
+        idx = int(focus_index)
+        classified = classify_foci_for_ablation(prompt, foci_list)
+        if idx < 0 or idx >= len(classified):
+            raise ValueError('focus_index out of range')
+        focus = classified[idx]
+        if not focus.get('attributable'):
+            raise ValueError(
+                f"Focus '{focus.get('focus')}' is not attributable ({focus.get('reason')})"
+            )
+
+        ablated_prompt, _prompt_empty, _collapsed, _ablated_ranges = delete_focus_spans(
+            prompt, focus
+        )
+        new_texts, tin, tout = self._sample_outputs(
+            ablated_prompt, n_additional, temperature
+        )
+        return self._refined_stability_payload(
+            focus_name=focus.get('focus'),
+            focus_index=idx,
+            baseline_outputs=baseline_outputs,
+            existing_ablated_outputs=existing_ablated_outputs,
+            new_texts=new_texts,
+            n_additional=n_additional,
+            sample_input_tokens=tin,
+            sample_output_tokens=tout,
+            n_permutations=n_permutations,
+            alpha=alpha,
+            permutation_seed=permutation_seed,
+            behavioral_criterion=behavioral_criterion,
+            task_context=task_context,
+            run_behavioral_judge=run_behavioral_judge,
+        )
+
+    def refine_scenario_focus_stability_samples(
+        self,
+        scenario: Mapping[str, Any],
+        foci_list: List[Dict],
+        focus_index: int,
+        baseline_outputs: List[str],
+        existing_ablated_outputs: List[str],
+        n_additional: int,
+        *,
+        inputs: Optional[Mapping[str, Any]] = None,
+        n_permutations: int = DEFAULT_N_PERMUTATIONS,
+        alpha: float = DEFAULT_ALPHA,
+        permutation_seed: Optional[int] = None,
+        temperature: float = 0.7,
+        behavioral_criterion: Optional[str] = None,
+        task_context: str = '',
+        run_behavioral_judge: bool = False,
+    ) -> Dict:
+        """
+        Refine one scenario focus: extra ablated arm samples, refreshed statistics.
+
+        Only the selected focus is re-sampled, so the other foci keep the sample
+        counts from the original run. Reports the same top-level fields as the
+        legacy refinement plus the bound scenario and its ablation metadata.
+        """
+        require_stochastic_temperature(temperature)
+        n_additional = int(n_additional)
+        if n_additional < 1:
+            raise ValueError('n_additional must be at least 1')
+        bound, binding = bind_scenario_inputs(scenario, inputs)
+        classified = normalize_scenario_foci(bound, foci_list)
+        idx = int(focus_index)
+        if idx < 0 or idx >= len(classified):
+            raise ValueError('focus_index out of range')
+        focus = classified[idx]
+        if not focus.get('attributable'):
+            raise ValueError(
+                f"Focus '{focus.get('focus')}' is not attributable ({focus.get('reason')})"
+            )
+        arm, deletion = ablate_scenario(bound, focus)
+        new_texts, tin, tout, metadata = self._sample_scenario_outputs(
+            arm, n_additional, temperature
+        )
+        result = self._refined_stability_payload(
+            focus_name=focus.get('focus'),
+            focus_index=idx,
+            baseline_outputs=baseline_outputs,
+            existing_ablated_outputs=existing_ablated_outputs,
+            new_texts=new_texts,
+            n_additional=n_additional,
+            sample_input_tokens=tin,
+            sample_output_tokens=tout,
+            n_permutations=n_permutations,
+            alpha=alpha,
+            permutation_seed=permutation_seed,
+            behavioral_criterion=behavioral_criterion,
+            task_context=task_context,
+            run_behavioral_judge=run_behavioral_judge,
+        )
+        result['spans'] = focus.get('spans') or []
+        result['message_ids'] = focus.get('message_ids') or []
+        result['scenario'] = bound
+        result['ablated_scenario'] = arm
+        result['scenario_metadata'] = {
+            'input_binding': binding,
+            'additional_samples': metadata,
+            **deletion,
+        }
+        return result
 
     def attach_behavioral_outcome_dispersion(
         self,

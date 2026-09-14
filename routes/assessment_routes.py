@@ -105,7 +105,13 @@ def assess():
         checkpoint_service = CheckpointService()
         service = AssessmentService(assessor, checkpoint_service=checkpoint_service)
         
-        result = service.assess_focus(prompt, output, user_foci, max_foci)
+        result = service.assess_focus(
+            prompt,
+            output,
+            user_foci,
+            max_foci,
+            scenario=None if is_legacy else scenario,
+        )
         
         # Save checkpoint for single assessment (optional - don't fail if it doesn't work)
         try:

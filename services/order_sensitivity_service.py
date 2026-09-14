@@ -40,6 +40,45 @@ DEFAULT_K_PERMUTATIONS = 5
 DEFAULT_M_SAMPLES = 3
 
 
+def _spans_overlap(left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:
+    """True when two grounded spans cover shared characters of one message."""
+    if str(left.get('message_id')) != str(right.get('message_id')):
+        return False
+    return (
+        int(left['char_start']) < int(right['char_end'])
+        and int(right['char_start']) < int(left['char_end'])
+    )
+
+
+def _restrict_group_to_movable(
+    classified: Sequence[Mapping[str, Any]],
+    focus_indices: Sequence[int],
+) -> tuple[List[int], List[int]]:
+    """Split a candidate group into safely movable and overlap-blocked members.
+
+    A focus may only be moved when no focus held fixed for this experiment
+    (cross-message, multi-span, or otherwise non-reorderable) shares any of its
+    characters. Otherwise reordering would silently relocate text that the
+    result reports as fixed.
+    """
+    group = {int(index) for index in focus_indices}
+    fixed_spans = [
+        span
+        for index, focus in enumerate(classified)
+        if index not in group
+        for span in (focus.get('spans') or [])
+    ]
+    movable: List[int] = []
+    blocked: List[int] = []
+    for index in focus_indices:
+        spans = classified[int(index)].get('spans') or []
+        if any(_spans_overlap(span, fixed) for span in spans for fixed in fixed_spans):
+            blocked.append(int(index))
+        else:
+            movable.append(int(index))
+    return movable, blocked
+
+
 class OrderSensitivityService:
     """Run global order sensitivity and single-focus position sweeps."""
 
@@ -187,6 +226,20 @@ class OrderSensitivityService:
         policies = prep['ordering_policy']
         n_slots = int(prep['n_movable_slots'])
 
+        sweep_movable_slot: Optional[int] = None
+        sweep_focus_name = ''
+        if run_position_sweep and focus_index_for_sweep is not None:
+            movable_indices_list = list(template.get('movable_focus_indices') or [])
+            sweep_index = int(focus_index_for_sweep)
+            if sweep_index not in movable_indices_list:
+                raise ValueError(
+                    f'focus_index_for_sweep {sweep_index} is not a movable attributable focus'
+                )
+            sweep_movable_slot = movable_indices_list.index(sweep_index)
+            sweep_focus_name = (
+                classified[sweep_index].get('focus') or f'Focus {sweep_index}'
+            ).strip()
+
         if baseline_embeddings is not None:
             base_emb = np.asarray(baseline_embeddings, dtype=float)
             emb_tokens = 0
@@ -266,18 +319,10 @@ class OrderSensitivityService:
         global_summary = summarize_global_order_experiment(permutations, baseline_stability)
 
         position_sweeps: List[Dict[str, Any]] = []
-        if run_position_sweep and focus_index_for_sweep is not None:
-            movable_indices_list = list(template.get('movable_focus_indices') or [])
-            fi = int(focus_index_for_sweep)
-            if fi not in movable_indices_list:
-                raise ValueError(
-                    f'focus_index_for_sweep {fi} is not a movable attributable focus'
-                )
-            movable_i = movable_indices_list.index(fi)
-            focus_name = (classified[fi].get('focus') or f'Focus {fi}').strip()
+        if sweep_movable_slot is not None:
             sweep_results: List[Dict[str, Any]] = []
             for slot in position_sweep_slot_indices(n_slots):
-                assignment = assignment_for_focus_at_slot(n_slots, movable_i, slot)
+                assignment = assignment_for_focus_at_slot(n_slots, sweep_movable_slot, slot)
                 reordered_prompt, recon_meta = build_reordered_prompt(
                     prompt,
                     classified,
@@ -301,7 +346,7 @@ class OrderSensitivityService:
                 )
                 sweep_row = {
                     'focus_index': int(focus_index_for_sweep),
-                    'focus': focus_name,
+                    'focus': sweep_focus_name,
                     'slot_index': slot,
                     'assignment': assignment,
                     'ordered_focus_names': recon_meta.get('ordered_focus_names'),
@@ -317,9 +362,9 @@ class OrderSensitivityService:
                 sweep_results.append(sweep_row)
             position_sweeps.append({
                 'focus_index': int(focus_index_for_sweep),
-                'focus': focus_name,
+                'focus': sweep_focus_name,
                 'summary': summarize_position_sweep(
-                    sweep_results, baseline_stability, focus_name
+                    sweep_results, baseline_stability, sweep_focus_name
                 ),
                 'positions': sweep_results,
             })
@@ -423,12 +468,28 @@ class OrderSensitivityService:
 
         bound, binding = bind_scenario_inputs(scenario, inputs)
         classified = normalize_scenario_foci(bound, foci)
-        groups = scenario_order_groups(bound, classified)
+        candidate_groups = scenario_order_groups(bound, classified)
+        groups: List[Dict[str, Any]] = []
+        blocked_by_fixed: List[int] = []
+        for group in candidate_groups:
+            movable, blocked = _restrict_group_to_movable(classified, group['focus_indices'])
+            blocked_by_fixed.extend(blocked)
+            if len(movable) > 1:
+                groups.append({**group, 'focus_indices': movable})
+        overlapping_fixed = sorted(set(blocked_by_fixed))
         if not groups:
+            error = 'No foci are reorderable within the same message and role.'
+            if overlapping_fixed:
+                error = (
+                    'No foci are reorderable: their spans overlap foci held fixed for this '
+                    'experiment (cross-message or multi-span), so reordering would move text '
+                    'the result reports as unchanged.'
+                )
             return {
                 'ok': False,
-                'error': 'No foci are reorderable within the same message and role.',
+                'error': error,
                 'ordering_groups': [],
+                'overlapping_fixed_focus_indices': overlapping_fixed,
             }
         selected_group = None
         if focus_index_for_sweep is not None:
@@ -436,6 +497,16 @@ class OrderSensitivityService:
             selected_group = next(
                 (group for group in groups if index in group['focus_indices']), None
             )
+            if selected_group is None:
+                return {
+                    'ok': False,
+                    'error': (
+                        f'focus_index_for_sweep {index} is not reorderable within an eligible '
+                        'message and role group.'
+                    ),
+                    'ordering_groups': groups,
+                    'overlapping_fixed_focus_indices': overlapping_fixed,
+                }
         if selected_group is None:
             selected_group = groups[0]
         message_id = selected_group['message_id']
@@ -522,4 +593,5 @@ class OrderSensitivityService:
         result['cross_message_foci_fixed'] = [
             index for index in range(len(classified)) if index not in global_indices
         ]
+        result['overlapping_fixed_focus_indices'] = overlapping_fixed
         return result

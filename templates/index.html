@@ -274,7 +274,6 @@
                                 <div class="scenario-order-rail" aria-hidden="true">1</div>
                                 <div class="scenario-message-body">
                                     <div class="scenario-message-controls">
-                                        <input class="scenario-message-id" value="instructions" aria-label="Message ID">
                                         <select class="scenario-role" aria-label="Message role">
                                             <option value="system" selected>System</option>
                                             <option value="developer">Developer</option>
@@ -297,7 +296,6 @@
                                 <div class="scenario-order-rail" aria-hidden="true">2</div>
                                 <div class="scenario-message-body">
                                     <div class="scenario-message-controls">
-                                        <input class="scenario-message-id" value="user-input" aria-label="Message ID">
                                         <select class="scenario-role" aria-label="Message role">
                                             <option value="system">System</option>
                                             <option value="developer">Developer</option>
@@ -712,16 +710,16 @@
                             </button>
                         </div>
                         
-                        <!-- Prompt Definition for All Pairs -->
+                        <!-- Optional per-tab override of the scenario's first Analyse message -->
                         <div class="batch-prompt-section" style="margin-bottom: 24px; padding: 16px; background: #fff3cd; border-radius: 6px; border: 1px solid #ffc107;">
-                            <h3 style="margin-bottom: 12px;">Prompt (Applied to All Pairs)</h3>
+                            <h3 style="margin-bottom: 12px;">Prompt Override (Optional)</h3>
                             <p class="info-text" style="margin-bottom: 12px; font-size: 0.9em;">
-                                Enter the prompt that was used to generate all outputs. This shared prompt does not configure per-row inputs; use Input name on retained messages in Prompt Analysis for those.
+                                Batch runs use the Inference Scenario from Prompt Analysis. Text here overrides only the first Analyse message for this tab; leave it empty to run the scenario as-is. It does not configure per-row inputs — use Input name on retained messages for those.
                             </p>
                             <textarea 
                                 id="batch-prompt-input" 
                                 class="textarea-large" 
-                                placeholder="Enter the prompt that was used for all pairs..."
+                                placeholder="Optional: override the first Analyse message for batch runs..."
                                 rows="6"
                             ></textarea>
                         </div>
@@ -742,7 +740,7 @@
                     <div class="section-model-control" data-model-section="batch-foci"></div>
                         <div class="button-group">
                         <button id="batch-detect-foci-btn" class="btn btn-primary">
-                            🤖 Auto-Detect from First Prompt
+                            🤖 Auto-Detect from Scenario
                         </button>
                         <button id="batch-import-foci-btn" class="btn btn-outline">
                             📥 Import from Prompt Analysis
@@ -760,7 +758,7 @@
                     </div>
                     <div class="card-body">
                         <div id="batch-foci-container" class="foci-container">
-                            <p class="empty-state">No foci defined yet. Click "Auto-Detect from First Prompt" or "Import from Prompt Analysis" to get started.</p>
+                            <p class="empty-state">No foci defined yet. Click "Auto-Detect from Scenario" or "Import from Prompt Analysis" to get started.</p>
                         </div>
                     </div>
                 </section>

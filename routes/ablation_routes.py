@@ -20,9 +20,7 @@ from utils.inference_scenario import (
     ProviderCapabilityError,
     ScenarioValidationError,
     StructuredOutputError,
-    ablate_scenario,
     bind_scenario_inputs,
-    normalize_scenario_foci,
     scenario_analysis_document,
     scenario_from_request,
 )
@@ -74,7 +72,9 @@ def ablation_analysis():
         alpha = data.get('alpha', 0.05)
         permutation_seed = data.get('permutation_seed')
         temperature = data.get('temperature', 0.7)
-        inputs = data.get('inputs', {})
+        # Omitted inputs mean "use the scenario's own message defaults" (None),
+        # not "an empty binding", which would reject every named input.
+        inputs = data.get('inputs')
         
         if not foci_list or len(foci_list) == 0:
             return jsonify({'error': 'Foci are required for ablation analysis'}), 400
@@ -209,42 +209,22 @@ def ablation_refine_stability():
                 run_behavioral_judge=run_behavioral_judge,
             )
         else:
-            bound, binding = bind_scenario_inputs(scenario, data.get('inputs'))
-            classified = normalize_scenario_foci(bound, foci_list)
-            idx = int(focus_index)
-            if idx < 0 or idx >= len(classified):
-                raise ValueError('focus_index out of range')
-            arm, deletion = ablate_scenario(bound, classified[idx])
-            new_texts, tin, tout, metadata = service._sample_scenario_outputs(
-                arm, n_additional, temperature
-            )
-            merged = list(existing) + list(new_texts)
-            scored = service.score_scenario_from_samples(
-                bound,
-                classified,
+            result = service.refine_scenario_focus_stability_samples(
+                scenario,
+                foci_list,
+                int(focus_index),
                 baseline_outputs,
-                {idx: merged},
+                list(existing),
+                n_additional,
+                inputs=data.get('inputs'),
                 n_permutations=n_permutations,
                 alpha=alpha,
                 permutation_seed=permutation_seed,
                 temperature=temperature,
-                input_tokens=tin,
-                output_tokens=tout,
+                behavioral_criterion=behavioral_criterion,
+                task_context=data.get('task_context') or '',
+                run_behavioral_judge=run_behavioral_judge,
             )
-            result = {
-                'focus_index': idx,
-                'focus': classified[idx].get('focus'),
-                'ablated_outputs': merged,
-                'n_ablated_samples': len(merged),
-                'n_additional_generated': n_additional,
-                'score': scored,
-                'scenario': bound,
-                'scenario_metadata': {
-                    'input_binding': binding,
-                    'additional_samples': metadata,
-                    **deletion,
-                },
-            }
         return _analysis_json(result)
     except (ProviderCapabilityError, StructuredOutputError) as e:
         return jsonify({'error': str(e), 'code': 'inference_contract_error'}), 422
@@ -275,7 +255,8 @@ def ablation_behavioral_outcome_dispersion():
             return jsonify({'error': 'behavioral_criterion is required'}), 400
 
         ablated_map = {int(k): list(v or []) for k, v in ablated_outputs.items()}
-        service = _ablation_service(data)
+        # The criterion judge is an analysis model, not the model under test.
+        service = _ablation_service(data, model_role='analysis')
         by_focus = service.attach_behavioral_outcome_dispersion(
             baseline_outputs=baseline_outputs,
             ablated_outputs=ablated_map,
@@ -320,14 +301,21 @@ def ablation_score():
             permutation_seed=permutation_seed, temperature=temperature,
             input_tokens=input_tokens, output_tokens=output_tokens,
         )
+        bound = scenario
         if is_legacy:
             result_data = service.score_from_samples(
                 prompt, foci_list, baseline_outputs, ablated_outputs, **score_kwargs
             )
         else:
+            # Samples were generated against bound inputs; record the same bound
+            # scenario so follow-up refinement re-samples the identical request.
+            bound, binding = bind_scenario_inputs(scenario, data.get('inputs'))
             result_data = service.score_scenario_from_samples(
-                scenario, foci_list, baseline_outputs, ablated_outputs, **score_kwargs
+                bound, foci_list, baseline_outputs, ablated_outputs, **score_kwargs
             )
+            metadata = dict(result_data.get('scenario_metadata') or {})
+            metadata['input_binding'] = binding
+            result_data['scenario_metadata'] = metadata
         checkpoint_service = CheckpointService()
         session_id = str(uuid.uuid4())
         checkpoint_data = {
@@ -338,7 +326,7 @@ def ablation_score():
             'complete': True,
         }
         if not is_legacy:
-            checkpoint_data['scenario'] = scenario
+            checkpoint_data['scenario'] = bound
             checkpoint_data['workspace_version'] = 2
         checkpoint_service.save_checkpoint(
             session_id,
