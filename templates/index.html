@@ -161,9 +161,9 @@
                                 Score a single completion against your foci. Scores are the model’s behavioural self-report of how that output attended to each focus — not transformer attention weights.
                             </p>
                             
-                            <p><strong>5. Adjust Intended Focus</strong></p>
+                            <p><strong>5. Target Focus Mix</strong></p>
                             <p>
-                                Use sliders to set an intended focus mix; rewrite attempts to reflect that mix. Generate a new output to compare.
+                                Use sliders to set one global target focus mix for the whole scenario; the rewrite attempts to move the scenario toward that relative mix. Generate a new output from the rewritten scenario to compare target against reported focus.
                             </p>
                             
                             <p><strong>Experiment B — Perturbation sensitivity (Ablation Analysis)</strong></p>
@@ -418,8 +418,8 @@
                         <button id="assess-btn" class="btn btn-success">
                             📊 Assess Focus
                         </button>
-                        <button id="compare-intent-btn" class="btn btn-primary hidden" title="Compare the assessed output to your intended focus distribution (only available after generating output from adjusted prompt)">
-                            📈 Compare to Intended Focus
+                        <button id="compare-intent-btn" class="btn btn-primary hidden" title="Compare your target focus mix to the reported focus of the output generated from the rewritten scenario">
+                            📈 Compare Target vs Reported
                         </button>
                     </div>
                 </div>
@@ -438,30 +438,27 @@
             <!-- Focus Control Section (shown after assessment) -->
             <section id="focus-control-section" class="card hidden">
                 <div class="card-header">
-                    <h2>5. Adjust Focus Distribution</h2>
+                    <h2>5. Target Focus Mix</h2>
                     <div class="section-model-control" data-model-section="adjust"></div>
                     <div class="button-group">
                         <button id="reset-sliders-btn" class="btn btn-outline">
-                            🔄 Reset to Current
+                            🔄 Reset Targets to Reported
                         </button>
                     </div>
                 </div>
                 <div class="card-body">
-                    <p class="info-text">Sliders are <strong>rewrite weights</strong> (your intent for rewriting), initialized from reported-focus scores. Reported focus is introspective self-report — not causal importance. Edit freely before rewriting. Total must equal 100%.</p>
+                    <p class="info-text">Sliders set one <strong>global target focus mix</strong> across all Analyse messages. Positive values express the desired relative reported focus in the generated output and total 100%; they are not text-length quotas or guaranteed shares of model attention. Generate and reassess the rewritten scenario to compare target with reported focus. Reported focus is introspective self-report, not causal importance.</p>
                     <p class="info-text" style="margin-top: 8px; color: #92400e; background: #fef3c7; padding: 8px 12px; border-radius: 6px;">
-                        Removing a focus (0%) may change correctness or behavior (schemas, safety rules, tool contracts). This rewrite is an experimental transformation, not an optimization recommendation.
-                    </p>
-                    <p class="info-text" style="margin-top: 6px; font-size: 0.9em; color: #64748b;">
-                        Weight bands: <strong>0%</strong> omit · <strong>1–29%</strong> minimize · <strong>30–69%</strong> retain · <strong>70–100%</strong> emphasize
+                        A target of <strong>0%</strong> explicitly asks the rewrite to omit that focus. Omitting a focus may change correctness or behavior (schemas, safety rules, tool contracts). This rewrite is an experimental transformation, not an optimization recommendation.
                     </p>
                     <div id="total-budget" class="total-budget">
-                        Total Budget: <strong id="total-budget-value">100%</strong>
+                        Target total: <strong id="total-budget-value">100%</strong>
                     </div>
                     <div id="sliders-container" class="sliders-container">
                     </div>
                     <div class="focus-control-actions">
                         <button id="rewrite-prompt-btn" class="btn btn-primary" disabled>
-                            ✏️ Rewrite Prompt with New Focus
+                            ✏️ Rewrite Scenario to Target Mix
                         </button>
                         <button id="generate-focused-output-btn" class="btn btn-success" disabled>
                             🎯 Generate Output with Adjusted Focus
@@ -469,12 +466,12 @@
                     </div>
                     <div id="rewritten-prompt-container" class="rewritten-prompt-container hidden">
                         <p class="info-text" style="margin-bottom: 10px;">
-                            The original prompt in section 2 is unchanged. This is a separate rewritten copy used only for “Generate Output with Adjusted Focus.”
+                            The original scenario in section 2 is unchanged. This is a separate rewritten copy used only for “Generate Output with Adjusted Focus.” Retained messages are shown unchanged.
                         </p>
-                        <h4>Rewritten Prompt:</h4>
+                        <h4>Rewritten Scenario:</h4>
                         <div id="rewritten-prompt" class="rewritten-prompt"></div>
                         <div id="adjusted-output-container" class="adjusted-output-container hidden">
-                            <h4>Output from Rewritten Prompt:</h4>
+                            <h4>Output from Rewritten Scenario:</h4>
                             <div id="adjusted-output" class="rewritten-prompt"></div>
                         </div>
                     </div>

@@ -823,6 +823,70 @@ header img {
     overflow-y: auto;
 }
 
+/* Rewritten scenario preview: one labelled block per message */
+.rewritten-prompt.rewritten-scenario {
+    white-space: normal;
+    max-height: 420px;
+}
+
+.rewritten-message {
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 8px 10px;
+    margin-bottom: 10px;
+    background: white;
+}
+
+.rewritten-message:last-child {
+    margin-bottom: 0;
+}
+
+.rewritten-message.is-retained {
+    background: #f8fafc;
+    border-style: dashed;
+}
+
+.rewritten-message-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 6px;
+    font-family: var(--font-sans, inherit);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-secondary, #64748b);
+}
+
+.rewritten-message-role {
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.rewritten-message-id {
+    font-family: var(--font-mono);
+    text-transform: none;
+    letter-spacing: 0;
+    background: #eef2ff;
+    border-radius: 4px;
+    padding: 1px 6px;
+}
+
+.rewritten-message-mode {
+    margin-left: auto;
+}
+
+.rewritten-message-content {
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
+.rewritten-message-content.is-empty {
+    color: var(--text-secondary, #64748b);
+    font-style: italic;
+}
+
 .adjusted-output-container {
     margin-top: 16px;
     padding-top: 16px;
@@ -1096,12 +1160,12 @@ header img {
     font-weight: 500;
 }
 
-.comparison-table .intended-value {
+.comparison-table .target-value {
     color: var(--primary-color);
     font-weight: 600;
 }
 
-.comparison-table .actual-value {
+.comparison-table .reported-value {
     color: var(--text-secondary);
 }
 

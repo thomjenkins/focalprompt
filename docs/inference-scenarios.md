@@ -80,6 +80,18 @@ The contract is request configuration, not a message. FocalPrompt passes it thro
 
 With **Output contract** enabled, the web editor validates the schema's JSON syntax as you type and requires a JSON object. Invalid input shows an inline error and blocks submission; correcting it clears the error. This editor check does not replace server-side JSON Schema validation.
 
+## Target focus mix and rewriting
+
+The focus sliders express one global target mix across all Analyse messages, not separate percentages within each message. Positive `rewrite_weight` values are normalized together to 100% and guide relative instructional emphasis. There are no absolute minimize/retain/emphasize thresholds: 20% can be the largest target in a distribution. These are desired reported-focus shares in generated output, not text-length quotas or guaranteed shares of model attention.
+
+A weight of exactly 0 requests omission of that focus's instructions. Omitting instructions may change correctness or behavior; it is an experimental transformation, not an optimization recommendation.
+
+Rewriting uses one coordinated model request containing the ordered scenario, retained context, output contract, focus definitions, and global targets. Replacement text is keyed by the targeted Analyse message IDs. Message roles, IDs, order, retained content, and the output contract remain unchanged; untargeted Analyse messages are also preserved. A focus spanning several messages has one shared target, not a separate allocation in each message. If every focus mapped to a targeted message is omitted, its content may become empty while its message boundary remains.
+
+The web preview displays separate role- and ID-labelled messages, including unchanged retained context. **Generate Output with Adjusted Focus** generates from the rewritten scenario and reassesses that output against the same focus definitions, including zero-target foci. **Compare Target vs Reported** displays the requested mix and reported results with differences in percentage points. Reassessment does not replace the chosen targets. The original editor scenario is not overwritten.
+
+The comparison describes one sampled output using the existing reported-focus assessment method. It does not establish causal importance, output quality, or that a rewrite will reliably achieve its target mix.
+
 ## Interfaces
 
 HTTP requests accept exactly one of `scenario` or `prompt`. Python functions accept a scenario object or path using `scenario=...`. CLI commands accept `--scenario FILE` instead of the positional prompt. MCP tools expose the same optional `scenario` object, and ablation named values are supplied through `options.inputs`.

@@ -785,7 +785,13 @@ def rewrite_analysed_messages(
     scenario: Mapping[str, Any],
     rewritten_by_message_id: Mapping[str, str],
 ) -> Dict[str, Any]:
-    """Apply rewrites only to Analyse messages, preserving all other bytes."""
+    """Apply rewrites only to Analyse messages, preserving all other bytes.
+
+    Empty text is accepted: it means every focus mapped to that message was
+    omitted. The message keeps its id, role, order and analysis mode, so the
+    boundary stays intact. Callers own the question of whether emptiness was
+    actually requested.
+    """
     normalized = validate_scenario(scenario)
     out = copy.deepcopy(normalized)
     for message in out['messages']:
@@ -793,9 +799,9 @@ def rewrite_analysed_messages(
             continue
         if message['id'] in rewritten_by_message_id:
             content = rewritten_by_message_id[message['id']]
-            if not isinstance(content, str) or not content.strip():
+            if not isinstance(content, str):
                 raise ScenarioValidationError(
-                    f"Rewrite for message '{message['id']}' must be non-empty text"
+                    f"Rewrite for message '{message['id']}' must be text"
                 )
             message['content'] = content
     return validate_scenario(out)

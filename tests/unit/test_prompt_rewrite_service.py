@@ -1,7 +1,9 @@
-"""Tests for prompt rewrite weight semantics (0% = omit)."""
+"""Tests for the coordinated scenario rewrite and its target focus mix."""
 
 from __future__ import annotations
 
+import json
+from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -9,23 +11,74 @@ import pytest
 
 from services.prompt_rewrite_service import (
     PromptRewriteService,
-    build_rewrite_instruction,
+    focus_targets_by_message,
     looks_like_sample_completion,
+    normalize_focus_targets,
     normalize_rewrite_weight,
+    parse_rewritten_messages,
     strip_rewrite_fences,
-    weight_band,
 )
+from utils.inference_scenario import validate_scenario
 
 
-def test_weight_bands_distinguish_zero_from_minimize():
-    assert weight_band(0) == 'omit'
-    assert weight_band(0.0) == 'omit'
-    assert weight_band(1) == 'minimize'
-    assert weight_band(29) == 'minimize'
-    assert weight_band(30) == 'retain'
-    assert weight_band(69) == 'retain'
-    assert weight_band(70) == 'emphasize'
-    assert weight_band(100) == 'emphasize'
+def _scenario():
+    return validate_scenario({
+        'version': 1,
+        'messages': [
+            {
+                'id': 'sys',
+                'role': 'system',
+                'content': 'You are a triage nurse. Always return valid JSON. Be concise.',
+                'analysis_mode': 'analyse',
+            },
+            {
+                'id': 'dev',
+                'role': 'developer',
+                'content': 'Escalate chest pain. Mention the on-call number.',
+                'analysis_mode': 'analyse',
+            },
+            {
+                'id': 'user-input',
+                'role': 'user',
+                'content': 'My chest hurts.',
+                'analysis_mode': 'retain',
+                'input_name': 'question',
+            },
+        ],
+        'output_contract': {
+            'type': 'json_schema',
+            'name': 'triage',
+            'strict': True,
+            'schema': {
+                'type': 'object',
+                'properties': {'answer': {'type': 'string'}},
+                'required': ['answer'],
+                'additionalProperties': False,
+            },
+        },
+    })
+
+
+def _foci():
+    return [
+        {'focus': 'Role', 'prompt_section': 'You are a triage nurse.',
+         'message_id': 'sys', 'rewrite_weight': 30},
+        {'focus': 'JSON', 'prompt_section': 'Always return valid JSON.',
+         'message_id': 'sys', 'rewrite_weight': 0},
+        {'focus': 'Escalation', 'prompt_section': 'Escalate chest pain.',
+         'message_ids': ['dev'], 'rewrite_weight': 90},
+    ]
+
+
+def _service(side_effect):
+    provider = MagicMock()
+    provider.chat_completion.side_effect = side_effect
+    assessor = SimpleNamespace(provider=provider, model='mock-model', provider_name='openai')
+    return PromptRewriteService(assessor), provider
+
+
+def _reply(mapping):
+    return {'content': json.dumps({'rewritten_messages': mapping})}
 
 
 def test_normalize_does_not_clamp_zero_upward():
@@ -36,97 +89,196 @@ def test_normalize_does_not_clamp_zero_upward():
     assert normalize_rewrite_weight(150) == 100.0
 
 
-def test_instruction_says_zero_means_omit_not_mention_briefly():
-    instruction = build_rewrite_instruction(
-        'Be safe. Be helpful. Return JSON.',
-        [
-            {'focus': 'Safety', 'prompt_section': 'Be safe.', 'rewrite_weight': 0},
-            {'focus': 'Help', 'prompt_section': 'Be helpful.', 'rewrite_weight': 50},
-            {'focus': 'JSON', 'prompt_section': 'Return JSON.', 'rewrite_weight': 80},
-        ],
+def test_targets_are_normalized_globally_not_banded():
+    targets = normalize_focus_targets([
+        {'focus': 'a', 'rewrite_weight': 10},
+        {'focus': 'b', 'rewrite_weight': 30},
+        {'focus': 'c', 'rewrite_weight': 0, 'weight': 40, 'reported_focus_score': 90},
+    ])
+    shares = {t['focus']: t['target_share'] for t in targets}
+    assert shares['a'] == pytest.approx(25.0)
+    assert shares['b'] == pytest.approx(75.0)
+    assert shares['c'] == 0.0
+    assert sum(shares.values()) == pytest.approx(100.0)
+    assert [t['omit'] for t in targets] == [False, False, True]
+
+
+def test_relative_shares_are_invariant_to_weight_scale():
+    small = normalize_focus_targets([
+        {'focus': 'a', 'rewrite_weight': 5},
+        {'focus': 'b', 'rewrite_weight': 15},
+    ])
+    large = normalize_focus_targets([
+        {'focus': 'a', 'rewrite_weight': 20},
+        {'focus': 'b', 'rewrite_weight': 60},
+    ])
+    assert [t['target_share'] for t in small] == pytest.approx([25.0, 75.0])
+    assert [t['target_share'] for t in large] == pytest.approx([25.0, 75.0])
+
+
+def test_all_zero_weights_leave_every_share_at_zero():
+    targets = normalize_focus_targets([
+        {'focus': 'a', 'rewrite_weight': 0},
+        {'focus': 'b', 'rewrite_weight': 0},
+    ])
+    assert [t['target_share'] for t in targets] == [0.0, 0.0]
+
+
+def test_targeting_uses_every_mapping_field_including_spans():
+    targets = normalize_focus_targets([
+        {'focus': 'single', 'message_id': 'a', 'rewrite_weight': 10},
+        {'focus': 'multi', 'message_ids': ['a', 'b'], 'rewrite_weight': 10},
+        {'focus': 'spanned', 'spans': [{'message_id': 'c', 'start': 0, 'end': 2}],
+         'rewrite_weight': 10},
+        {'focus': 'unmapped', 'rewrite_weight': 10},
+    ])
+    by_message = focus_targets_by_message(targets, ['a', 'b', 'c', 'd'])
+    assert list(by_message) == ['a', 'b', 'c']
+    assert [t['focus'] for t in by_message['a']] == ['single', 'multi']
+    assert [t['focus'] for t in by_message['b']] == ['multi']
+    assert [t['focus'] for t in by_message['c']] == ['spanned']
+
+
+def test_unmapped_foci_target_every_message_only_when_nothing_is_mapped():
+    targets = normalize_focus_targets([{'focus': 'legacy', 'rewrite_weight': 40}])
+    assert list(focus_targets_by_message(targets, ['a', 'b'])) == ['a', 'b']
+
+
+def test_one_request_rewrites_both_targeted_messages():
+    scenario = _scenario()
+
+    def fake(**kwargs):
+        return _reply({
+            'sys': 'You are a triage nurse. Be concise.',
+            'dev': 'Escalate chest pain immediately. Give the on-call number.',
+        })
+
+    service, provider = _service(fake)
+    result = service.rewrite_scenario(scenario, _foci())
+
+    assert provider.chat_completion.call_count == 1
+
+    ids = [m['id'] for m in result['messages']]
+    roles = [m['role'] for m in result['messages']]
+    assert ids == ['sys', 'dev', 'user-input']
+    assert roles == ['system', 'developer', 'user']
+    assert result['messages'][0]['content'] == 'You are a triage nurse. Be concise.'
+    assert result['messages'][1]['content'].startswith('Escalate chest pain immediately')
+    # Retained bytes and contract are untouched.
+    assert result['messages'][2] == scenario['messages'][2]
+    assert result['output_contract'] == scenario['output_contract']
+
+
+def test_untargeted_analyse_message_keeps_its_bytes():
+    scenario = _scenario()
+    service, provider = _service(
+        lambda **kwargs: _reply({'sys': 'You are a triage nurse.'})
     )
-    lower = instruction.lower()
-    assert '0%' in instruction or 'rewrite_weight = 0' in lower or 'exactly 0%' in lower
-    assert 'omit' in lower
-    assert 'do not paraphrase' in lower or 'do not retain equivalent' in lower
-    assert 'mention them briefly' not in lower
-    assert 'mention briefly or implicitly' not in lower
-    assert '0-30%' not in instruction
-    assert '0–30%' not in instruction
-    # 1–29 distinct from 0
-    assert '1–29%' in instruction or '1-29%' in instruction
-    assert 'minimize' in lower
-    assert 'instruction text' in lower or 'do not' in lower
-    assert 'suggestedmessage' in lower or 'sample reply' in lower
+    result = service.rewrite_scenario(scenario, [
+        {'focus': 'Role', 'prompt_section': 'You are a triage nurse.',
+         'message_id': 'sys', 'rewrite_weight': 40},
+    ])
+    assert result['messages'][1]['content'] == scenario['messages'][1]['content']
+    assert provider.chat_completion.call_count == 1
 
 
-def test_instruction_does_not_let_preserve_meaning_override_zero():
-    instruction = build_rewrite_instruction(
-        'Role text. Schema text.',
-        [
-            {'focus': 'Role', 'prompt_section': 'Role text.', 'weight': 100},
-            {'focus': 'Schema', 'prompt_section': 'Schema text.', 'rewrite_weight': 0},
-        ],
+def test_no_targeted_message_makes_no_request():
+    scenario = _scenario()
+    service, provider = _service(lambda **kwargs: _reply({}))
+    result = service.rewrite_scenario(scenario, [
+        {'focus': 'Elsewhere', 'message_id': 'user-input', 'rewrite_weight': 50},
+    ])
+    assert provider.chat_completion.call_count == 0
+    assert result == scenario
+
+
+def test_all_omitted_message_may_come_back_empty():
+    scenario = _scenario()
+    service, _ = _service(lambda **kwargs: _reply({'sys': ''}))
+    result = service.rewrite_scenario(scenario, [
+        {'focus': 'Role', 'message_id': 'sys', 'rewrite_weight': 0},
+        {'focus': 'JSON', 'message_id': 'sys', 'rewrite_weight': 0},
+    ])
+    assert result['messages'][0] == {
+        'id': 'sys', 'role': 'system', 'content': '', 'analysis_mode': 'analyse',
+    }
+    assert result['messages'][2] == scenario['messages'][2]
+
+
+def test_empty_rewrite_rejected_while_a_focus_keeps_positive_target():
+    scenario = _scenario()
+    service, _ = _service(lambda **kwargs: _reply({'sys': '   '}))
+    with pytest.raises(ValueError, match='positive target share'):
+        service.rewrite_scenario(scenario, [
+            {'focus': 'Role', 'message_id': 'sys', 'rewrite_weight': 40},
+            {'focus': 'JSON', 'message_id': 'sys', 'rewrite_weight': 0},
+        ])
+
+
+def test_missing_or_extra_ids_are_rejected_without_partial_apply():
+    with pytest.raises(ValueError, match='missing: dev'):
+        parse_rewritten_messages(
+            json.dumps({'rewritten_messages': {'sys': 'ok'}}), ['sys', 'dev']
+        )
+    with pytest.raises(ValueError, match='unexpected: user-input'):
+        parse_rewritten_messages(
+            json.dumps({'rewritten_messages': {
+                'sys': 'ok', 'dev': 'ok', 'user-input': 'nope',
+            }}),
+            ['sys', 'dev'],
+        )
+
+
+def test_scenario_untouched_when_response_ids_are_wrong():
+    scenario = _scenario()
+    original = deepcopy(scenario)
+    service, _ = _service(lambda **kwargs: _reply({'sys': 'only one'}))
+    with pytest.raises(ValueError, match='wrong message ids'):
+        service.rewrite_scenario(scenario, _foci())
+    assert scenario == original
+
+
+def test_non_string_and_malformed_values_are_rejected():
+    with pytest.raises(ValueError, match="must be text, got dict"):
+        parse_rewritten_messages(
+            json.dumps({'rewritten_messages': {'sys': {'content': 'x'}}}), ['sys']
+        )
+    with pytest.raises(ValueError, match='rewritten_messages'):
+        parse_rewritten_messages(json.dumps({'messages': {'sys': 'x'}}), ['sys'])
+    with pytest.raises(ValueError, match='valid JSON'):
+        parse_rewritten_messages('You are a triage nurse.', ['sys'])
+
+
+def test_parse_accepts_markdown_fenced_json():
+    parsed = parse_rewritten_messages(
+        '```json\n{"rewritten_messages": {"sys": "Rewritten."}}\n```',
+        ['sys'],
     )
-    lower = instruction.lower()
-    assert 'do not preserve the original prompt\'s overall meaning' in lower
-    assert 'retained foci' in lower
-    # Must not include the old blanket that fought omission:
-    assert 'maintain the original structure and meaning' not in lower
+    assert parsed == {'sys': 'Rewritten.'}
 
 
-def test_instruction_lists_omit_foci_explicitly():
-    instruction = build_rewrite_instruction(
-        'A. B.',
-        [
-            {'focus': 'Keep', 'prompt_section': 'A.', 'rewrite_weight': 60},
-            {'focus': 'Drop', 'prompt_section': 'B.', 'rewrite_weight': 0},
-        ],
+def test_parse_strips_a_fence_around_a_message_value():
+    parsed = parse_rewritten_messages(
+        json.dumps({'rewritten_messages': {'sys': '```text\nRewritten.\n```'}}),
+        ['sys'],
     )
-    assert 'FOCI TO OMIT' in instruction
-    assert 'Drop' in instruction
-    assert '[omit]' in instruction
-    assert '[retain]' in instruction or 'retain' in instruction.lower()
+    assert parsed == {'sys': 'Rewritten.'}
 
 
-def test_reported_focus_and_rewrite_weight_are_separate_fields_in_payload_contract():
-    """Service prefers rewrite_weight over legacy weight; reported score is ignored for banding."""
-    instruction = build_rewrite_instruction(
-        'Keep me. Drop me.',
-        [
-            {
-                'focus': 'Keep',
-                'prompt_section': 'Keep me.',
-                'reported_focus_score': 0,  # introspective — must NOT force omit
-                'rewrite_weight': 80,
-            },
-            {
-                'focus': 'Drop',
-                'prompt_section': 'Drop me.',
-                'reported_focus_score': 90,  # high report — must NOT force retain
-                'rewrite_weight': 0,
-            },
-        ],
-    )
-    assert 'Keep: rewrite_weight=80.0% [emphasize]' in instruction
-    assert 'Drop: rewrite_weight=0.0% [omit]' in instruction
-    assert 'reported_focus_score' not in instruction  # not used as rewrite authority
+def test_cross_message_focus_is_rewritten_in_one_request():
+    scenario = _scenario()
 
+    def fake(**kwargs):
+        return _reply({'sys': 'Nurse. Concise.', 'dev': 'Escalate chest pain.'})
 
-def test_nonzero_emphasize_and_retain_language_intact():
-    instruction = build_rewrite_instruction(
-        'Low. Mid. High.',
-        [
-            {'focus': 'Low', 'prompt_section': 'Low.', 'rewrite_weight': 10},
-            {'focus': 'Mid', 'prompt_section': 'Mid.', 'rewrite_weight': 40},
-            {'focus': 'High', 'prompt_section': 'High.', 'rewrite_weight': 90},
-        ],
-    )
-    assert '[minimize]' in instruction
-    assert '[retain]' in instruction
-    assert '[emphasize]' in instruction
-    assert '70–100%' in instruction or '70-100%' in instruction
-    assert '30–69%' in instruction or '30-69%' in instruction
+    service, provider = _service(fake)
+    result = service.rewrite_scenario(scenario, [
+        {'focus': 'Chest pain', 'prompt_section': 'chest pain',
+         'spans': [{'message_id': 'sys'}, {'message_id': 'dev'}],
+         'rewrite_weight': 60},
+    ])
+    assert provider.chat_completion.call_count == 1
+    assert result['messages'][1]['content'] == 'Escalate chest pain.'
 
 
 def test_strip_rewrite_fences():
@@ -157,133 +309,71 @@ def test_looks_like_sample_completion_suggested_message():
     assert looks_like_sample_completion(original, good) is False
 
 
-def test_rewrite_prompt_omits_zero_weight_focus_with_deterministic_mock():
-    """Mock model deletes 0%-weight sections; service must surface that omission."""
-    prompt = (
-        "You are a triage nurse.\n\n"
-        "Always return valid JSON.\n\n"
-        "Be concise."
-    )
-    foci = [
-        {
-            'focus': 'Role',
-            'prompt_section': 'You are a triage nurse.',
-            'rewrite_weight': 50,
-        },
-        {
-            'focus': 'JSON schema',
-            'prompt_section': 'Always return valid JSON.',
-            'rewrite_weight': 0,
-        },
-        {
-            'focus': 'Concision',
-            'prompt_section': 'Be concise.',
-            'rewrite_weight': 50,
-        },
-    ]
-
-    captured = {}
-
-    def fake_chat_completion(**kwargs):
-        captured['messages'] = kwargs['messages']
-        user = kwargs['messages'][1]['content']
-        # Deterministic rewrite: drop any focus the instruction marks as omit.
-        parts = []
-        for item in foci:
-            w = float(item.get('rewrite_weight', item.get('weight', 0)))
-            if w > 0:
-                parts.append(item['prompt_section'])
-            else:
-                # Prove the model was told to omit — section must appear in OMIT list.
-                assert item['focus'] in user
-                assert 'omit' in user.lower()
-        return {'content': '\n\n'.join(parts)}
-
-    provider = MagicMock()
-    provider.chat_completion.side_effect = fake_chat_completion
-    assessor = SimpleNamespace(provider=provider, model='mock-model', provider_name='openai')
-    service = PromptRewriteService(assessor)
-
-    rewritten = service.rewrite_prompt(prompt, foci)
-
-    assert 'Always return valid JSON.' not in rewritten
-    assert 'You are a triage nurse.' in rewritten
-    assert 'Be concise.' in rewritten
-
-    system = captured['messages'][0]['content'].lower()
-    user = captured['messages'][1]['content'].lower()
-    assert '0%' in system or 'omit' in system
-    assert 'sample' in system or 'completion' in system
-    assert 'for low-weight foci (0-30%), mention' not in user
-    assert 'mention them briefly or implicitly' not in user
-    assert 'maintain the original structure and meaning' not in user
-
-
-def test_rewrite_retries_when_model_returns_sample_completion():
-    original = (
+def _long_prompt():
+    return (
         'You are a veterinary clinic assistant for Sackets Harbor Animal Hospital. '
         'Always respond with JSON containing suggestedMessage. Include hours, '
         'address at 213 Ambrose St, parking guidance, and booster scheduling help. '
         + ('Detailed policy text. ' * 25)
     )
-    foci = [
-        {'focus': 'Role', 'prompt_section': 'You are a veterinary clinic assistant', 'rewrite_weight': 80},
-        {'focus': 'JSON', 'prompt_section': 'Always respond with JSON', 'rewrite_weight': 40},
-    ]
-    bad = '{"suggestedMessage": "Thank you for your message! To schedule a booster."}'
+
+
+def test_rewrite_retries_once_when_model_returns_sample_completion():
+    original = _long_prompt()
     good = (
         'You are a veterinary clinic assistant. Prefer booster scheduling clarity. '
         'Always respond with JSON containing suggestedMessage. Include hours and address.'
         + (' Retained policy. ' * 20)
     )
-    responses = [{'content': bad}, {'content': good}]
+    responses = [
+        _reply({'legacy-prompt': '{"suggestedMessage": "Thank you for your message!"}'}),
+        _reply({'legacy-prompt': good}),
+    ]
+    service, provider = _service(lambda **kwargs: responses.pop(0))
 
-    provider = MagicMock()
-    provider.chat_completion.side_effect = lambda **kwargs: responses.pop(0)
-    assessor = SimpleNamespace(provider=provider, model='mock-model', provider_name='openai')
-    service = PromptRewriteService(assessor)
-
-    rewritten = service.rewrite_prompt(original, foci)
-    assert 'You are a veterinary clinic assistant' in rewritten
-    assert 'suggestedMessage": "Thank you' not in rewritten
+    rewritten = service.rewrite_prompt(original, [
+        {'focus': 'Role', 'prompt_section': 'You are a veterinary clinic assistant',
+         'rewrite_weight': 80},
+        {'focus': 'JSON', 'prompt_section': 'Always respond with JSON',
+         'rewrite_weight': 40},
+    ])
+    assert rewritten.startswith('You are a veterinary clinic assistant.')
     assert provider.chat_completion.call_count == 2
-    second_user = provider.chat_completion.call_args_list[1].kwargs['messages'][1]['content']
-    assert 'CRITICAL RETRY' in second_user
 
 
 def test_rewrite_raises_when_completion_persists():
-    original = (
-        'You are a veterinary clinic assistant. Always respond with JSON. '
-        + ('Policy. ' * 40)
+    original = _long_prompt()
+    service, provider = _service(
+        lambda **kwargs: _reply({
+            'legacy-prompt': '{"suggestedMessage": "Thanks for writing in about boosters."}'
+        })
     )
-    foci = [{'focus': 'Role', 'prompt_section': 'You are', 'rewrite_weight': 50}]
-    bad = '{"suggestedMessage": "Thanks for writing in about boosters."}'
-
-    provider = MagicMock()
-    provider.chat_completion.return_value = {'content': bad}
-    assessor = SimpleNamespace(provider=provider, model='mock-model', provider_name='openai')
-    service = PromptRewriteService(assessor)
-
     with pytest.raises(ValueError, match='sample reply or completion'):
-        service.rewrite_prompt(original, foci)
+        service.rewrite_prompt(original, [
+            {'focus': 'Role', 'prompt_section': 'You are', 'rewrite_weight': 50},
+        ])
+    assert provider.chat_completion.call_count == 2
 
 
-def test_legacy_weight_field_still_accepted():
-    instruction = build_rewrite_instruction(
-        'X',
-        [{'focus': 'X', 'prompt_section': 'X', 'weight': 0}],
+def test_legacy_prompt_rewrite_returns_text():
+
+    def fake(**kwargs):
+        return _reply({'legacy-prompt': 'You are a triage nurse. Be concise.'})
+
+    service, _ = _service(fake)
+    rewritten = service.rewrite_prompt(
+        'You are a triage nurse. Always return valid JSON. Be concise.',
+        [
+            {'focus': 'Role', 'prompt_section': 'You are a triage nurse.', 'weight': 20},
+            {'focus': 'JSON', 'prompt_section': 'Always return valid JSON.', 'weight': 0},
+            {'focus': 'Concision', 'prompt_section': 'Be concise.', 'weight': 60},
+        ],
     )
-    assert '[omit]' in instruction
+    assert rewritten == 'You are a triage nurse. Be concise.'
 
 
-def test_partition_by_band():
-    parts = PromptRewriteService.partition_by_band([
-        {'focus': 'a', 'weight': 0},
-        {'focus': 'b', 'rewrite_weight': 15},
-        {'focus': 'c', 'rewrite_weight': 50},
-        {'focus': 'd', 'rewrite_weight': 90},
-    ])
-    assert [x['focus'] for x in parts['omit']] == ['a']
-    assert [x['focus'] for x in parts['minimize']] == ['b']
-    assert [x['focus'] for x in parts['retain']] == ['c']
-    assert [x['focus'] for x in parts['emphasize']] == ['d']
+def test_empty_prompt_is_rejected():
+    service, provider = _service(lambda **kwargs: _reply({}))
+    with pytest.raises(ValueError, match='Prompt is required'):
+        service.rewrite_prompt('   ', [{'focus': 'x', 'rewrite_weight': 50}])
+    assert provider.chat_completion.call_count == 0
