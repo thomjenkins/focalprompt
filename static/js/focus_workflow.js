@@ -3,7 +3,7 @@
     'use strict';
     let state = null;
     let busy = false;
-    const assessmentProtocol = 'context-grounded-v2';
+    const assessmentProtocol = 'joint-budget-v3';
     const el = id => document.getElementById(id);
     const esc = value => escapeHtml(String(value == null ? '' : value));
     const number = (value, places = 1) => value == null ? '—' : Number(value).toFixed(places);
@@ -174,9 +174,18 @@
             + esc(assessment.assessment_temperature) + '</p>' : '';
         const normalized = assessment.budget_normalized ? '<p class="info-text">The model’s scores totaled '
             + esc(assessment.raw_score_total) + '. Rescaled proportionally to 100%; relative weights and zero scores are unchanged.</p>' : '';
-        const recovery = assessment.allocation_recovery?.calls > 0 ? '<p class="info-text">Completed with '
-            + esc(assessment.allocation_recovery.calls) + ' follow-up model call(s) to repair an incomplete or invalid assessment.</p>' : '';
-        return request + evidence + temperature + normalized + recovery
+        const recoveryCalls = (assessment.allocation_recovery?.calls || 0) + (assessment.allocation_recovery?.budget_retries || 0);
+        const recovery = recoveryCalls > 0 ? '<p class="info-text">Completed with '
+            + esc(recoveryCalls) + ' follow-up model call(s) to repair an incomplete or invalid assessment.</p>' : '';
+        const scores = assessment.foci.map(row => Number(row.score));
+        const uniform = scores.length > 1 && scores.every(Number.isFinite) && Math.max(...scores) - Math.min(...scores) < 1e-8;
+        const warnings = assessment.assessment_warnings?.length ? assessment.assessment_warnings
+            : uniform ? ['The model assigned identical weights to every focus. This result does not distinguish their contributions. Equal weights may be intentional or a model limitation; they are not evidence of equal causal influence. Consider a new run with a different baseline model.'] : [];
+        const warning = warnings.map(message => '<p class="info-text" role="status"><strong>Assessment limitation:</strong> '
+            + esc(message) + '</p>').join('');
+        const rationale = assessment.overall_summary ? '<p><strong>Allocation rationale:</strong> '
+            + esc(assessment.overall_summary) + '</p>' : '';
+        return warning + request + evidence + rationale + temperature + normalized + recovery
             + '<div class="workflow-table-wrap"><table class="workflow-table"><thead><tr><th>Focus</th><th>Budget</th><th>Justification</th></tr></thead><tbody>'
             + assessment.foci.map(row => '<tr><th scope="row">' + (row.focus_index + 1) + '. ' + esc(row.focus)
                 + (applicability[row.applicability] ? '<br><span class="info-text">' + applicability[row.applicability] + '</span>' : '')

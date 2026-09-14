@@ -1,12 +1,14 @@
 # Focus self-assessment
 
-Prediction uses the selected baseline model in a separate assessment call. It receives the complete ordered scenario, including retained chat, the output contract and the grounded focus definitions. It does not receive a generated output or previous assessment. Retained input conditions the allocation; the 100% budget is distributed only among the supplied foci.
+Prediction uses the selected baseline model in separate assessment calls. It receives the complete ordered scenario, including retained chat, the output contract and the grounded focus definitions. It does not receive a generated output or a previous experiment's assessment. Retained input conditions the allocation; the 100% budget is distributed only among the supplied foci.
 
-The `context-grounded-v2` assessment asks for:
+The `joint-budget-v3` method separates two tasks:
 
 - A short interpretation of the current request, supported by exact quotes from scenario messages. When retained user input exists, at least one quote must come from it.
 - A classification for every focus: `direct` contribution to content or action, `background` constraint on the response, or `inactive` for this case.
-- A case-specific justification and a percentage for each focus. Inactive foci receive zero. Equal weights are permitted when justified; the application does not impose a preferred ranking.
+- A case-specific justification for each focus, without numeric scores.
+
+After applicability and explanations cover the whole catalog, a separate call receives that assessment and the complete original scenario and focus definitions. It allocates one budget across **all** foci, returning a compact mapping from original focus indices to percentages and a short rationale for the allocation. Inactive foci receive zero. Equal weights are permitted; the application does not impose a preferred ranking.
 
 Retrospective calls use the same method and additionally receive one actual output. Justifications must describe what that output contains, including departures from the instructions, rather than what an ideal response should contain. The prospective assessment is withheld.
 
@@ -14,15 +16,19 @@ Prediction and retrospective assessment run at temperature **0.2**. Baseline gen
 
 Validation checks exact quotes, complete focus coverage, applicability and finite nonnegative scores. A positive score total is rescaled proportionally to 100%, preserving the model’s relative weights and zero scores. The raw scores and total are saved; the UI discloses rescaling when the total differs from 100 by more than 0.5. Validation does not judge semantic correctness or retry merely because a distribution looks unexpected. These are model self-reports with unknown error; matching a quote does not establish that the allocation is faithful to internal processing.
 
-If the model omits foci or returns invalid entries, valid rows are retained and the model is asked to complete only the missing or invalid original indices, at most eight per recovery call. Duplicate indices are ambiguous and must be reassessed. Every recovery call still receives the complete scenario and focus catalog, along with accepted raw allocations from this same assessment as a shared scale. A batch is not allocated its own 100% budget. Scores are normalized once, only after every focus has a valid model-supplied score and justification. Missing rows are never filled with assumed zeros. Malformed JSON falls back to these smaller requests; a complete all-zero allocation must be reassessed because it has no usable relative scale. Invalid request evidence can be repaired without changing accepted scores.
+Missing or invalid applicability entries and justifications are repaired in groups of up to eight original indices. Duplicate indices are ambiguous and must be reassessed. Every recovery call receives the full scenario and focus catalog. Scores are neither requested nor retained in this stage, even if the model emits them. Request evidence can be repaired independently.
 
-Recovery is bounded to twice the number of eight-focus batches. Persistent failure names the remaining missing or invalid foci. Successful results save `allocation_recovery` (follow-up call count and recovered indices), include all calls in token usage, and disclose recovery in the UI. Completing an allocation over multiple calls can affect the model's estimates; the metadata allows these cases to be distinguished from allocations completed in one call. This uses the same assessment protocol and does not feed a prospective result into a retrospective call.
+Numeric allocations are always requested for the entire catalog. An incomplete or invalid numeric response is discarded in full and retried, at most twice. Numeric responses from different calls are never merged or used as anchors. This corrects the v2 recovery failure where the model could give each batch a separate budget, or copy identical raw weights into missing rows, producing misleading normalized percentages such as 5.9% for each of seventeen foci.
+
+Applicability recovery is bounded to twice the number of eight-focus batches. Persistent failure names unresolved indices. `allocation_recovery` records applicability follow-up `calls`, recovered `focus_indices`, and `budget_retries`; all calls contribute to token usage. Normal execution uses two calls per assessment, increasing latency and usage relative to a successful v2 single-call assessment.
+
+Uniform allocations remain visible and receive an explicit limitation notice: they do not distinguish contributions among foci. This is diagnostic, not proof that the model is wrong. The app does not retry solely to force unequal scores. The notice also applies to older saved uniform results, and the UI displays the model's overall allocation rationale. A different baseline model requires a new experimental run so prospective and retrospective assessments stay comparable.
 
 Saved results include `assessment_protocol`. Earlier completed runs remain viewable and comparable within their original method. Continuing sampling or retrospective assessment with an earlier prediction requires a new prediction so a comparison does not silently mix methods. Export a run before starting over to keep its results.
 
 ## Evaluation
 
-The coverage regression probe uses a synthetic clothing-store scenario with seventeen foci. It checks prospective and retrospective coverage, deliberately removes five model-produced entries, and verifies that live recovery restores every original index while preserving the other raw scores:
+The regression probe uses a synthetic clothing-store scenario with seventeen foci. It varies only the retained chat between returns, delivery and damage requests, and reverses focus order. The relevant conditional focus must outrank the two unrelated conditional foci; complete but uniform allocations fail this probe. It also checks a retrospective assessment and deliberately removes five applicability entries to verify recovery followed by a new joint allocation:
 
 ```sh
 .venv/bin/python scripts/evaluate_focus_recovery.py --live \
@@ -30,6 +36,15 @@ The coverage regression probe uses a synthetic clothing-store scenario with seve
 ```
 
 This probe also requires inference credentials and makes billed calls. Its simulated omissions test recovery; they are not an estimate of the model's natural omission rate.
+
+The final `joint-budget-v3` probe on 2026-09-14 produced:
+
+| Model | Natural cases (six prospective, one retrospective) | Forced applicability recovery | Total |
+| --- | ---: | ---: | ---: |
+| GPT-3.5 Turbo | 7/7 | 0/1 | 7/8 |
+| GPT-4o mini | 7/7 | 1/1 | 8/8 |
+
+GPT-3.5's recovered result was structurally complete but assigned an unrelated delivery focus the same weight as returns. The app does not override that model judgement. GPT-4o mini performed better on this small fixture; this is not a general model ranking or a reliability guarantee. Both models retained the same scenario and model within each prospective/retrospective experiment. The selected baseline model is never changed automatically.
 
 The opt-in evaluation uses synthetic booking, medication-refill and injury chats with the same twelve foci. It reverses the focus list while preserving the scenario and matches results by focus name. Its relevance check asks whether the conditional focus for the current request outranks the two unrelated conditional foci; no exact percentage is ground truth.
 
@@ -41,7 +56,7 @@ The opt-in evaluation uses synthetic booking, medication-refill and injury chats
 
 This requires configured inference credentials and makes billed calls. Add `--repeats` for repeated measurements. Inspect the saved allocations and justifications as well as the relevance checks. This small fixture is a regression probe, not a general reliability benchmark or a validation of introspection.
 
-The final GPT-3.5 Turbo probe on 2026-09-14 passed all six relevance checks (one run per request and focus-list order):
+For historical context, a `context-grounded-v2` GPT-3.5 Turbo probe on 2026-09-14 passed six relevance checks on the smaller twelve-focus fixture (one run per request and focus-list order):
 
 | Request | Relevant focus | Original list | Reversed list |
 | --- | --- | ---: | ---: |
@@ -49,6 +64,6 @@ The final GPT-3.5 Turbo probe on 2026-09-14 passed all six relevance checks (one
 | Medication refill | Med requests | 50.0% | 66.7% |
 | Paw injury | First aid | 25.0% | 20.0% |
 
-The other two conditional foci received zero in each case. The percentages still vary with list order; passing these relevance checks does not establish order invariance or precise focus measurement.
+The other two conditional foci received zero in each case. Later seventeen-focus tests exposed flat and batch-distorted v2 allocations despite passing coverage checks. The percentages also vary with list order; passing these small relevance probes does not establish order invariance or precise focus measurement.
 
 The explicit instructions, separated context and evaluation approach follow the [OpenAI prompt engineering guidance](https://developers.openai.com/api/docs/guides/prompt-engineering).

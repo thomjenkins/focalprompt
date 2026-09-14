@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Opt-in billed coverage/recovery probe using a wholly synthetic retail scenario."""
+"""Opt-in billed coverage, recovery and chat-sensitivity probe with synthetic data."""
 
 import argparse
 import copy
 import json
 from pathlib import Path
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -48,6 +49,42 @@ def fixture():
     return scenario, foci
 
 
+def check_result(result, foci, expected):
+    assert len(result['foci']) == len(foci)
+    assert [row['focus_index'] for row in result['foci']] == list(range(len(foci)))
+    assert abs(sum(row['score'] for row in result['foci']) - 100) < 1e-8
+    scores = {row['focus']: row['score'] for row in result['foci']}
+    assert not result['uniform_allocation'], 'Uniform allocation does not distinguish contributions.'
+    assert all(scores[expected] > scores[other] for other in {'Returns', 'Delivery', 'Damage'} - {expected}), scores
+
+
+def run_case(args, case, chat, expected, reverse=False, output=None):
+    scenario, foci = fixture()
+    scenario['messages'][-1]['content'] = chat
+    if reverse:
+        foci.reverse()
+    phase = 'retrospective' if output else 'prospective'
+    row = {'case': case, 'phase': phase, 'order': 'reversed' if reverse else 'original', 'mode': 'natural'}
+    try:
+        service = FocusWorkflowService(get_assessor(model=args.model, provider=args.provider))
+        chat_call = service.assessment._chat
+        row['model_responses'] = []
+
+        def trace(messages, **kwargs):
+            response = chat_call(messages, **kwargs)
+            row['model_responses'].append(response)
+            return response
+
+        service.assessment._chat = trace
+        row['assessment'] = service.assess(scenario, foci, phase=phase, output=output)
+        check_result(row['assessment'], foci, expected)
+        row['passed'] = True
+    except (ValueError, AssertionError) as exc:
+        row.update(passed=False, error=str(exc))
+    print(case, phase, row['order'], 'PASS' if row['passed'] else 'FAIL: ' + row['error'], flush=True)
+    return row
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--live', action='store_true')
@@ -57,20 +94,33 @@ def main():
     args = parser.parse_args()
     if not args.live:
         parser.error('Pass --live to enable billed model calls with synthetic data.')
-    assessor = get_assessor(model=args.model, provider=args.provider)
     scenario, foci = fixture()
     results = []
-    for phase in ('prospective', 'retrospective'):
-        output = 'You can return the unworn jacket within thirty days with its tags. Have your order number ready; I can help arrange a prepaid label.' if phase == 'retrospective' else None
-        service = FocusWorkflowService(assessor)
-        full = service.assess(scenario, foci, phase=phase, output=output)
-        results.append({'phase': phase, 'mode': 'natural', 'assessment': full})
-        print(phase, 'natural:', len(full['foci']), 'foci;', full['allocation_recovery'], flush=True)
+    cases = [
+        ('returns', scenario['messages'][-1]['content'], 'Returns'),
+        ('delivery', 'My order is three days late. Could you check where the parcel is?', 'Delivery'),
+        ('damage', 'My new jacket arrived with a torn sleeve. How do I report the damage?', 'Damage'),
+    ]
+    def save():
+        args.output.write_text(json.dumps({'model': args.model, 'scenario': scenario, 'foci': foci,
+                                          'results': results}, indent=2))
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        jobs = [pool.submit(run_case, args, *case, reverse=reverse) for case in cases for reverse in (False, True)]
+        jobs.append(pool.submit(run_case, args, *cases[0], output='You can return the unworn jacket within thirty days with its tags. Have your order number ready; I can help arrange a prepaid label.'))
+        for job in as_completed(jobs):
+            results.append(job.result())
+            save()
 
-        # Replay model-produced raw scores with omissions, then let the real model repair them.
+    full = next((row.get('assessment') for row in results if row['case'] == 'returns'
+                 and row['phase'] == 'prospective' and row['order'] == 'original'), None)
+    if full:
+        service = FocusWorkflowService(get_assessor(model=args.model, provider=args.provider))
+
+        # Omit explanations, not budget entries. The entire budget must be generated anew.
         partial = copy.deepcopy(full)
         missing = {0, 3, 10, 15, 16}
-        partial['foci'] = [{**row, 'score': row['raw_score']} for row in full['foci'] if row['focus_index'] not in missing]
+        partial['foci'] = [{k: row[k] for k in ('focus_index', 'applicability', 'explanation')}
+                           for row in full['foci'] if row['focus_index'] not in missing]
         chat = service.assessment._chat
         first = True
 
@@ -79,21 +129,26 @@ def main():
             if first:
                 first = False
                 return {'content': json.dumps(partial)}
-            requested = json.loads(messages[1]['content'])['recovery']['requested_focus_indices']
-            response = chat(messages, **kwargs)
-            print(phase, 'recovery requested indices:', requested, flush=True)
-            return response
+            return chat(messages, **kwargs)
 
         service.assessment._chat = omit_then_chat
-        recovered = service.assess(scenario, foci, phase=phase, output=output)
-        assert len(recovered['foci']) == len(foci)
-        assert abs(sum(row['score'] for row in recovered['foci']) - 100) < 1e-8
-        assert set(recovered['allocation_recovery']['focus_indices']) == missing
-        for i in set(range(len(foci))) - missing:
-            assert recovered['foci'][i]['raw_score'] == full['foci'][i]['raw_score']
-        results.append({'phase': phase, 'mode': 'forced_omissions', 'assessment': recovered})
-        args.output.write_text(json.dumps({'scenario': scenario, 'foci': foci, 'results': results}, indent=2))
-        print(phase, 'forced omissions: PASS;', recovered['allocation_recovery'], flush=True)
+        row = {'case': 'returns', 'phase': 'prospective', 'mode': 'forced_omissions'}
+        try:
+            recovered = service.assess(scenario, foci, phase='prospective')
+            row['assessment'] = recovered
+            check_result(recovered, foci, 'Returns')
+            assert set(recovered['allocation_recovery']['focus_indices']) == missing
+            for i in set(range(len(foci))) - missing:
+                assert recovered['foci'][i]['explanation'] == full['foci'][i]['explanation']
+            row['passed'] = True
+        except (ValueError, AssertionError) as exc:
+            row.update(passed=False, error=str(exc))
+        results.append(row)
+        save()
+        print('Forced omissions:', 'PASS' if row['passed'] else 'FAIL: ' + row['error'], flush=True)
+    print(f"{sum(row['passed'] for row in results)}/{len(results)} checks passed", flush=True)
+    if len(results) != 8 or not all(row['passed'] for row in results):
+        raise SystemExit(1)
 
 
 if __name__ == '__main__':
