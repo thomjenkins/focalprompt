@@ -33,6 +33,26 @@ def test_lab_and_experiments(client):
     assert b'JSON schema' in r.data
 
 
+def test_open_lab_in_chrome(monkeypatch, capsys):
+    from app_new import open_lab_in_chrome
+
+    command = []
+    monkeypatch.setattr('app_new.sys.platform', 'darwin')
+    monkeypatch.setattr(
+        'app_new.subprocess.Popen',
+        lambda args, **_kwargs: command.append(args),
+    )
+
+    open_lab_in_chrome('0.0.0.0', 5001)
+
+    assert command == [
+        ['open', '-a', 'Google Chrome', 'http://127.0.0.1:5001/lab']
+    ]
+    assert 'Opened Focal Prompt lab in Chrome: http://127.0.0.1:5001/lab' in (
+        capsys.readouterr().err
+    )
+
+
 def test_canonical_json_loads():
     path = Path('examples/canonical/vet-triage-reported-vs-revealed.json')
     data = json.loads(path.read_text())

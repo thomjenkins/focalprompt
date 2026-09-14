@@ -78,9 +78,10 @@ def main(argv: list[str] | None = None) -> int:
         import os
         os.environ.setdefault('HOST', args.host)
         os.environ.setdefault('PORT', str(args.port))
-        from app_new import app
+        from app_new import app, open_lab_in_chrome
         from waitress import serve
         print(f'Focal Prompt UI → http://{args.host}:{args.port}/', file=sys.stderr)
+        open_lab_in_chrome(args.host, args.port)
         serve(app, host=args.host, port=args.port)
         return 0
 
