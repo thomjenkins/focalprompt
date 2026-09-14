@@ -328,6 +328,10 @@ def ablation_score():
             result_data = service.score_scenario_from_samples(
                 scenario, foci_list, baseline_outputs, ablated_outputs, **score_kwargs
             )
+        if data.get('focus_workflow') is not None:
+            from services.focus_workflow_service import attach_focus_workflow
+            attach_focus_workflow(result_data, data['focus_workflow'], scenario, foci_list,
+                                  request_inference_fields(data, model_role='mut'), temperature)
         checkpoint_service = CheckpointService()
         session_id = str(uuid.uuid4())
         checkpoint_data = {
@@ -346,7 +350,7 @@ def ablation_score():
             'single_ablation',
         )
         return _analysis_json(result_data)
-    except ScenarioValidationError as e:
+    except ValueError as e:
         return jsonify({'error': str(e)}), 400
     except Exception as e:
         return internal_error('ablation_score', e)

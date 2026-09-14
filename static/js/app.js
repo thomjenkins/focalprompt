@@ -2539,6 +2539,7 @@ function repairFocusSpan(index) {
 // Render Foci
 function renderFoci() {
     syncPromptSpanTracking();
+    window.FocalPromptWorkflow?.refreshValidity();
     if (foci.length === 0) {
         fociContainer.innerHTML = '<p class="empty-state">No foci defined yet. Click "Auto-Detect Foci" or "Add Focus Manually" to get started.</p>';
         promptVisualization.classList.add('hidden');
@@ -3275,8 +3276,8 @@ function renderAssessment(data) {
     const allFoci = [];
     
     // For each original focus, try to find a matching assessed focus
-    foci.forEach(originalFocus => {
-        const matched = matchFocus(originalFocus, data.foci);
+    foci.forEach((originalFocus, index) => {
+        const matched = data.foci.find(row => row.focus_index === index) || matchFocus(originalFocus, data.foci);
         
         if (matched) {
             // Use the matched assessment result, but keep original focus name and section
@@ -3299,6 +3300,7 @@ function renderAssessment(data) {
     
     // Also include any assessed foci that don't match original foci (in case assessment found new ones)
     data.foci.forEach(assessedFocus => {
+        if (Number.isInteger(assessedFocus.focus_index)) return;
         const alreadyIncluded = allFoci.some(f => 
             matchFocus({focus: f.focus, prompt_section: f.prompt_section}, [assessedFocus])
         );
@@ -4012,7 +4014,7 @@ function isClientAttributableFocus(focus) {
     return true;
 }
 
-async function runPacedAblation(inference, fociList, cfg, onProgress, inputs, section = 'ablation') {
+async function runPacedAblation(inference, fociList, cfg, onProgress, inputs, section = 'ablation', focusWorkflow = null) {
     const modelSelection = { ...getSectionModel(section) };
     const report = typeof onProgress === 'function'
         ? onProgress
@@ -4024,7 +4026,7 @@ async function runPacedAblation(inference, fociList, cfg, onProgress, inputs, se
         const nBaseline = cfg.n_baseline;
         const nAblated = cfg.n_ablated;
         const jobs = [];
-        for (let i = 0; i < nBaseline; i++) {
+        for (let i = 0; i < (focusWorkflow ? 0 : nBaseline); i++) {
             jobs.push({ kind: 'baseline', focusIndex: null, slot: i });
         }
         for (let focusIndex = 0; focusIndex < fociList.length; focusIndex++) {
@@ -4045,13 +4047,14 @@ async function runPacedAblation(inference, fociList, cfg, onProgress, inputs, se
             return sample;
         });
 
-        const baselineOutputs = [];
+        const baselineOutputs = focusWorkflow ? focusWorkflow.samples.map(sample => sample.content) : [];
         const ablatedOutputs = {};
-        let inputTokens = 0;
-        let outputTokens = 0;
-        let boundScenario = null;
-        let inputBinding = null;
-        const sampleScenarioMetadata = [];
+        let inputTokens = focusWorkflow ? focusWorkflow.samples.reduce((sum, sample) => sum + (sample.usage?.prompt_tokens || 0), 0) : 0;
+        let outputTokens = focusWorkflow ? focusWorkflow.samples.reduce((sum, sample) => sum + (sample.usage?.completion_tokens || 0), 0) : 0;
+        let boundScenario = focusWorkflow ? (focusWorkflow.samples[0]?.scenario || inference) : null;
+        let inputBinding = focusWorkflow ? focusWorkflow.samples[0]?.input_binding : null;
+        const sampleScenarioMetadata = focusWorkflow
+            ? focusWorkflow.samples.map(sample => sample.scenario_metadata).filter(Boolean) : [];
         for (let i = 0; i < jobs.length; i++) {
             const job = jobs[i];
             const sample = samples[i];
@@ -4078,6 +4081,7 @@ async function runPacedAblation(inference, fociList, cfg, onProgress, inputs, se
                 foci: fociList,
                 baseline_outputs: baselineOutputs,
                 ablated_outputs: ablatedOutputs,
+                focus_workflow: focusWorkflow || undefined,
                 temperature: cfg.temperature,
                 input_tokens: inputTokens,
                 output_tokens: outputTokens
@@ -4147,7 +4151,9 @@ if (runAblationBtn) {
         );
         
         try {
-            const data = await runPacedAblation(scenario, foci, cfg);
+            const focusWorkflow = window.FocalPromptWorkflow
+                ? window.FocalPromptWorkflow.forAblation(scenario, foci, cfg, getSectionModel('ablation')) : null;
+            const data = await runPacedAblation(scenario, foci, cfg, null, null, 'ablation', focusWorkflow);
             renderAblationResults(data);
             
         } catch (error) {
@@ -4166,6 +4172,7 @@ if (runAblationBtn) {
 // Render Ablation Results
 function renderAblationResults(data, options) {
     window.singleAblationResults = data;
+    window.FocalPromptWorkflow?.renderAblationComparison(data);
     if (!ablationResults) return;
     if (!window.FocalPromptResults) {
         ablationResults.innerHTML = '<p class="empty-state">Results renderer failed to load.</p>';
@@ -4727,7 +4734,7 @@ async function runRefineAblationStability(focusIndex, data) {
 async function runAblationOutcomeDispersion(data) {
     const criterion = evalCriteriaInput ? evalCriteriaInput.value.trim() : '';
     if (!criterion) {
-        showErrorModal('Enter evaluation criteria in section 9 first, or provide a behavioural criterion.');
+        showErrorModal('Enter task quality evaluation criteria first, or provide a behavioural criterion.');
         return;
     }
     const baselines = (data && data.baseline_outputs && data.baseline_outputs.length)
@@ -5191,7 +5198,7 @@ function countSampledOutputs(total, fraction) {
 
 function summarizeQualityEvalOutputs(outputs) {
     if (!outputs || !outputs.length) {
-        return 'Run Experiment B (section 6) first. Baseline and ablated samples from that run will be scored here against your criteria.';
+        return 'Run ablation (step 5) first. Baseline and ablated samples from that run will be scored here against your criteria.';
     }
     const baselineCount = outputs.filter(function (o) { return o.group === 'baseline'; }).length;
     const ablatedRows = outputs.filter(function (o) { return o.group === 'ablated'; });
@@ -5218,7 +5225,7 @@ function summarizeQualityEvalOutputs(outputs) {
             text += ' (' + focusNames.join(', ') + ')';
         }
     }
-    text += '. Section 3 output is not included.';
+    text += '. Separate single outputs are not included.';
     return text;
 }
 
@@ -5360,7 +5367,7 @@ function refreshFocusOrderControls(abData) {
         focusOrderSweepFocus.disabled = true;
         focusOrderSweepFocus.innerHTML = '<option value="">— run Experiment B first —</option>';
         if (focusOrderCostEstimate) {
-            focusOrderCostEstimate.textContent = 'Run Experiment B (section 6) first to reuse baseline samples.';
+            focusOrderCostEstimate.textContent = 'Run ablation (step 5) first to reuse baseline samples.';
         }
         return;
     }
@@ -5384,7 +5391,7 @@ async function updateFocusOrderCostEstimate() {
     const ab = window.singleAblationResults;
     const baselines = (ab && ab.baseline_outputs) ? ab.baseline_outputs : [];
     if (!baselines.length) {
-        focusOrderCostEstimate.textContent = 'Run Experiment B (section 6) first to reuse baseline samples.';
+        focusOrderCostEstimate.textContent = 'Run ablation (step 5) first to reuse baseline samples.';
         return;
     }
     const k = focusOrderKSel ? parseInt(focusOrderKSel.value, 10) || 5 : 5;
@@ -5427,7 +5434,7 @@ if (runFocusOrderBtn) {
             ? ab.baseline_outputs
             : (ab && ab.baseline_output ? [ab.baseline_output] : []);
         if (!baselines.length || !foci.length) {
-            showErrorModal('Run Experiment B (section 6) with tagged foci first.');
+            showErrorModal('Run ablation (step 5) with tagged foci first.');
             return;
         }
         let scenario;
@@ -5506,7 +5513,7 @@ if (runQualityEvalBtn) {
         const outputs = collectOutputsForQualityEval();
         if (!outputs.length) {
             showErrorModal(
-                'No Experiment B outputs to evaluate. Run ablation analysis in section 6 first.'
+                'No Experiment B outputs to evaluate. Run ablation analysis in step 5 first.'
             );
             return;
         }
@@ -6912,6 +6919,21 @@ async function loadCheckpointData(sessionId, checkpointType = 'batch_analysis') 
         } else if (checkpointType === 'single_ablation') {
             // Load single ablation analysis results
             const resultData = checkpoint.result_data || checkpoint;
+            if (resultData.focus_workflow) {
+                const workflow = resultData.focus_workflow;
+                const context = workflow.context;
+                setMainScenario(context.scenario);
+                foci = structuredClone(context.foci);
+                for (const section of ['output', 'ablation']) {
+                    sectionModelOverrides[section] = { ...context.model };
+                }
+                saveSectionModels();
+                renderSectionModelSelectors();
+                window.FocalPromptExperiment?.applyState(context);
+                renderFoci();
+                window.FocalPromptWorkflow?.restore(workflow);
+                if (workflow.summary?.average) renderAssessment(workflow.summary.average);
+            }
             
             // Store globally for optimization analysis
             window.singleAblationResults = resultData;
@@ -8532,6 +8554,7 @@ function applyAblationExperimentConfig(config, scope) {
     if (!config || !scope) {
         return;
     }
+    window.FocalPromptExperiment?.applyState(config);
     const tempEl = scope.querySelector('.exp-temperature');
     const baseEl = scope.querySelector('.exp-n-baseline');
     const ablEl = scope.querySelector('.exp-n-ablated');
@@ -8557,6 +8580,7 @@ function collectPromptAnalysisWorkspace() {
         output: outputInput ? outputInput.value : '',
         foci: foci,
         assessment_payload: window.lastAssessmentApiPayload || null,
+        focus_workflow: window.FocalPromptWorkflow?.collect() || null,
         focus_control: {
             weights: { ...focusWeights },
             assessment_foci: assessmentFoci.map(function (f) { return { ...f }; }),
@@ -8791,6 +8815,7 @@ function restorePromptAnalysisWorkspace(pa) {
     if (pa.ablation_config) {
         applyAblationExperimentConfig(pa.ablation_config, document.getElementById('prompt-analysis-tab'));
     }
+    window.FocalPromptWorkflow?.restore(pa.focus_workflow || null);
     if (pa.single_ablation) {
         window.singleAblationResults = pa.single_ablation;
         const skipExperimentC = !!(pa.experiment_c && pa.experiment_c.comparison);

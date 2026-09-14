@@ -1,5 +1,6 @@
 # Virtual environment
 venv/
+.venv/
 env/
 ENV/
 
@@ -60,5 +61,4 @@ demo/node_modules/
 
 # Local git worktree for running an old commit side-by-side
 original-snapshot/
-
 

@@ -66,6 +66,18 @@ python app_new.py
 
 Open `http://127.0.0.1:5001` (local toolkit). On a hosted deploy with `FOCALPROMPT_HOSTED_MODE=1`, `/` is the research landing page and `/lab` is the analysis UI.
 
+The Prompt Analysis lab follows five steps:
+
+1. Label foci in Analyse messages, keeping user/chat messages as Retain.
+2. Ask the baseline model for a prospective 100% focus budget and a short justification for every focus, using the full scenario before generating any outputs.
+3. Sample **10 baseline outputs at temperature 0.7** by default (both configurable). Inspect baseline dispersion, pairwise distances, a similarity projection and possible bimodal/multimodal groupings.
+4. Independently assess each output with the same model. Show every retrospective allocation, the equal-weight mean and sample standard deviation, and percentage-point differences from the prospective budget. Predictions are never included in generation or retrospective assessment requests.
+5. Reuse those exact baseline outputs for ablation. Compare descriptive shares of observed shifts with both self-assessments, alongside the existing raw shifts, permutation tests, q-values and noise diagnostics. Continue with the existing reports, rewrites, order and quality tests.
+
+Self-reports are not measured internal attention. Normalized ablation shifts are descriptive sensitivity shares, not a recovered attention budget; overlapping effects need not be additive. Output groups are exploratory (cosine average-link clustering, 2–5 candidate groups, minimum two samples per group, silhouette ≥ 0.5, between/within ratio ≥ 2 and distance gap ≥ 0.01). Ten samples cannot establish a true mode count; no detected split does not establish unimodality. The existing baseline-stability heuristic is also retained in the diagnostics payload.
+
+Changed scenario text, foci, model, baseline count or temperature starts a new experiment at step 2. Successful partial samples and retrospective assessments survive retries. Workspace exports preserve all five stages; ablation checkpoints and result exports include the full comparison. Existing single-output APIs and batch workflows remain available.
+
 **CLI / Python**
 
 ```bash

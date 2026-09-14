@@ -33,6 +33,66 @@ from utils.inference_scenario import (
 assessment_bp = Blueprint('assessment', __name__)
 
 
+@assessment_bp.route('/api/focus-self-assessment', methods=['POST'])
+def focus_self_assessment():
+    """One independent prospective or output-specific retrospective self-report."""
+    from services.focus_workflow_service import FocusWorkflowService
+    from core.ai_gateway_provider import RateLimitError
+    try:
+        data = request.json or {}
+        scenario, _legacy = scenario_from_request(data)
+        phase = data.get('phase')
+        if phase not in ('prospective', 'retrospective') or not data.get('foci'):
+            return jsonify({'error': 'A valid phase and foci are required.'}), 400
+        if phase == 'prospective' and any(data.get(k) for k in ('output', 'outputs', 'baseline_outputs')):
+            return jsonify({'error': 'Prospective assessment must not receive generated outputs.'}), 400
+        if phase == 'retrospective' and not isinstance(data.get('output'), str):
+            return jsonify({'error': 'A generated output is required.'}), 400
+        assessor = get_assessor(data=request_inference_fields(data, model_role='mut'))
+        result = FocusWorkflowService(assessor).assess(
+            scenario, data['foci'], phase=phase, output=data.get('output'), inputs=data.get('inputs'),
+        )
+        return jsonify(result)
+    except RateLimitError as exc:
+        return jsonify({'error': str(exc), 'retry_after': getattr(exc, 'retry_after', None) or 8}), 429
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    except Exception as exc:
+        return internal_error('focus_self_assessment', exc)
+
+
+@assessment_bp.route('/api/focus-comparison', methods=['POST'])
+def focus_comparison():
+    from services.focus_workflow_service import compare_assessments
+    try:
+        data = request.json or {}
+        return jsonify(compare_assessments(data.get('foci') or [], data.get('prospective'),
+                                          data.get('retrospective') or []))
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+
+
+@assessment_bp.route('/api/baseline-diagnostics', methods=['POST'])
+def baseline_diagnostics():
+    from services.embedding_service import EmbeddingService
+    from utils.inference_config import resolve_embedding_config
+    from utils.output_distribution import describe_output_distribution
+    try:
+        data = request.json or {}
+        outputs = data.get('baseline_outputs')
+        if (not isinstance(outputs, list) or not 1 <= len(outputs) <= 50
+                or any(not isinstance(s, str) or not s.strip() for s in outputs)):
+            return jsonify({'error': 'Provide 1–50 non-empty baseline outputs.'}), 400
+        config = resolve_embedding_config(request_inference_fields(data, model_role='mut'))
+        embeddings, tokens = EmbeddingService(**config).batch_embeddings_with_usage(outputs)
+        return jsonify({**describe_output_distribution(embeddings),
+                        'embedding_model': config['model'], 'embedding_tokens': tokens})
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    except Exception as exc:
+        return internal_error('baseline_diagnostics', exc)
+
+
 @assessment_bp.route('/api/detect-foci', methods=['POST'])
 def detect_foci():
     """Use an agent to automatically detect foci from the prompt."""

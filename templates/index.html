@@ -133,12 +133,12 @@
                             
                             <h3 style="margin-top: 0; color: var(--primary-color);">Getting Started</h3>
                             
-                            <p><strong>1. Build an ordered inference scenario</strong></p>
+                            <p><strong>Build an ordered inference scenario</strong></p>
                             <p>
                                 Add system, developer, user, and assistant message cards in the exact order sent to the model. Instruction messages must come first and at least one user message is required.
                             </p>
                             
-                            <p><strong>2. Choose Analyse and Retain messages</strong></p>
+                            <p><strong>1. Label foci in Analyse messages; keep chat as Retain</strong></p>
                             <p>
                                 Foci are grounded only in <strong>Analyse</strong> messages. <strong>Retain</strong> messages stay unchanged across experimental arms. Their optional <strong>Input name</strong> identifies a batch input column, not the message itself.
                             </p>
@@ -149,33 +149,17 @@
                                 Tag the Analyse content into points of focus or "foci" and aim for close to <strong>100% coverage</strong>. The model can propose foci, but review the exact message-relative spans before running experiments.
                             </p>
                             
-                            <p><strong>3. Generate Output</strong></p>
-                            <p>
-                                Generate a single output with the ordered roles intact. If a strict JSON Schema output contract is enabled, every result is parsed and validated locally before the experiment continues.
-                            </p>
-                            
-                            <h3 style="margin-top: 32px; color: var(--primary-color);">Experiments A / B / C</h3>
-
-                            <p><strong>Experiment A — Reported focus (Assess Focus Distribution)</strong></p>
-                            <p>
-                                Score a single completion against your foci. Scores are the model’s behavioural self-report of how that output attended to each focus — not transformer attention weights.
-                            </p>
-                            
-                            <p><strong>5. Adjust Intended Focus</strong></p>
-                            <p>
-                                Use sliders to set an intended focus mix; rewrite attempts to reflect that mix. Generate a new output to compare.
-                            </p>
-                            
-                            <p><strong>Experiment B — Perturbation sensitivity (Ablation Analysis)</strong></p>
-                            <p>
-                                Delete each verified focus span, resample, embed outputs, and test whether the embedding shift exceeds a permutation null. q-values are Benjamini–Hochberg-adjusted across tested foci.
-                            </p>
-                            <p><strong>Experiment C — Reported vs revealed</strong></p>
-                            <p>
-                                After Experiments A and B, the <strong>Results report</strong> compares reported
-                                scores with revealed influence (dumbbell chart, focus map, concordance detail).
-                                There is no separate Experiment C step in the lab flow.
-                            </p>
+                            <p><strong>2. Predict prospective focus</strong></p>
+                            <p>Before sampling, the baseline model uses the full scenario and retained chat to predict a 100% budget across the labelled foci. Each focus gets a short justification. No generated outputs are provided.</p>
+                            <p><strong>3. Generate baseline outputs and inspect noise</strong></p>
+                            <p>Default: 10 independent outputs at temperature 0.7. Both settings are configurable. Ordered roles, retained input and any strict JSON Schema contract stay intact. Inspect pairwise cosine distances, the projected similarity map and candidate output groups. Grouping is exploratory; ten outputs cannot establish the true number of modes.</p>
+                            <p><strong>4. Assess retrospective focus</strong></p>
+                            <p>The same model independently assesses each output against the full scenario. Each assessment allocates 100% and explains each focus. The prediction is withheld to avoid anchoring. Compare the per-output results and their mean with the prospective budget, using percentage-point differences. These are behavioural self-reports, not transformer attention weights.</p>
+                            <p><strong>5. Ablate and compare</strong></p>
+                            <p>Reuse those baseline outputs, delete each verified focus span, sample the ablated scenarios and run the existing permutation tests with Benjamini–Hochberg correction. Compare descriptive shares of observed shifts against both prospective and retrospective budgets. Raw shifts, q-values and baseline noise remain available.</p>
+                            <p>Changing the scenario, foci, baseline model, count or temperature requires a new prediction. Partial sampling and assessments can be retried without repeating successful calls. Export the workspace to preserve the complete run.</p>
+                            <p><strong>Continue exploring</strong></p>
+                            <p>The results report, rewrite sliders, order sensitivity, task quality evaluation, batch analysis and agent builder remain available. A separate single-output assessment is also available. The report's reported-focus series uses the retrospective mean after step 4.</p>
                             <p style="background: #e8f4f8; padding: 12px; border-radius: 6px; border-left: 4px solid #0c5460; margin: 16px 0;">
                                 FocalPrompt detects whether removing each focus shifts the model's behaviour in semantic embedding space. It does not measure correctness, quality, or safety, and it does not tell you what to delete.
                             </p>
@@ -227,7 +211,9 @@
             <nav class="lab-jump-nav" aria-label="Lab sections">
                 <a href="#lab-prompt">Prompt</a>
                 <a href="#lab-foci">Foci</a>
-                <a href="#lab-experiment-a">A · Reported</a>
+                <a href="#lab-prospective">Predict</a>
+                <a href="#lab-baseline">Baseline</a>
+                <a href="#lab-experiment-a">Retrospective</a>
                 <a href="#lab-experiment-b">B · Ablation</a>
                 <a href="#lab-results-report">Results</a>
                 <a href="#lab-focus-order">Order</a>
@@ -241,7 +227,7 @@
             <!-- Prompt Section -->
             <section class="card" id="lab-prompt">
                     <div class="card-header">
-                        <h2>1. Build the inference scenario</h2>
+                        <h2>Inference scenario</h2>
                         <div style="display: flex; gap: 8px; align-items: center;">
                             <div id="coverage-indicator" class="coverage-indicator hidden" title="Unique coverage: how much of the prompt is represented by at least one focus. Focus density: total focus coverage including overlaps (may exceed 100%).">
                                 <span id="coverage-text">Unique <strong id="coverage-percent">0%</strong> · Density <strong id="coverage-density">0%</strong></span>
@@ -352,7 +338,7 @@
             <!-- Foci Section -->
             <section class="card" id="lab-foci">
                 <div class="card-header">
-                    <h2>2. Define Foci</h2>
+                    <h2>1. Label the prompt foci</h2>
                     <div class="section-model-control" data-model-section="foci"></div>
                     <div class="button-group">
                         <button id="detect-foci-btn" class="btn btn-primary">
@@ -385,39 +371,53 @@
                 </div>
             </section>
 
-            <!-- Output Section -->
-            <section class="card">
+            <section class="card" id="lab-prospective">
                 <div class="card-header">
-                    <h2>3. Enter or Generate Output</h2>
-                    <div class="section-model-control" data-model-section="output"></div>
-                    <div class="button-group">
-                        <button id="generate-output-btn" class="btn btn-primary">
-                            ✨ Generate Output
-                        </button>
-                    </div>
+                    <h2>2. Predict focus before generating</h2>
+                    <button id="predict-focus-btn" class="btn btn-primary">Predict Focus</button>
                 </div>
                 <div class="card-body">
-                    <textarea 
-                        id="output-input" 
-                        class="textarea-large" 
-                        placeholder="Enter LLM output here, or click 'Generate Output' to create one..."
-                        rows="8"
-                    ></textarea>
+                    <p class="info-text">Given the full scenario and retained chat, the model predicts a 100% budget across the labelled foci, with a short justification for each. Steps 2–4 use the baseline model selected below.</p>
+                    <p id="focus-workflow-status" class="info-text" role="status"></p>
+                    <div id="prospective-results"><p class="empty-state">Label foci, then predict their contribution before sampling outputs.</p></div>
+                </div>
+            </section>
+
+            <section class="card" id="lab-baseline">
+                <div class="card-header">
+                    <h2>3. Sample baseline outputs</h2>
+                    <div class="section-model-control" data-model-section="output"></div>
+                    <button id="sample-baseline-btn" class="btn btn-primary">Generate Baseline Outputs</button>
+                </div>
+                <div class="card-body">
+                    <p class="info-text">Independent completions of the unchanged scenario. Inspect baseline noise, similarities and possible response modes before ablation. Predictions are never included in generation requests.</p>
+                    <div class="experiment-config" data-foci-source="ablation">
+                        <div class="experiment-sample-inputs">
+                            <label>Baseline outputs <input class="exp-n-baseline" type="number" min="5" max="50" step="1" value="10"></label>
+                            <label>Temperature <input class="exp-temperature" type="number" min="0.1" max="2" step="0.1" value="0.7"></label>
+                        </div>
+                        <p class="exp-temperature-error hidden" role="alert"></p>
+                    </div>
+                    <div id="baseline-results"><p class="empty-state">Default: 10 outputs at temperature 0.7.</p></div>
+                    <details class="workflow-manual-output">
+                        <summary>Inspect or generate a separate single output</summary>
+                        <button id="generate-output-btn" class="btn btn-outline btn-small">Generate Output</button>
+                        <textarea id="output-input" class="textarea-large" placeholder="Optional output for the single-output assessment below…" rows="6"></textarea>
+                    </details>
                 </div>
             </section>
 
             <!-- Assessment Section -->
             <section class="card" id="lab-experiment-a">
                 <div class="card-header">
-                    <h2>4. Experiment A — Reported focus</h2>
+                    <h2>4. Assess retrospective focus</h2>
                     <div class="section-model-control" data-model-section="reported"></div>
                     <div class="button-group">
                         <button id="load-assessment-checkpoint-btn" class="btn btn-outline">
                             📂 Load Assessment Checkpoint
                         </button>
-                        <button id="assess-btn" class="btn btn-success">
-                            📊 Assess Focus
-                        </button>
+                        <button id="retrospective-focus-btn" class="btn btn-success">Assess Every Baseline Output</button>
+                        <button id="assess-btn" class="btn btn-outline btn-small">Assess Single Output</button>
                         <button id="compare-intent-btn" class="btn btn-primary hidden" title="Compare the assessed output to your intended focus distribution (only available after generating output from adjusted prompt)">
                             📈 Compare to Intended Focus
                         </button>
@@ -425,12 +425,65 @@
                 </div>
                 <div class="card-body">
                     <p class="info-text">
-                        Model self-assessment of one completion (behavioural report). This is not transformer attention.
-                        After ablation (B), reported scores feed the <a href="#lab-results-report">Results report</a> —
-                        you do not need a separate Experiment C step.
+                        Each baseline output gets an independent 100% focus self-assessment and short justifications. Compare their average with the prospective prediction. These are behavioural self-reports, not internal attention measurements. The model selector here applies only to the optional single-output assessment.
                     </p>
+                    <div id="retrospective-results"></div>
                     <div id="assessment-results" class="assessment-results">
-                        <p class="empty-state">Click "Assess Focus" to see the results.</p>
+                        <p class="empty-state">Complete steps 2 and 3, then assess every baseline output.</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Ablation Analysis Section -->
+            <section class="card" id="lab-experiment-b">
+                <div class="card-header">
+                    <h2>5. Ablation — compare revealed sensitivity</h2>
+                    <div class="section-model-control" data-model-section="ablation"></div>
+                    <div class="button-group">
+                        <button id="load-ablation-checkpoint-btn" class="btn btn-outline">
+                            📂 Load Ablation Checkpoint
+                        </button>
+                        <button id="run-ablation-btn" class="btn btn-primary" disabled>
+                            🔬 Run Ablation Analysis
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <p class="info-text">
+                        Leave-one-focus-out ablation with permutation testing. Detects whether removing each focus shifts behaviour in embedding space — not correctness, quality, or safety, and not a delete recommendation. Reported vs revealed comparison appears in the <strong>Results report</strong> below (Overview + Focus map), not as a separate experiment step.
+                    </p>
+                    <div class="experiment-config" data-foci-source="ablation" data-reuse-baseline="true">
+                        <h3 class="experiment-config-title">Experiment configuration</h3>
+                        <div class="experiment-field">
+                            <label for="ablation-temperature">Temperature</label>
+                            <input id="ablation-temperature" class="exp-temperature" type="number" min="0.1" max="2.0" step="0.1" value="0.7">
+                            <p class="exp-temperature-help"></p>
+                            <p class="exp-temperature-high hidden"></p>
+                            <p class="exp-temperature-error hidden" role="alert"></p>
+                        </div>
+                        <div class="experiment-field experiment-samples">
+                            <div class="experiment-sample-inputs">
+                                <label>Baseline samples
+                                    <input class="exp-n-baseline" type="number" min="5" max="50" step="1" value="10">
+                                </label>
+                                <label>Ablated samples per focus
+                                    <input class="exp-n-ablated" type="number" min="3" max="25" step="1" value="5">
+                                </label>
+                                <button type="button" class="exp-suggestion-chip" title="">suggested for this temperature</button>
+                            </div>
+                            <p class="exp-suggestion-tooltip"></p>
+                            <p class="exp-cost-line"></p>
+                            <p class="exp-power-line hidden"></p>
+                        </div>
+                        <details class="experiment-advanced">
+                            <summary>Advanced</summary>
+                            <p class="exp-permutation-disclosure"></p>
+                        </details>
+                    </div>
+                    <div id="focus-ablation-comparison"></div>
+                    <div id="lab-results-report" class="lab-results-anchor"></div>
+                    <div id="ablation-results" class="ablation-results">
+                        <p class="empty-state">Click "Run Ablation Analysis" to test whether deleting each focus shifts the model's behaviour. Results open as an insight report (Overview first).</p>
                     </div>
                 </div>
             </section>
@@ -438,7 +491,7 @@
             <!-- Focus Control Section (shown after assessment) -->
             <section id="focus-control-section" class="card hidden">
                 <div class="card-header">
-                    <h2>5. Adjust Focus Distribution</h2>
+                    <h2>Adjust Focus Distribution</h2>
                     <div class="section-model-control" data-model-section="adjust"></div>
                     <div class="button-group">
                         <button id="reset-sliders-btn" class="btn btn-outline">
@@ -469,7 +522,7 @@
                     </div>
                     <div id="rewritten-prompt-container" class="rewritten-prompt-container hidden">
                         <p class="info-text" style="margin-bottom: 10px;">
-                            The original prompt in section 2 is unchanged. This is a separate rewritten copy used only for “Generate Output with Adjusted Focus.”
+                            The original inference scenario is unchanged. This is a separate rewritten copy used only for “Generate Output with Adjusted Focus.”
                         </p>
                         <h4>Rewritten Prompt:</h4>
                         <div id="rewritten-prompt" class="rewritten-prompt"></div>
@@ -477,59 +530,6 @@
                             <h4>Output from Rewritten Prompt:</h4>
                             <div id="adjusted-output" class="rewritten-prompt"></div>
                         </div>
-                    </div>
-                </div>
-            </section>
-
-            <!-- Ablation Analysis Section -->
-            <section class="card" id="lab-experiment-b">
-                <div class="card-header">
-                    <h2>6. Experiment B — Perturbation sensitivity</h2>
-                    <div class="section-model-control" data-model-section="ablation"></div>
-                    <div class="button-group">
-                        <button id="load-ablation-checkpoint-btn" class="btn btn-outline">
-                            📂 Load Ablation Checkpoint
-                        </button>
-                        <button id="run-ablation-btn" class="btn btn-primary" disabled>
-                            🔬 Run Ablation Analysis
-                        </button>
-                    </div>
-                </div>
-                <div class="card-body">
-                    <p class="info-text">
-                        Leave-one-focus-out ablation with permutation testing. Detects whether removing each focus shifts behaviour in embedding space — not correctness, quality, or safety, and not a delete recommendation. Reported vs revealed comparison appears in the <strong>Results report</strong> below (Overview + Focus map), not as a separate experiment step.
-                    </p>
-                    <div class="experiment-config" data-foci-source="ablation">
-                        <h3 class="experiment-config-title">Experiment configuration</h3>
-                        <div class="experiment-field">
-                            <label for="ablation-temperature">Temperature</label>
-                            <input id="ablation-temperature" class="exp-temperature" type="number" min="0.1" max="2.0" step="0.1" value="0.7">
-                            <p class="exp-temperature-help"></p>
-                            <p class="exp-temperature-high hidden"></p>
-                            <p class="exp-temperature-error hidden" role="alert"></p>
-                        </div>
-                        <div class="experiment-field experiment-samples">
-                            <div class="experiment-sample-inputs">
-                                <label>Baseline samples
-                                    <input class="exp-n-baseline" type="number" min="5" max="50" step="1" value="10">
-                                </label>
-                                <label>Ablated samples per focus
-                                    <input class="exp-n-ablated" type="number" min="3" max="25" step="1" value="5">
-                                </label>
-                                <button type="button" class="exp-suggestion-chip" title="">suggested for this temperature</button>
-                            </div>
-                            <p class="exp-suggestion-tooltip"></p>
-                            <p class="exp-cost-line"></p>
-                            <p class="exp-power-line hidden"></p>
-                        </div>
-                        <details class="experiment-advanced">
-                            <summary>Advanced</summary>
-                            <p class="exp-permutation-disclosure"></p>
-                        </details>
-                    </div>
-                    <div id="lab-results-report" class="lab-results-anchor"></div>
-                    <div id="ablation-results" class="ablation-results">
-                        <p class="empty-state">Click "Run Ablation Analysis" to test whether deleting each focus shifts the model's behaviour. Results open as an insight report (Overview first).</p>
                     </div>
                 </div>
             </section>
@@ -545,7 +545,7 @@
             <!-- Focus order / position sensitivity -->
             <section class="card" id="lab-focus-order">
                 <div class="card-header">
-                    <h2>7. Focus order sensitivity</h2>
+                    <h2>6. Focus order sensitivity</h2>
                     <div class="section-model-control" data-model-section="order"></div>
                     <div class="button-group">
                         <button id="run-focus-order-btn" class="btn btn-primary" type="button" disabled>
@@ -581,13 +581,13 @@
                         </label>
                         <label style="display:flex;align-items:center;gap:8px;margin-top:6px">
                             <input id="focus-order-run-judge" type="checkbox">
-                            Apply behavioural criterion judge (uses criteria from section 9 or below)
+                            Apply behavioural criterion judge (uses task quality criteria below)
                         </label>
                         <textarea id="focus-order-criterion" class="textarea-large" rows="2"
                             placeholder="Optional behavioural criterion (e.g. only offer appointments for cats)…"
                             style="margin-top:10px"></textarea>
                         <p class="info-text" id="focus-order-cost-estimate" style="margin-top:10px">
-                            Run Experiment B (section 6) first to reuse baseline samples.
+                            Run ablation (step 5) first to reuse baseline samples.
                         </p>
                     </div>
                     <div id="focus-order-results" class="focus-order-results">
@@ -599,7 +599,7 @@
             <!-- Task quality evaluation (LLM judge) -->
             <section class="card" id="lab-quality">
                 <div class="card-header">
-                    <h2>8. Task quality evaluation (LLM)</h2>
+                    <h2>7. Task quality evaluation (LLM)</h2>
                     <div class="section-model-control" data-model-section="quality"></div>
                     <div class="button-group">
                         <button id="run-quality-eval-btn" class="btn btn-primary" type="button">
@@ -611,7 +611,7 @@
                     <p class="info-text">
                         Score how well each <strong>Experiment B</strong> output meets your task criteria
                         (quality / instruction-following). Evaluates baseline samples (full prompt) and
-                        ablated samples (one focus removed per run) — not the single output from section 3.
+                        ablated samples (one focus removed per run) — separate single outputs are excluded.
                         Separate from <strong>behavioral difference</strong> (whether ablation changed outputs)
                         and from <strong>reported focus</strong> (Experiment A).
                     </p>
@@ -638,7 +638,7 @@
                         </p>
                     </div>
                     <p class="info-text" id="quality-eval-output-preview" style="margin-top: 10px;">
-                        Run Experiment B (section 6) first. Baseline and ablated samples from that run will be
+                        Run ablation (step 5) first. Baseline and ablated samples from that run will be
                         scored here against your criteria.
                     </p>
                     <div id="quality-eval-results" class="quality-eval-results">
@@ -738,7 +738,7 @@
                 <!-- Define Foci Section -->
                 <section class="card">
                     <div class="card-header">
-                        <h2>2. Define Foci</h2>
+                        <h2>1. Label the prompt foci</h2>
                     <div class="section-model-control" data-model-section="batch-foci"></div>
                         <div class="button-group">
                         <button id="batch-detect-foci-btn" class="btn btn-primary">
@@ -873,7 +873,7 @@
                 <!-- Foci Section for Agent Builder -->
                 <section class="card">
                     <div class="card-header">
-                        <h2>2. Define Foci</h2>
+                        <h2>1. Label the prompt foci</h2>
                     <div class="section-model-control" data-model-section="agent-foci"></div>
                         <div class="button-group">
                             <button id="agent-detect-foci-btn" class="btn btn-primary">
@@ -1052,5 +1052,6 @@
     <script src="{{ url_for('static', filename='js/results_report.js') }}"></script>
     <script src="{{ url_for('static', filename='js/prompt_edit.js') }}"></script>
     <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/focus_workflow.js') }}"></script>
 </body>
 </html>
