@@ -78,6 +78,8 @@ Self-reports are not measured internal attention. Normalized ablation shifts are
 
 Changed scenario text, foci, model, baseline count or temperature starts a new experiment at step 2. Successful partial samples and retrospective assessments survive retries. Workspace exports preserve all five stages; ablation checkpoints and result exports include the full comparison. Existing single-output APIs and batch workflows remain available.
 
+Task Quality Evaluation uses the model recorded in the ablation run for self-assessment, with an optional second, different LLM. Both judges receive the same criteria, sampled outputs and original scenario (including retained chat and the output contract), in independent calls at assessment temperature 0.2. Neither sees the other judge's scores or is told which model generated an output. Scores, explanations, model identities, sampling metadata and costs remain separate in results and workspace exports; the comparison reports second-judge minus self-assessment score points. Retrying a failed judge preserves the successful judge when the task inputs and selection are unchanged. Self-assessment is a fresh evaluation by the same model, not access to its generation process; agreement between judges is not proof of correctness. Older saved single-judge results remain readable.
+
 **CLI / Python**
 
 ```bash

@@ -52,7 +52,8 @@ const batchPromptInput = {value: 'A different batch prompt.'};
 let promptInput = cards[0].querySelector('.scenario-content'), assessmentFoci = [], batchPairs = [];
 const outputInput = null, focusWeights = {}, rewrittenPromptText = '',
     rewrittenScenario = null, targetFocusMix = [], adjustedReportedFoci = [], adjustedOutput = null,
-    evalCriteriaInput = null, qualityEvalSamplePct = null, focusOrderKSel = null, focusOrderMSel = null,
+    evalCriteriaInput = null, qualityEvalSamplePct = null, qualitySecondJudgeEnabled = {checked: true},
+    focusOrderKSel = null, focusOrderMSel = null,
     focusOrderSweepFocus = null, focusOrderRunSweep = null, focusOrderRunJudge = null, focusOrderCriterion = null,
     currentTab = 'prompt-analysis', userProvider = 'openai', userModel = 'test-model',
     WORKSPACE_SESSION_VERSION = 2, chatInput = null, batchAgentData = null,
@@ -138,6 +139,7 @@ function restorePromptAnalysisWorkspace(pa) {
     cards[2].querySelector('.scenario-role').value = 'developer';
     assert.throws(() => readMainScenario(), /before conversation/);
     const snapshot = JSON.parse(JSON.stringify(collectWorkspaceSession()));
+    assert.equal(snapshot.prompt_analysis.quality_eval.second_judge_enabled, true);
     assert.equal(snapshot.prompt_analysis.scenario_editor.message_names[2].name, 'copilot edits');
     assert.equal(snapshot.prompt_analysis.scenario_editor.output_contract.schema, '{ "type": ');
     assert.equal(snapshot.prompt_analysis.foci[0].spans[1].message_id, 'copilot-edits');

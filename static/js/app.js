@@ -5054,6 +5054,7 @@ const runQualityEvalBtn = document.getElementById('run-quality-eval-btn');
 const qualityEvalResults = document.getElementById('quality-eval-results');
 const qualityEvalOutputPreview = document.getElementById('quality-eval-output-preview');
 const qualityEvalSamplePct = document.getElementById('quality-eval-sample-pct');
+const qualitySecondJudgeEnabled = document.getElementById('quality-second-judge-enabled');
 const runFocusOrderBtn = document.getElementById('run-focus-order-btn');
 const focusOrderResults = document.getElementById('focus-order-results');
 const focusOrderKSel = document.getElementById('focus-order-k');
@@ -5317,17 +5318,17 @@ function collectOutputsForQualityEval() {
     const records = (window.FocalPromptResults && window.FocalPromptResults.collectFocusRecords)
         ? window.FocalPromptResults.collectFocusRecords(ab)
         : (ab.ablation_results || []);
-    records.forEach(function (rec) {
+    records.forEach(function (rec, recordIndex) {
         const name = rec.focus || rec.focus_name || 'Focus';
         const ablated = rec.ablated_outputs || (rec.ablated_output ? [rec.ablated_output] : []);
         ablated.forEach(function (t, i) {
             const text = (t || '').trim();
             if (!text) return;
             outputs.push({
-                label: 'Ablated: ' + name + ' — sample ' + (i + 1),
+                label: 'Ablated: ' + name + ' [focus ' + (recordIndex + 1) + '] — sample ' + (i + 1),
                 text: text,
                 group: 'ablated',
-                focus: name,
+                focus: name + ' [focus ' + (recordIndex + 1) + ']',
             });
         });
     });
@@ -5380,8 +5381,25 @@ function summarizeQualityEvalOutputs(outputs) {
 }
 
 function refreshQualityEvalPreview() {
+    refreshQualityJudgeControls();
     if (!qualityEvalOutputPreview) return;
     qualityEvalOutputPreview.innerHTML = summarizeQualityEvalOutputs(collectOutputsForQualityEval());
+}
+
+function refreshQualityJudgeControls() {
+    const label = document.getElementById('quality-self-model');
+    if (label) {
+        try {
+            const model = window.FocalPromptQuality.modelOf(window.singleAblationResults);
+            label.textContent = model.provider + '/' + model.model + ' · original generation model';
+        } catch (_) { label.textContent = 'Uses the model recorded in the ablation run.'; }
+    }
+    const controls = document.getElementById('quality-second-judge-controls');
+    if (controls) controls.hidden = !qualitySecondJudgeEnabled?.checked;
+}
+
+if (qualitySecondJudgeEnabled) {
+    qualitySecondJudgeEnabled.addEventListener('change', refreshQualityJudgeControls);
 }
 
 if (qualityEvalSamplePct) {
@@ -5443,12 +5461,10 @@ function renderQualityEvalCard(row, outputLookup) {
     return html;
 }
 
-function renderQualityEvalResults(data) {
-    if (!qualityEvalResults) return;
+function qualityEvalResultHtml(data) {
     const evals = data.evaluations || [];
     if (!evals.length) {
-        qualityEvalResults.innerHTML = '<p class="empty-state">No evaluations returned.</p>';
-        return;
+        return '<p class="empty-state">No evaluations returned.</p>';
     }
 
     const outputLookup = buildQualityEvalOutputLookup();
@@ -5501,8 +5517,35 @@ function renderQualityEvalResults(data) {
 
     html += '<p style="font-size:0.85em;color:#64748b;margin-top:12px">' +
         'Task quality on Experiment B samples — not behavioral difference or reported focus.</p>';
-    qualityEvalResults.innerHTML = html;
+    return html;
+}
+
+function renderQualityEvalResults(data) {
     window.lastQualityEvalResults = data;
+    if (!qualityEvalResults) return;
+    if (!Array.isArray(data.judges)) {
+        qualityEvalResults.innerHTML = '<p class="info-text">Saved evaluation from the earlier single-judge workflow.</p>'
+            + qualityEvalResultHtml(data);
+        return;
+    }
+    let html = '<p class="info-text">Self-assessment uses the generation model in a separate evaluation call. '
+        + 'Each judge uses the same criteria and original task. Scores are independent and are not averaged together.</p>';
+    html += window.FocalPromptQuality.comparisonHtml(data, escapeHtml);
+    for (const judge of data.judges) {
+        html += '<section class="quality-judge-result"><h3>' + escapeHtml(judge.title) + ' · '
+            + escapeHtml(judge.provider + '/' + judge.model) + '</h3>';
+        if (judge.status === 'error') {
+            html += '<p class="error-message">' + escapeHtml(judge.error)
+                + ' Run evaluation again to retry this judge; completed results are retained.</p>';
+        } else if (judge.status === 'pending') {
+            html += '<p class="info-text" role="status">Evaluating…</p>';
+        } else {
+            html += '<details' + (data.judges.length === 1 ? ' open' : '') + '><summary>Scores and explanations</summary>'
+                + qualityEvalResultHtml(judge.result) + '</details>';
+        }
+        html += '</section>';
+    }
+    qualityEvalResults.innerHTML = html;
 }
 
 function refreshFocusOrderControls(abData) {
@@ -5668,28 +5711,30 @@ if (runQualityEvalBtn) {
             return;
         }
         const samplePct = qualityEvalSamplePct ? parseFloat(qualityEvalSamplePct.value) || 100 : 100;
+        const ablation = window.singleAblationResults;
+        let judges;
+        try {
+            judges = window.FocalPromptQuality.judgesFor(ablation, !!qualitySecondJudgeEnabled?.checked, getSectionModel('quality'));
+        } catch (error) { showErrorModal(error.message); return; }
+        const context = {eval_criteria: criteria, outputs, sample_pct: samplePct, sample_seed: 0,
+            temperature: 0.2, evaluation_scope: 'experiment_b',
+            generation_model: window.FocalPromptQuality.modelOf(ablation),
+            ...(ablation.scenario ? {scenario: structuredClone(ablation.scenario)} : {prompt: ablation.prompt || ''})};
 
-        showLoading('Evaluating Experiment B outputs against your criteria…');
+        showLoading('Evaluating outputs with ' + judges.length + ' judge' + (judges.length === 1 ? '' : 's') + '…');
         runQualityEvalBtn.disabled = true;
         try {
-            const response = await fetch('/api/evaluate-outputs-quality', {
-                method: 'POST',
-                headers: getApiHeaders(),
-                body: JSON.stringify(getApiBody({
-                    eval_criteria: criteria,
-                    outputs: outputs,
-                    prompt: promptInput ? promptInput.value : '',
-                    task_context: '',
-                    temperature: 0.2,
-                    evaluation_scope: 'experiment_b',
-                    sample_pct: samplePct,
-                }, 'analysis', 'quality'))
-            });
-            const data = await response.json();
-            if (!response.ok) {
-                throw new Error(data.error || 'Evaluation failed');
-            }
-            renderQualityEvalResults(data);
+            await window.FocalPromptQuality.evaluate({context, judges, previous: window.lastQualityEvalResults,
+                onUpdate: renderQualityEvalResults,
+                request: async (input, judge) => {
+                    const response = await fetch('/api/evaluate-outputs-quality', {
+                        method: 'POST', headers: getApiHeaders(),
+                        body: JSON.stringify(getApiBody({...input, judge_role: judge.id},
+                            judge.id === 'self' ? 'mut' : 'analysis', judge))});
+                    const data = await response.json();
+                    if (!response.ok) throw new Error(data.error || 'Evaluation failed');
+                    return data;
+                }});
             if (qualityEvalResults && qualityEvalResults.scrollIntoView) {
                 qualityEvalResults.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
             }
@@ -8751,6 +8796,7 @@ function collectPromptAnalysisWorkspace() {
         quality_eval: {
             criteria: evalCriteriaInput ? evalCriteriaInput.value : '',
             sample_pct: qualityEvalSamplePct ? qualityEvalSamplePct.value : '100',
+            second_judge_enabled: !!qualitySecondJudgeEnabled?.checked,
             results: window.lastQualityEvalResults || null,
         },
         focus_order: {
@@ -9012,6 +9058,8 @@ function restorePromptAnalysisWorkspace(pa) {
             '<p class="empty-state">Run <strong>Ablation Analysis</strong> (Experiment B) first.</p>'
         );
     }
+    if (qualitySecondJudgeEnabled) qualitySecondJudgeEnabled.checked = pa.quality_eval?.second_judge_enabled === true;
+    refreshQualityEvalPreview();
     if (pa.quality_eval) {
         if (evalCriteriaInput && pa.quality_eval.criteria != null) {
             evalCriteriaInput.value = pa.quality_eval.criteria;
@@ -9026,6 +9074,9 @@ function restorePromptAnalysisWorkspace(pa) {
             qualityEvalResults.innerHTML = '';
             window.lastQualityEvalResults = null;
         }
+    } else {
+        if (qualityEvalResults) qualityEvalResults.innerHTML = '';
+        window.lastQualityEvalResults = null;
     }
     if (pa.focus_order) {
         restoreFocusOrderControls(pa.focus_order);
