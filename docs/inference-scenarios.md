@@ -78,6 +78,10 @@ Add `output_contract` to require JSON Schema output:
 
 The contract is request configuration, not a message. FocalPrompt passes it through each supported provider adapter and validates every response locally. Malformed JSON, schema mismatches, refusals, incomplete output, and unsupported adapters stop the experiment; the contract is never silently removed.
 
+For OpenAI GPT-3.5 Turbo (`gpt-3.5-turbo`, `gpt-3.5-turbo-0125`, and `gpt-3.5-turbo-1106`), the direct OpenAI and Vercel Gateway adapters express the contract as a forced function call with `strict: true`, the unchanged schema as its parameters, and parallel calls disabled. These models do not support the newer `json_schema` response format. The function is an output container: no function is executed, and its arguments become the generated JSON response. The adapter leaves message content, roles, order, model and temperature intact. It chooses this representation before sampling and uses it consistently for baseline and ablated arms; it does not repair or resample malformed output.
+
+Sample `scenario_metadata` records `structured_output: "strict_function_call"` and `structured_output_function` for this translation. This API representation is part of the experimental conditions and should be retained when interpreting or reproducing results. Models using native schema responses continue to receive `response_format.json_schema`. GPT-3.5 assessment calls using JSON mode are unaffected. See the official [structured-output guide](https://developers.openai.com/api/docs/guides/structured-outputs) and [strict function-calling documentation](https://developers.openai.com/api/docs/guides/function-calling#strict-mode).
+
 With **Output contract** enabled, the web editor validates the schema's JSON syntax as you type and requires a JSON object. Invalid input shows an inline error and blocks submission; correcting it clears the error. This editor check does not replace server-side JSON Schema validation.
 
 ## Target focus mix and rewriting

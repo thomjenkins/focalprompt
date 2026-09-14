@@ -407,7 +407,7 @@ def complete_scenario(
             temperature=temperature,
             **kwargs,
         )
-    except ProviderCapabilityError:
+    except (ProviderCapabilityError, StructuredOutputError):
         raise
     except Exception as exc:
         # Preserve transient/service failures so existing retry and rate-limit

@@ -129,13 +129,17 @@ def test_gateway_forwards_json_schema_for_every_model_and_provider(check):
 
 
 @patch('core.ai_gateway_provider._check_requests')
-def test_gateway_structured_output_rejection_is_a_capability_error(check):
+@pytest.mark.parametrize('model, provider_name, message', [
+    ('model-without-schema', 'anthropic', 'response_format json_schema is unsupported by this model'),
+    ('gpt-3.5-turbo', 'openai', 'strict function output is unsupported by this model'),
+])
+def test_gateway_structured_output_rejection_is_a_capability_error(check, model, provider_name, message):
     import requests
 
     response = Mock()
     response.status_code = 400
     response.json.return_value = {
-        'error': {'message': 'response_format json_schema is unsupported by this model'}
+        'error': {'message': message}
     }
     error = requests.exceptions.HTTPError(response=response)
     response.raise_for_status.side_effect = error
@@ -148,7 +152,8 @@ def test_gateway_structured_output_rejection_is_a_capability_error(check):
     with pytest.raises(ProviderCapabilityError, match='required structured output'):
         provider.chat_completion(
             MESSAGES,
-            model='model-without-schema',
-            provider='anthropic',
+            model=model,
+            provider=provider_name,
             response_format=RESPONSE_FORMAT,
         )
+    assert requests_module.post.call_count == 1
