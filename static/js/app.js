@@ -967,6 +967,7 @@ function scenarioMessageCardHtml(message, index) {
                 <input class="scenario-input-name${message.analysis_mode === 'analyse' ? ' hidden' : ''}" value="${escapeScenarioAttribute(inputName)}" placeholder="Input name" aria-label="Named batch input">
                 <button type="button" class="scenario-move-up btn btn-outline btn-small" aria-label="Move message up">↑</button>
                 <button type="button" class="scenario-move-down btn btn-outline btn-small" aria-label="Move message down">↓</button>
+    validateScenarioOutputContract();
                 <button type="button" class="scenario-delete btn btn-outline btn-small">Delete</button>
             </div>
             <textarea${index === 0 ? ' id="prompt-input"' : ''} class="textarea-large scenario-content" rows="${message.analysis_mode === 'analyse' ? 6 : 4}">${escapeHtml(message.content || '')}</textarea>
@@ -977,6 +978,44 @@ function scenarioMessageCardHtml(message, index) {
 function setMainScenario(scenario) {
     const normalized = scenario && Array.isArray(scenario.messages) ? scenario : defaultInferenceScenario();
     const container = document.getElementById('scenario-messages');
+function validateScenarioOutputContract() {
+    const enabled = document.getElementById('scenario-contract-enabled');
+    const schemaInput = document.getElementById('scenario-contract-schema');
+    const nameInput = document.getElementById('scenario-contract-name');
+    const errorEl = document.getElementById('scenario-contract-error');
+    let schema;
+    let schemaError = '';
+    let nameError = '';
+    const active = enabled && enabled.checked;
+    const name = nameInput.value.trim();
+    if (active) {
+        if (!schemaInput.value.trim()) {
+            schemaError = 'Enter a JSON Schema object.';
+        } else {
+            try {
+                schema = JSON.parse(schemaInput.value);
+            } catch (error) {
+                schemaError = 'Invalid JSON: ' + error.message;
+            }
+            if (!schemaError && (!schema || typeof schema !== 'object' || Array.isArray(schema))) {
+                schemaError = 'Schema must be a JSON object.';
+            }
+        }
+        if (!/^[A-Za-z0-9_-]{1,64}$/.test(name)) nameError = 'Schema name is invalid.';
+    }
+    schemaInput.setCustomValidity(schemaError);
+    schemaInput.setAttribute('aria-invalid', String(!!schemaError));
+    nameInput.setCustomValidity(nameError);
+    nameInput.setAttribute('aria-invalid', String(!!nameError));
+    const error = schemaError || nameError;
+    errorEl.textContent = error;
+    errorEl.classList.toggle('hidden', !error);
+    return {
+        contract: active && !error ? { type: 'json_schema', name: name, strict: true, schema: schema } : null,
+        error: error
+    };
+}
+
     if (!container) return;
     container.innerHTML = normalized.messages.map(scenarioMessageCardHtml).join('');
     const enabled = document.getElementById('scenario-contract-enabled');
@@ -1020,6 +1059,7 @@ function readMainScenario(options) {
         throw new Error('Message IDs must be unique.');
     }
     const inputNames = messages.map(function (message) { return message.input_name; }).filter(Boolean);
+    if (validation.contract) scenario.output_contract = validation.contract;
     if (new Set(inputNames).size !== inputNames.length) {
         throw new Error('Named inputs must be unique.');
     }
@@ -1038,24 +1078,9 @@ function readMainScenario(options) {
         }
     });
     const scenario = { version: 1, messages: messages };
-    const enabled = document.getElementById('scenario-contract-enabled');
-    if (enabled && enabled.checked) {
-        const errorEl = document.getElementById('scenario-contract-error');
-        try {
-            const schema = JSON.parse(document.getElementById('scenario-contract-schema').value);
-            const name = document.getElementById('scenario-contract-name').value.trim();
-            if (!/^[A-Za-z0-9_-]{1,64}$/.test(name)) throw new Error('Schema name is invalid.');
-            if (!schema || typeof schema !== 'object' || Array.isArray(schema)) throw new Error('Schema must be a JSON object.');
-            scenario.output_contract = { type: 'json_schema', name: name, strict: true, schema: schema };
-            if (errorEl) errorEl.classList.add('hidden');
-        } catch (error) {
-            if (errorEl) {
-                errorEl.textContent = error.message;
-                errorEl.classList.remove('hidden');
-            }
-            if (config.allowInvalidContract) return scenario;
-            throw new Error('Output contract: ' + error.message);
-        }
+    const validation = validateScenarioOutputContract();
+    if (validation.error && !config.allowInvalidContract) {
+        throw new Error('Output contract: ' + validation.error);
     }
     return scenario;
 }
@@ -1183,8 +1208,12 @@ if (scenarioEditor) {
         } else if (event.target.closest('.scenario-move-down') && card.nextElementSibling) {
             card.parentNode.insertBefore(card.nextElementSibling, card);
         }
+        validateScenarioOutputContract();
         updateScenarioOrderRails();
         updateManualInputFields();
+document.querySelectorAll('#scenario-contract-schema, #scenario-contract-name').forEach(function (input) {
+    input.addEventListener('input', validateScenarioOutputContract);
+});
         updateCoverageVisualization();
         updateCoverageStats();
     });

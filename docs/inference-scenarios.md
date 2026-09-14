@@ -76,6 +76,8 @@ Add `output_contract` to require JSON Schema output:
 
 The contract is request configuration, not a message. FocalPrompt passes it through each supported provider adapter and validates every response locally. Malformed JSON, schema mismatches, refusals, incomplete output, and unsupported adapters stop the experiment; the contract is never silently removed.
 
+With **Output contract** enabled, the web editor validates the schema's JSON syntax as you type and requires a JSON object. Invalid input shows an inline error and blocks submission; correcting it clears the error. This editor check does not replace server-side JSON Schema validation.
+
 ## Interfaces
 
 HTTP requests accept exactly one of `scenario` or `prompt`. Python functions accept a scenario object or path using `scenario=...`. CLI commands accept `--scenario FILE` instead of the positional prompt. MCP tools expose the same optional `scenario` object, and ablation named values are supplied through `options.inputs`.

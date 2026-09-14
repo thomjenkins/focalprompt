@@ -327,9 +327,9 @@
                                 <label><input type="checkbox" id="scenario-contract-enabled"> Enable</label>
                             </div>
                             <div id="scenario-contract-fields" class="hidden">
-                                <label>Schema name <input id="scenario-contract-name" value="model_output" pattern="[A-Za-z0-9_-]+"></label>
+                                <label>Schema name <input id="scenario-contract-name" value="model_output" pattern="[A-Za-z0-9_-]+" aria-describedby="scenario-contract-error"></label>
                                 <label>JSON Schema
-                                    <textarea id="scenario-contract-schema" class="textarea-large" rows="7">{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"],"additionalProperties":false}</textarea>
+                                    <textarea id="scenario-contract-schema" class="textarea-large" rows="7" aria-describedby="scenario-contract-error">{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"],"additionalProperties":false}</textarea>
                                 </label>
                                 <p id="scenario-contract-error" class="scenario-contract-error hidden" role="alert"></p>
                             </div>

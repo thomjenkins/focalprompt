@@ -3260,6 +3260,7 @@ circle.fp-series-7 { fill: #8a8a8a; }
 }
 #scenario-contract-fields.hidden { display: none; }
 #scenario-contract-fields label { display: grid; gap: 6px; font-weight: 600; }
+#scenario-contract-fields [aria-invalid="true"] { border-color: var(--danger-color); }
 .scenario-contract-error { margin: 0; color: var(--danger-color); }
 @media (max-width: 720px) {
     .scenario-message-card { grid-template-columns: 28px minmax(0, 1fr); }
