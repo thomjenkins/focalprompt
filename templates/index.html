@@ -600,7 +600,6 @@
             <section class="card" id="lab-quality">
                 <div class="card-header">
                     <h2>7. Task quality evaluation (LLM)</h2>
-                    <div class="section-model-control" data-model-section="quality"></div>
                     <div class="button-group">
                         <button id="run-quality-eval-btn" class="btn btn-primary" type="button">
                             🎯 Evaluate outputs on criteria
@@ -615,6 +614,20 @@
                         Separate from <strong>behavioral difference</strong> (whether ablation changed outputs)
                         and from <strong>reported focus</strong> (Experiment A).
                     </p>
+                    <div class="quality-judge-controls" style="margin:16px 0">
+                        <p><strong>Judge 1 · Self-assessment</strong><br>
+                            <span id="quality-self-model">Uses the model recorded in the ablation run.</span>
+                        </p>
+                        <label for="quality-second-judge-enabled">
+                            <input id="quality-second-judge-enabled" type="checkbox">
+                            Add a second LLM judge (optional)
+                        </label>
+                        <div id="quality-second-judge-controls" hidden style="margin-top:10px">
+                            <strong>Judge 2 · Another model</strong>
+                            <div class="section-model-control" data-model-section="quality"></div>
+                        </div>
+                        <p class="info-text" style="margin-top:8px">Both judges score the same sampled outputs against the same criteria and original task context. Each judges independently; scores are shown separately. Adding a judge adds evaluation cost.</p>
+                    </div>
                     <label for="eval-criteria-input" style="display:block;font-weight:600;margin-bottom:6px;">
                         Evaluation criteria
                     </label>
@@ -1051,6 +1064,7 @@
     <script src="{{ url_for('static', filename='js/insight_metrics.js') }}"></script>
     <script src="{{ url_for('static', filename='js/results_report.js') }}"></script>
     <script src="{{ url_for('static', filename='js/prompt_edit.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/quality_judges.js') }}"></script>
     <script src="{{ url_for('static', filename='js/app.js') }}"></script>
     <script src="{{ url_for('static', filename='js/focus_workflow.js') }}"></script>
 </body>

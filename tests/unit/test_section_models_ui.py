@@ -59,7 +59,9 @@ def test_every_model_call_has_an_explicit_section():
     sections = re.findall(r'data-model-section="([^"]+)"', html)
     assert len(sections) == 15
     for section in sections:
-        assert re.search(r"[,(] ?'(?:mut|analysis)', '" + section + r"'\)", JS) or section == 'ablation'
+        assert re.search(r"[,(] ?'(?:mut|analysis)', '" + section + r"'\)", JS) or section in ('ablation', 'quality')
+    assert "getSectionModel('quality')" in JS
+    assert "judge.id === 'self' ? 'mut' : 'analysis', judge)" in JS
     assert "'mut', modelSelection" in JS
     assert "const modelSelection = { ...getSectionModel(section) };" in JS
     assert 'model_settings: collectModelSettings()' in JS

@@ -1081,6 +1081,15 @@ header img {
     margin-top: 16px;
 }
 
+.quality-judge-result {
+    margin-top: 20px;
+}
+
+.quality-judge-result > details > summary {
+    cursor: pointer;
+    margin-top: 6px;
+}
+
 .quality-eval-card {
     margin-top: 12px;
     padding: 14px;

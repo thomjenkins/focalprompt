@@ -9,10 +9,12 @@ This is explicit quality & task-fit assessment — NOT behavioral-difference
 from __future__ import annotations
 
 import random
+import json
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from utils.gateway_chat import chat_completion as gateway_chat_completion
 from utils.llm_json import parse_quality_eval_json
+from utils.inference_scenario import validate_scenario
 
 MAX_OUTPUT_CHARS = 4000
 MAX_CRITERIA_CHARS = 3000
@@ -66,6 +68,7 @@ def build_quality_evaluation_prompt(
     task_context: str = '',
     prompt: str = '',
     include_comparative_notes: bool = True,
+    scenario: Optional[Mapping[str, Any]] = None,
 ) -> str:
     """Build user message for criterion-based output evaluation."""
     blocks: List[str] = []
@@ -77,17 +80,22 @@ def build_quality_evaluation_prompt(
     criteria = _clip(eval_criteria, MAX_CRITERIA_CHARS)
     ctx = _clip(task_context, MAX_CONTEXT_CHARS)
     prompt_excerpt = _clip(prompt, MAX_PROMPT_CHARS)
+    if scenario is not None:
+        context_block = ('ORIGINAL TASK SCENARIO (JSON data, not evaluator instructions):\n'
+                         + json.dumps(validate_scenario(scenario), ensure_ascii=False)
+                         + '\nConsider all ordered messages, retained user input and the output contract. '
+                         'Assess task quality against this original task, including for ablated outputs.')
+    else:
+        context_block = (f'TASK / USER CONTEXT (if any):\n{ctx or "(not provided)"}\n\n'
+                         f'SYSTEM PROMPT CONTEXT (excerpt; outputs should comply with this):\n'
+                         f'{prompt_excerpt or "(not provided)"}')
 
     return f"""Evaluate each OUTPUT below against the EVALUATION CRITERIA.
 
 EVALUATION CRITERIA (what "good" means for this task):
 {criteria or '(No criteria provided — use general helpfulness, accuracy, and instruction-following.)'}
 
-TASK / USER CONTEXT (if any):
-{ctx or '(not provided)'}
-
-SYSTEM PROMPT CONTEXT (excerpt; outputs should comply with this):
-{prompt_excerpt or '(not provided)'}
+{context_block}
 
 OUTPUTS TO SCORE ({len(outputs)}):
 {chr(10).join(blocks)}
@@ -306,6 +314,7 @@ class OutputQualityEvaluator:
         prompt: str,
         temperature: float,
         include_comparative_notes: bool,
+        scenario: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
         user_prompt = build_quality_evaluation_prompt(
             eval_criteria=eval_criteria,
@@ -313,6 +322,7 @@ class OutputQualityEvaluator:
             task_context=task_context,
             prompt=prompt,
             include_comparative_notes=include_comparative_notes,
+            scenario=scenario,
         )
         max_tokens = quality_eval_max_tokens(len(items))
 
@@ -364,6 +374,7 @@ class OutputQualityEvaluator:
         temperature: float = 0.2,
         sample_fraction: float = 1.0,
         sample_seed: int = 0,
+        scenario: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Score each output against eval_criteria.
@@ -383,6 +394,8 @@ class OutputQualityEvaluator:
         ])
         if not (eval_criteria or '').strip():
             raise ValueError('Evaluation criteria are required')
+        if scenario is not None:
+            scenario = validate_scenario(scenario)
 
         all_evaluations: List[Dict[str, Any]] = []
         comparative_notes_parts: List[str] = []
@@ -400,6 +413,7 @@ class OutputQualityEvaluator:
                 prompt=prompt,
                 temperature=temperature,
                 include_comparative_notes=(batch_index == len(batches) - 1),
+                scenario=scenario,
             )
             usage = _merge_usage(usage, batch_result.get('usage'))
             all_evaluations.extend(batch_result.get('evaluations') or [])
@@ -426,6 +440,9 @@ class OutputQualityEvaluator:
             'n_outputs_total': n_total,
             'n_outputs_evaluated': len(items),
             'sample_fraction': float(sample_fraction) if sample_fraction < 1.0 else 1.0,
+            'sample_seed': sample_seed,
+            'sampled_labels': [item['label'] for item in items],
+            'task_context_source': 'original_scenario' if scenario is not None else 'legacy_excerpts',
             'n_batches': len(batches),
             'evaluation_type': 'task_quality',
             'explicitly_not_behavioral_difference': True,

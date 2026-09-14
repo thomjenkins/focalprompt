@@ -10,6 +10,8 @@ from services.cost_calculator import CostCalculator
 from services.output_evaluator_service import OutputQualityEvaluator
 from routes.http_errors import internal_error
 from utils.request_inference import request_inference_fields
+from utils.inference_scenario import validate_scenario
+from utils.model_provider import resolve_model_and_provider
 
 evaluation_bp = Blueprint('evaluation', __name__)
 
@@ -33,7 +35,26 @@ def evaluate_outputs_quality():
         if not outputs:
             return jsonify({'error': 'outputs array is required'}), 400
 
-        fields = request_inference_fields(data, model_role='analysis')
+        judge_role = data.get('judge_role')
+        if judge_role not in (None, 'self', 'external'):
+            return jsonify({'error': 'judge_role must be self or external'}), 400
+        generation_model = data.get('generation_model') or {}
+        if judge_role:
+            if not isinstance(generation_model, dict) or not all(
+                isinstance(generation_model.get(key), str) and generation_model[key].strip()
+                for key in ('model', 'provider')
+            ):
+                return jsonify({'error': 'The generation model and provider are required for judge attribution.'}), 400
+            generated_model, generated_provider = resolve_model_and_provider(
+                generation_model['model'], generation_model['provider'])
+        if judge_role == 'self':
+            fields = request_inference_fields({**data, 'mut_model': generated_model,
+                                               'mut_provider': generated_provider}, model_role='mut')
+        else:
+            fields = request_inference_fields(data, model_role='analysis')
+        if judge_role == 'external' and (fields['model'], fields['provider']) == (generated_model, generated_provider):
+            return jsonify({'error': 'Choose a different model for the optional second judge.'}), 400
+        scenario = validate_scenario(data['scenario']) if data.get('scenario') is not None else None
         assessor = get_assessor(data=fields)
         evaluator = OutputQualityEvaluator(
             assessor.provider,
@@ -56,9 +77,10 @@ def evaluate_outputs_quality():
             temperature=float(data.get('temperature') or 0.2),
             sample_fraction=sample_fraction,
             sample_seed=int(data.get('sample_seed') or 0),
+            scenario=scenario,
         )
 
-        usage = result.pop('usage', None) or {}
+        usage = result.get('usage') or {}
         evaluation_scope = (data.get('evaluation_scope') or 'experiment_b').strip()
         cost_breakdown = None
         if usage:
@@ -74,6 +96,10 @@ def evaluate_outputs_quality():
             **result,
             'evaluation_scope': evaluation_scope,
             'cost_breakdown': cost_breakdown,
+            'judge': {'role': judge_role or 'legacy', 'model': fields['model'],
+                      'provider': getattr(assessor, 'provider_name', fields['provider']),
+                      'temperature': float(data.get('temperature') or 0.2)},
+            'assessment_protocol': 'task-quality-scenario-v1',
         })
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
