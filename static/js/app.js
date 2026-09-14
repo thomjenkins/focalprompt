@@ -915,10 +915,16 @@ const optimizationResults = document.getElementById('optimization-results');
 let batchAgentData = null; // Store imported batch analysis data
 let batchAgentResultsData = []; // Store generated agent results
 
-let focusWeights = {}; // Store slider values for each focus
+let focusWeights = {}; // Target focus mix slider values, keyed by assessmentFoci index
 let rewrittenPromptText = '';
 let rewrittenScenario = null;
-let intendedDistribution = {}; // Store intended distribution for comparison
+// Snapshot of the target focus mix that was actually sent to the rewrite, taken at
+// rewrite time so later slider edits or a fresh main assessment cannot silently
+// change what the comparison claims was requested. Entries keep the focus identity
+// (name + prompt_section definition excerpt) and the normalized target percentage.
+let targetFocusMix = [];
+// Reported focus results for the output generated from the rewritten scenario.
+let adjustedReportedFoci = [];
 let assessmentFoci = []; // Store assessment results
 let singleAblationResults = null; // Store single ablation analysis results
 let selectedText = ''; // Currently selected text
@@ -3159,15 +3165,25 @@ if (loadAssessmentCheckpointBtn) {
 }
 
 // Assess Focus
-assessBtn.addEventListener('click', async () => {
-    let scenario;
-    try { scenario = readMainScenario(); } catch (error) { showErrorModal(error.message); return; }
+//
+// `options.scenario` assesses a specific scenario (used for the adjusted flow, where
+// the output came from the rewritten scenario rather than the editor's scenario).
+// `options.foci` supplies the focus definitions to score against; the adjusted flow
+// passes the definition snapshot taken at rewrite time so target and reported values
+// refer to the same focus identities.
+async function runAssessment(options) {
+    const config = options || {};
+    let scenario = config.scenario || null;
+    if (!scenario) {
+        try { scenario = readMainScenario(); } catch (error) { showErrorModal(error.message); return; }
+    }
+    const assessFoci = (config.foci && config.foci.length) ? config.foci : foci;
     const prompt = scenario.messages.filter(function (message) {
         return message.analysis_mode === 'analyse';
     }).map(function (message) { return message.content; }).join('\n\n').trim();
     const output = outputInput.value.trim();
     
-    if (!prompt) {
+    if (!prompt && !config.adjusted) {
         alert('Please enter a prompt.');
         return;
     }
@@ -3182,10 +3198,10 @@ assessBtn.addEventListener('click', async () => {
         // Estimate tokens: prompt + output + foci descriptions + system message
         const promptTokens = Math.ceil(prompt.length / 4);
         const outputTokens = Math.ceil(output.length / 4);
-        const fociTokens = foci.length > 0 ? foci.reduce((sum, f) => sum + Math.ceil((f.name?.length || 0) / 4) + Math.ceil((f.description?.length || 0) / 4), 0) : 0;
+        const fociTokens = assessFoci.length > 0 ? assessFoci.reduce((sum, f) => sum + Math.ceil((f.focus?.length || 0) / 4) + Math.ceil((f.prompt_section?.length || 0) / 4), 0) : 0;
         const systemTokens = 1000; // System message + instructions
         const estimatedInputTokens = promptTokens + outputTokens + fociTokens + systemTokens;
-        const estimatedOutputTokens = Math.max(500, foci.length * 200); // Assessment response scales with number of foci
+        const estimatedOutputTokens = Math.max(500, assessFoci.length * 200); // Assessment response scales with number of foci
         
         const estimateResponse = await fetch('/api/pricing/estimate', {
             method: 'POST',
@@ -3218,7 +3234,7 @@ assessBtn.addEventListener('click', async () => {
             body: JSON.stringify(getApiBody({
                 scenario: scenario,
                 output,
-                foci: foci.length > 0 ? foci : undefined
+                foci: assessFoci.length > 0 ? assessFoci : undefined
             }, 'analysis', 'reported')),
         });
         
@@ -3228,14 +3244,16 @@ assessBtn.addEventListener('click', async () => {
             throw new Error(data.error || 'Failed to assess focus');
         }
         
-        renderAssessment(data);
+        renderAssessment(data, { adjusted: !!config.adjusted });
         
     } catch (error) {
         showError('Error assessing focus: ' + error.message);
     } finally {
         hideLoading();
     }
-});
+}
+
+assessBtn.addEventListener('click', function () { runAssessment(); });
 
 // Helper function to match assessed foci to original foci
 function matchFocus(originalFocus, assessedFoci) {
@@ -3268,16 +3286,29 @@ function matchFocus(originalFocus, assessedFoci) {
 }
 
 // Render Assessment Results
-function renderAssessment(data) {
+//
+// `options.adjusted` marks results produced from the rewritten scenario. In that case
+// the reference focus identities come from the target-mix snapshot, including
+// omitted foci, rather than the live editor's potentially changed foci.
+function renderAssessment(data, options) {
+    const config = options || {};
+    const isAdjusted = !!config.adjusted && targetFocusMix.length > 0;
     const totalPoints = data.foci.reduce((sum, f) => sum + f.score, 0);
-    
-    // Merge assessment results with all original foci
+    const referenceFoci = isAdjusted
+        ? targetFocusMix.map(function (entry) {
+            return { focus: entry.focus, prompt_section: entry.prompt_section };
+        })
+        : foci;
+
+    // Merge assessment results with all reference foci
     // This ensures all foci are shown, even if they got 0 points
     const allFoci = [];
     
-    // For each original focus, try to find a matching assessed focus
-    foci.forEach((originalFocus, index) => {
-        const matched = data.foci.find(row => row.focus_index === index) || matchFocus(originalFocus, data.foci);
+    // Match workflow indices for baseline assessments and saved names for rewrites.
+    referenceFoci.forEach((originalFocus, index) => {
+        const matched = isAdjusted
+            ? data.foci.find(focus => focus.focus === originalFocus.focus)
+            : data.foci.find(row => row.focus_index === index) || matchFocus(originalFocus, data.foci);
         
         if (matched) {
             // Use the matched assessment result, but keep original focus name and section
@@ -3300,10 +3331,10 @@ function renderAssessment(data) {
     
     // Also include any assessed foci that don't match original foci (in case assessment found new ones)
     data.foci.forEach(assessedFocus => {
-        if (Number.isInteger(assessedFocus.focus_index)) return;
-        const alreadyIncluded = allFoci.some(f => 
-            matchFocus({focus: f.focus, prompt_section: f.prompt_section}, [assessedFocus])
-        );
+        if (!isAdjusted && Number.isInteger(assessedFocus.focus_index)) return;
+        const alreadyIncluded = isAdjusted
+            ? allFoci.some(focus => focus.focus === assessedFocus.focus)
+            : allFoci.some(focus => matchFocus(focus, [assessedFocus]));
         if (!alreadyIncluded) {
             allFoci.push(assessedFocus);
         }
@@ -3313,6 +3344,16 @@ function renderAssessment(data) {
     assessmentFoci = allFoci;
     window.assessmentFoci = allFoci;
     window.lastAssessmentApiPayload = data;
+    if (isAdjusted) {
+        // Snapshot the reported result that belongs with the current target snapshot.
+        adjustedReportedFoci = allFoci.map(function (f) {
+            return { focus: f.focus, prompt_section: f.prompt_section, score: f.score || 0 };
+        });
+    } else {
+        // A fresh assessment of the editor scenario's output is not comparable to a
+        // target mix that was sent for a rewritten scenario; drop the stale pairing.
+        adjustedReportedFoci = [];
+    }
     if (window.FocalPromptReport && typeof window.FocalPromptReport.refresh === 'function') {
         window.FocalPromptReport.refresh();
     }
@@ -3350,12 +3391,13 @@ function renderAssessment(data) {
     html += '</div>';
     assessmentResults.innerHTML = html;
     
-    // Show focus control section and initialize sliders with all foci
+    // Show focus control section and initialize sliders with all foci.
+    // An adjusted reassessment must not reset the target mix the user set.
     focusControlSection.classList.remove('hidden');
-    initializeSlidersFromAssessment(allFoci);
+    initializeSlidersFromAssessment(allFoci, { preserveTargets: isAdjusted });
     
-    // Show compare button only if we've generated output from adjusted prompt
-    if (window.generatedFromAdjustedPrompt && Object.keys(intendedDistribution).length > 0) {
+    // Comparison needs a target snapshot and reported results from the rewritten scenario.
+    if (targetFocusMix.length > 0 && adjustedReportedFoci.length > 0) {
         compareIntentBtn.classList.remove('hidden');
     } else {
         compareIntentBtn.classList.add('hidden');
@@ -3419,47 +3461,51 @@ if (promptInput) {
     });
 }
 
-
-function rewriteWeightBand(weight) {
-    const w = Number(weight) || 0;
-    if (w <= 0) return 'omit';
-    if (w <= 29) return 'minimize';
-    if (w <= 69) return 'retain';
-    return 'emphasize';
-}
-
-// Initialize sliders from assessment results
-function initializeSlidersFromAssessment(assessmentFoci) {
-    if (!assessmentFoci || assessmentFoci.length === 0) {
+// Initialize the target focus mix sliders from assessment results.
+//
+// `options.preserveTargets` keeps the targets the user already set (matched by focus
+// identity) instead of re-seeding them from the new reported scores, so reassessing
+// the adjusted output never silently rewrites what the user asked for.
+function initializeSlidersFromAssessment(latestFoci, options) {
+    if (!latestFoci || latestFoci.length === 0) {
         slidersContainer.innerHTML = '<p class="empty-state">No assessment data available.</p>';
         return;
     }
-    
-    // Initialize rewrite weights from reported-focus scores (including 0).
-    // reported_focus_score stays on the focus; focusWeights holds editable rewrite_weight.
+    const config = options || {};
+    const previousTargets = {};
+    if (config.preserveTargets) {
+        targetFocusMix.forEach(function (entry) {
+            previousTargets[entry.focus] = entry.target;
+        });
+    }
+
+    // Seed targets from reported-focus scores (including 0) unless preserving.
+    // reported_focus_score stays on the focus; focusWeights holds the editable target.
     focusWeights = {};
-    assessmentFoci.forEach((focus, index) => {
+    latestFoci.forEach((focus, index) => {
         const reported = (typeof focus.score === 'number') ? focus.score : (parseFloat(focus.score) || 0);
         focus.reported_focus_score = reported;
-        // Do not treat a reported 0 as "missing" — keep exact 0 as rewrite intent seed.
-        focusWeights[index] = reported;
-        focus.rewrite_weight = reported;
+        const preserved = previousTargets[focus.focus];
+        // Do not treat a reported 0 as "missing" — an exact 0 is a real target.
+        const value = config.preserveTargets ? (preserved ?? 0) : reported;
+        focusWeights[index] = value;
+        focus.rewrite_weight = value;
     });
-    
-    // Normalize to 100 if total is not 100
+
+    // Normalize freshly seeded scores; never change the saved target mix.
     const total = Object.values(focusWeights).reduce((sum, val) => sum + val, 0);
-    if (total > 0 && Math.abs(total - 100) > 0.1) {
-        // Redistribute proportionally to make total 100
+    if (!config.preserveTargets && total > 0 && Math.abs(total - 100) > 0.1) {
         Object.keys(focusWeights).forEach(key => {
             focusWeights[key] = (focusWeights[key] / total) * 100;
         });
+        latestFoci.forEach(function (focus, index) { focus.rewrite_weight = focusWeights[index]; });
     }
-    
+
     renderSliders();
     updateTotalBudget();
 }
 
-// Render sliders
+// Render the global target focus mix sliders
 function renderSliders() {
     if (assessmentFoci.length === 0) {
         slidersContainer.innerHTML = '<p class="empty-state">No assessment data available.</p>';
@@ -3481,9 +3527,8 @@ function renderSliders() {
                     <div class="slider-value" id="slider-value-${index}">${weight.toFixed(1)}%</div>
                 </div>
                 <div style="font-size: 0.8em; color: #64748b; margin-bottom: 6px;">
-                    Rewrite weight (editable)
+                    Target share of the global focus mix (editable)
                     · reported focus: ${(typeof focus.reported_focus_score === 'number' ? focus.reported_focus_score : (focus.score || 0)).toFixed(1)}%
-                    · band: <span id="slider-band-${index}">${rewriteWeightBand(weight)}</span>
                 </div>
                 <div class="slider-wrapper">
                     <input 
@@ -3524,49 +3569,41 @@ function renderSliders() {
                 }
             });
             
-            // Adjust other sliders proportionally to maintain 100% total
-            if (delta !== 0 && otherTotal > 0) {
-                const remainingBudget = 100 - newValue;
-                
-                if (remainingBudget < 0) {
-                    // Can't go above 100%, revert
-                    e.target.value = oldValue;
-                    return;
-                }
-                
-                // Distribute remaining budget proportionally
-                assessmentFoci.forEach((f, i) => {
-                    if (i !== index) {
-                        const oldOtherValue = focusWeights[i] || 0;
-                        if (otherTotal > 0) {
-                            focusWeights[i] = (oldOtherValue / otherTotal) * remainingBudget;
-                        } else {
-                            focusWeights[i] = remainingBudget / (assessmentFoci.length - 1);
-                        }
-                        
-                        // Update slider and display
-                        const otherSlider = document.getElementById(`slider-${i}`);
-                        const otherDisplay = document.getElementById(`slider-value-${i}`);
-                        if (assessmentFoci[i]) {
-                            assessmentFoci[i].rewrite_weight = focusWeights[i];
-                        }
-                        if (otherSlider && otherDisplay) {
-                            otherSlider.value = focusWeights[i];
-                            otherDisplay.textContent = `${focusWeights[i].toFixed(1)}%`;
-                        }
-                        const otherBand = document.getElementById(`slider-band-${i}`);
-                        if (otherBand) otherBand.textContent = rewriteWeightBand(focusWeights[i]);
+            // Redistribute the remaining share so the target mix always totals 100%.
+            const others = assessmentFoci
+                .map(function (f, i) { return i; })
+                .filter(function (i) { return i !== index; });
+            if (delta !== 0 && others.length > 0) {
+                const remainingBudget = Math.max(0, 100 - newValue);
+                others.forEach(function (i) {
+                    const oldOtherValue = focusWeights[i] || 0;
+                    // When every other target is 0 there is no ratio to preserve, so split
+                    // the remainder evenly rather than leaving the total below 100%.
+                    focusWeights[i] = otherTotal > 0
+                        ? (oldOtherValue / otherTotal) * remainingBudget
+                        : remainingBudget / others.length;
+
+                    const otherSlider = document.getElementById(`slider-${i}`);
+                    const otherDisplay = document.getElementById(`slider-value-${i}`);
+                    if (assessmentFoci[i]) {
+                        assessmentFoci[i].rewrite_weight = focusWeights[i];
+                    }
+                    if (otherSlider && otherDisplay) {
+                        otherSlider.value = focusWeights[i];
+                        otherDisplay.textContent = `${focusWeights[i].toFixed(1)}%`;
                     }
                 });
+            } else if (others.length === 0) {
+                // A single focus always carries the whole relative mix.
+                e.target.value = 100;
             }
-            
-            focusWeights[index] = newValue;
+
+            const applied = others.length === 0 ? 100 : newValue;
+            focusWeights[index] = applied;
             if (assessmentFoci[index]) {
-                assessmentFoci[index].rewrite_weight = newValue;
+                assessmentFoci[index].rewrite_weight = applied;
             }
-            valueDisplay.textContent = `${newValue.toFixed(1)}%`;
-            const bandEl = document.getElementById(`slider-band-${index}`);
-            if (bandEl) bandEl.textContent = rewriteWeightBand(newValue);
+            valueDisplay.textContent = `${applied.toFixed(1)}%`;
             
             updateTotalBudget();
         });
@@ -3590,7 +3627,7 @@ function updateTotalBudget() {
     }
 }
 
-// Reset sliders to current assessment values
+// Reset targets to the reported focus scores of the current assessment
 if (resetSlidersBtn) {
     resetSlidersBtn.addEventListener('click', () => {
         if (assessmentFoci.length === 0) return;
@@ -3617,7 +3654,36 @@ if (resetSlidersBtn) {
     });
 }
 
-// Rewrite prompt with emphasis
+// Render the rewritten scenario as role/ID-labelled message blocks so the two
+// developer messages (and every other message) stay visibly distinct, and retained
+// messages are shown unchanged. Falls back to flat text for legacy prompt-only
+// responses and restored legacy workspaces.
+function renderRewrittenScenarioPreview(scenario, fallbackText) {
+    if (!rewrittenPrompt) return;
+    const messages = (scenario && Array.isArray(scenario.messages)) ? scenario.messages : null;
+    if (!messages || messages.length === 0) {
+        rewrittenPrompt.classList.remove('rewritten-scenario');
+        rewrittenPrompt.textContent = fallbackText || '';
+        return;
+    }
+    const blocks = messages.map(function (message) {
+        const retained = message.analysis_mode === 'retain';
+        const content = String(message.content == null ? '' : message.content);
+        const body = content.length
+            ? '<div class="rewritten-message-content">' + escapeHtml(content) + '</div>'
+            : '<div class="rewritten-message-content is-empty">(empty message)</div>';
+        return '<div class="rewritten-message' + (retained ? ' is-retained' : '') + '">' +
+            '<div class="rewritten-message-meta">' +
+            '<span class="rewritten-message-role">' + escapeHtml(message.role || 'user') + '</span>' +
+            '<span class="rewritten-message-id">' + escapeHtml(message.id || '') + '</span>' +
+            '<span class="rewritten-message-mode">' + (retained ? 'Retain · unchanged' : 'Analyse') + '</span>' +
+            '</div>' + body + '</div>';
+    });
+    rewrittenPrompt.classList.add('rewritten-scenario');
+    rewrittenPrompt.innerHTML = blocks.join('');
+}
+
+// Rewrite the scenario toward the global target focus mix
 if (rewritePromptBtn) {
     rewritePromptBtn.addEventListener('click', async () => {
         let scenario;
@@ -3631,11 +3697,12 @@ if (rewritePromptBtn) {
             return;
         }
         
-        // Send current slider values as rewrite_weight (not stale assessment-only scores).
-        const weights = assessmentFoci.map((focus, index) => {
+        // Send the current slider values as the target focus mix (not stale
+        // assessment-only scores). Targets are relative shares of one global mix.
+        const targets = assessmentFoci.map((focus, index) => {
             // Use Number() so an explicit 0 is preserved (|| would also keep 0, but be explicit).
-            const rewriteWeight = Number(focusWeights[index]);
-            const weight = Number.isFinite(rewriteWeight) ? rewriteWeight : 0;
+            const sliderValue = Number(focusWeights[index]);
+            const weight = Number.isFinite(sliderValue) ? sliderValue : 0;
             const sourceFocus = foci.find(function (item) { return item.focus === focus.focus; }) || {};
             return {
                 ...sourceFocus,
@@ -3645,14 +3712,13 @@ if (rewritePromptBtn) {
                     ? focus.reported_focus_score
                     : (focus.score || 0),
                 rewrite_weight: weight,
-                // Legacy alias still accepted by the service:
-                weight: weight,
             };
         });
 
-        if (weights.some(w => w.rewrite_weight <= 0)) {
+        if (targets.some(t => t.rewrite_weight <= 0)) {
             const proceed = confirm(
-                'One or more foci are set to 0% (omit). Removing a focus may change correctness or behavior. ' +
+                'One or more foci have a target of 0%, which asks the rewrite to omit them. ' +
+                'Omitting a focus may change correctness or behavior. ' +
                 'Reported focus is not the same as causal importance. Continue rewrite?'
             );
             if (!proceed) {
@@ -3662,9 +3728,9 @@ if (rewritePromptBtn) {
         
         // Estimate cost before making the request
         try {
-            // Estimate tokens: prompt + foci descriptions + system message + output
-            const promptTokens = Math.ceil(prompt.length / 4);
-            const fociTokens = weights.reduce((sum, f) => {
+            // The joint rewrite includes retained context and the output contract.
+            const promptTokens = Math.ceil(JSON.stringify(scenario).length / 4);
+            const fociTokens = targets.reduce((sum, f) => {
                 const focusDesc = f.prompt_section?.length || 0;
                 const focusName = f.focus?.length || 0;
                 return sum + Math.ceil((focusDesc + focusName) / 4);
@@ -3695,7 +3761,7 @@ if (rewritePromptBtn) {
             // Continue anyway - don't block the request
         }
         
-        showLoading('Rewriting prompt with focus emphasis...');
+        showLoading('Rewriting scenario toward the target focus mix...');
         
         try {
             const response = await fetch('/api/rewrite-prompt', {
@@ -3703,7 +3769,7 @@ if (rewritePromptBtn) {
                 headers: getApiHeaders(),
                 body: JSON.stringify(getApiBody({
                     scenario: scenario,
-                    foci: weights
+                    foci: targets
                 }, 'analysis', 'adjust')),
             });
             
@@ -3718,14 +3784,14 @@ if (rewritePromptBtn) {
                 (rewrittenScenario && rewrittenScenario.messages
                     ? rewrittenScenario.messages.filter(function (m) { return m.analysis_mode === 'analyse'; }).map(function (m) { return m.content; }).join('\n\n')
                     : '')).trim();
-            if (!nextRewritten) {
+            if (!nextRewritten && !rewrittenScenario) {
                 throw new Error(
-                    'Rewrite returned an empty prompt. Try again or adjust focus weights.'
+                    'Rewrite returned an empty scenario. Try again or adjust the target focus mix.'
                 );
             }
-            // Never overwrite the original prompt field — only the rewritten panel.
+            // Never overwrite the original scenario — only the rewritten panel.
             rewrittenPromptText = nextRewritten;
-            rewrittenPrompt.textContent = rewrittenPromptText;
+            renderRewrittenScenarioPreview(rewrittenScenario, rewrittenPromptText);
             rewrittenPromptContainer.classList.remove('hidden');
             if (adjustedOutputContainer) {
                 adjustedOutputContainer.classList.add('hidden');
@@ -3738,15 +3804,19 @@ if (rewritePromptBtn) {
             }
             rewrittenPromptContainer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
             
-            // Store intended distribution for comparison (normalize to 100)
-            const totalWeight = weights.reduce((sum, w) => sum + (w.rewrite_weight || 0), 0);
-            weights.forEach(w => {
-                // Omit (0) stays 0 in the intended mix; do not redistribute zeros upward.
-                intendedDistribution[w.focus] = totalWeight > 0 ? (w.rewrite_weight / totalWeight) * 100 : 0;
+            // Snapshot the target mix exactly as sent (normalized to 100) together with
+            // the focus definitions used, so the later comparison cannot drift.
+            const totalWeight = targets.reduce((sum, t) => sum + (t.rewrite_weight || 0), 0);
+            targetFocusMix = targets.map(function (t) {
+                return {
+                    focus: t.focus,
+                    // Definition excerpt, not a span into the rewritten text.
+                    prompt_section: t.prompt_section,
+                    // A 0 target stays 0 in the mix; zeros are never redistributed upward.
+                    target: totalWeight > 0 ? (t.rewrite_weight / totalWeight) * 100 : 0,
+                };
             });
-            
-            // Don't show compare button yet - wait until after new output is generated and assessed
-            compareIntentBtn.classList.add('hidden');
+            clearAdjustedComparison();
             
         } catch (error) {
             showError('Error rewriting prompt: ' + error.message);
@@ -3760,15 +3830,18 @@ if (rewritePromptBtn) {
 // Generate output with focused prompt
 if (generateFocusedOutputBtn) {
     generateFocusedOutputBtn.addEventListener('click', async () => {
-        if (!rewrittenPromptText) {
-            showErrorModal('Please rewrite the prompt first.');
+        if (!rewrittenScenario && !rewrittenPromptText) {
+            showErrorModal('Please rewrite the scenario first.');
             return;
         }
+        const generationScenario = rewrittenScenario || legacyPromptScenario(rewrittenPromptText);
+        const generationFoci = adjustedAssessmentFoci();
+        clearAdjustedComparison();
         
         // Estimate cost before making the request
         try {
-            // Estimate tokens: rewritten prompt + system message + output
-            const promptTokens = Math.ceil(rewrittenPromptText.length / 4);
+            // Generation uses all messages and the unchanged output contract.
+            const promptTokens = Math.ceil(JSON.stringify(generationScenario).length / 4);
             const systemTokens = 200; // System message overhead
             const estimatedInputTokens = promptTokens + systemTokens;
             const estimatedOutputTokens = Math.ceil(promptTokens * 1.5); // Output is typically 1.5x input length
@@ -3795,14 +3868,14 @@ if (generateFocusedOutputBtn) {
             // Continue anyway - don't block the request
         }
         
-        showLoading('Generating output with focused prompt...');
+        showLoading('Generating output from the rewritten scenario...');
         
         try {
             const response = await fetch('/api/generate-output', {
                 method: 'POST',
                 headers: getApiHeaders(),
                 body: JSON.stringify(getApiBody(
-                    rewrittenScenario ? { scenario: rewrittenScenario } : { prompt: rewrittenPromptText },
+                    { scenario: generationScenario },
                     'mut'
                 , 'adjust')),
             });
@@ -3831,7 +3904,7 @@ if (generateFocusedOutputBtn) {
             const successMsg = document.createElement('div');
             successMsg.className = 'success-message';
             successMsg.style.cssText = 'position: fixed; top: 20px; right: 20px; background: #10b981; color: white; padding: 12px 20px; border-radius: 6px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); z-index: 10000; font-size: 14px;';
-            successMsg.textContent = '✓ Output generated from rewritten prompt (shown below)';
+            successMsg.textContent = '✓ Output generated from rewritten scenario (shown below)';
             document.body.appendChild(successMsg);
             
             setTimeout(() => {
@@ -3842,13 +3915,14 @@ if (generateFocusedOutputBtn) {
                 }, 300);
             }, 3000);
             
-            // Store that we've generated from adjusted prompt
+            // Store that we've generated from the rewritten scenario
             window.generatedFromAdjustedPrompt = true;
             
-            // Auto-assess after generation
-            setTimeout(() => {
-                assessBtn.click();
-            }, 500);
+            await runAssessment({
+                scenario: generationScenario,
+                foci: generationFoci,
+                adjusted: true,
+            });
             
         } catch (error) {
             showError('Error generating output: ' + error.message);
@@ -3859,68 +3933,92 @@ if (generateFocusedOutputBtn) {
     });
 }
 
-// Compare intended vs actual focus
+function clearAdjustedComparison() {
+    adjustedReportedFoci = [];
+    compareIntentBtn.classList.add('hidden');
+    const previous = assessmentResults.querySelector('.comparison-results');
+    if (previous) previous.remove();
+}
+
+// Focus definitions to score the adjusted output against: the identities and
+// definition excerpts captured when the target mix was sent. Span offsets are
+// deliberately dropped — they index the original scenario text, not the rewrite.
+function adjustedAssessmentFoci() {
+    return targetFocusMix.map(function (entry) {
+        return { focus: entry.focus, prompt_section: entry.prompt_section };
+    });
+}
+
+// Compare the requested target focus mix against the reported focus of the output
+// generated from the rewritten scenario.
 if (compareIntentBtn) {
     compareIntentBtn.addEventListener('click', () => {
-        if (Object.keys(intendedDistribution).length === 0) {
-            showErrorModal('Please rewrite the prompt and generate output first.');
+        if (targetFocusMix.length === 0) {
+            showErrorModal('Set a target focus mix and rewrite the scenario first.');
             return;
         }
-        
-        // Get the last assessment results
-        const assessmentDiv = assessmentResults.querySelector('.assessment-foci');
-        if (!assessmentDiv) {
-            showErrorModal('Please assess the output first.');
+        if (adjustedReportedFoci.length === 0) {
+            showErrorModal('Generate an output from the rewritten scenario and assess it first.');
             return;
         }
-        
-        const actualFoci = Array.from(assessmentDiv.querySelectorAll('.assessment-focus')).map(focusEl => {
-            const title = focusEl.querySelector('.assessment-focus-title').textContent.replace(/^\d+\.\s*/, '');
-            const score = parseFloat(focusEl.querySelector('.assessment-focus-score').textContent);
-            return { focus: title, score };
+
+        const reportedByFocus = {};
+        adjustedReportedFoci.forEach(function (entry) {
+            reportedByFocus[entry.focus] = entry.score || 0;
         });
-        
-        // Build comparison
+
         let html = '<div class="comparison-results">';
-        html += '<h3>Intended vs Actual Focus Distribution</h3>';
+        html += '<h3>Target vs Reported Focus</h3>';
         html += '<table class="comparison-table">';
-        html += '<thead><tr><th>Focus</th><th>Intended</th><th>Actual</th><th>Difference</th></tr></thead>';
+        html += '<thead><tr><th>Focus</th><th>Target</th><th>Reported</th><th>Difference</th></tr></thead>';
         html += '<tbody>';
-        
+
         let totalDiff = 0;
-        actualFoci.forEach(actual => {
-            const intended = intendedDistribution[actual.focus] || 0;
-            const diff = actual.score - intended;
+        targetFocusMix.forEach(function (entry) {
+            const target = entry.target || 0;
+            // A focus with a 0% target is still listed: its reported value shows what
+            // the requested omission actually produced.
+            const reported = reportedByFocus[entry.focus] || 0;
+            const diff = reported - target;
             totalDiff += Math.abs(diff);
-            
+
             const diffClass = diff >= 0 ? 'positive' : 'negative';
             const diffSign = diff >= 0 ? '+' : '';
-            
-            html += `
-                <tr>
-                    <td class="focus-name">${escapeHtml(actual.focus)}</td>
-                    <td class="intended-value">${intended.toFixed(1)}%</td>
-                    <td class="actual-value">${actual.score.toFixed(1)}%</td>
-                    <td class="difference ${diffClass}">${diffSign}${diff.toFixed(1)}%</td>
-                </tr>
-            `;
+
+            html += '<tr>' +
+                `<td class="focus-name">${escapeHtml(entry.focus)}</td>` +
+                `<td class="target-value">${target.toFixed(1)}%</td>` +
+                `<td class="reported-value">${reported.toFixed(1)}%</td>` +
+                `<td class="difference ${diffClass}">${diffSign}${diff.toFixed(1)} pp</td>` +
+                '</tr>';
         });
-        
+
+        // Anything the assessment reported that was not part of the target snapshot.
+        adjustedReportedFoci.forEach(function (entry) {
+            const inTarget = targetFocusMix.some(function (t) { return t.focus === entry.focus; });
+            if (inTarget) return;
+            html += '<tr>' +
+                `<td class="focus-name">${escapeHtml(entry.focus)}</td>` +
+                '<td class="target-value">no target</td>' +
+                `<td class="reported-value">${(entry.score || 0).toFixed(1)}%</td>` +
+                '<td class="difference">—</td>' +
+                '</tr>';
+        });
+
         html += '</tbody></table>';
-        
-        const avgDiff = totalDiff / actualFoci.length;
-        html += `<div class="comparison-summary">`;
-        html += `<strong>Average Absolute Difference:</strong> ${avgDiff.toFixed(1)}%<br>`;
-        if (avgDiff < 10) {
-            html += `<span style="color: var(--success-color);">✓ Excellent match! The output closely follows the intended focus distribution.</span>`;
-        } else if (avgDiff < 20) {
-            html += `<span style="color: var(--primary-color);">○ Good match. The output generally follows the intended distribution.</span>`;
-        } else {
-            html += `<span style="color: var(--danger-color);">⚠ Significant difference. Consider adjusting the prompt emphasis or weights.</span>`;
-        }
-        html += `</div>`;
+
+        const meanAbsDiff = totalDiff / targetFocusMix.length;
+        html += '<div class="comparison-summary">';
+        html += `<strong>Mean absolute difference:</strong> ${meanAbsDiff.toFixed(1)} percentage points`;
+        html += '<p style="margin-top: 8px;">Differences are in percentage points between the target share you requested and the model\'s reported focus for this single completion. ' +
+            'Reported focus is an introspective self-report with unknown error, and a single sample carries sampling variation, so small differences should not be read as a meaningful gap. ' +
+            'This comparison describes one run; it does not establish that the rewrite caused the reported values, and it is not a quality score.</p>';
         html += '</div>';
-        
+        html += '</div>';
+
+        // Replace any earlier comparison so a stale target/reported pairing is not left on screen.
+        const previous = assessmentResults.querySelector('.comparison-results');
+        if (previous) previous.remove();
         assessmentResults.insertAdjacentHTML('beforeend', html);
     });
 }
@@ -8586,7 +8684,8 @@ function collectPromptAnalysisWorkspace() {
             assessment_foci: assessmentFoci.map(function (f) { return { ...f }; }),
             rewritten_prompt: rewrittenPromptText,
             rewritten_scenario: rewrittenScenario,
-            intended_distribution: { ...intendedDistribution },
+            target_focus_mix: targetFocusMix.map(function (t) { return { ...t }; }),
+            adjusted_reported_foci: adjustedReportedFoci.map(function (f) { return { ...f }; }),
             generated_from_adjusted: !!window.generatedFromAdjustedPrompt,
             adjusted_output: adjustedOutput ? adjustedOutput.textContent : '',
         },
@@ -8703,6 +8802,7 @@ function restoreFocusControlState(fc) {
     if (!fc) {
         return;
     }
+    clearAdjustedComparison();
     if (fc.assessment_foci && fc.assessment_foci.length) {
         assessmentFoci = fc.assessment_foci.map(function (f) { return { ...f }; });
         if (focusControlSection) {
@@ -8714,26 +8814,39 @@ function restoreFocusControlState(fc) {
         renderSliders();
         updateTotalBudget();
     }
-    if (fc.rewritten_prompt) {
-        rewrittenPromptText = fc.rewritten_prompt;
+    if (fc.rewritten_scenario || fc.rewritten_prompt) {
+        rewrittenPromptText = fc.rewritten_prompt || '';
         rewrittenScenario = fc.rewritten_scenario || null;
-        if (rewrittenPrompt) {
-            rewrittenPrompt.textContent = rewrittenPromptText;
-        }
+        renderRewrittenScenarioPreview(rewrittenScenario, rewrittenPromptText);
         if (rewrittenPromptContainer) {
             rewrittenPromptContainer.classList.remove('hidden');
         }
     } else {
         rewrittenPromptText = '';
         rewrittenScenario = null;
-        if (rewrittenPrompt) {
-            rewrittenPrompt.textContent = '';
-        }
+        renderRewrittenScenarioPreview(null, '');
         if (rewrittenPromptContainer) {
             rewrittenPromptContainer.classList.add('hidden');
         }
     }
-    intendedDistribution = fc.intended_distribution ? { ...fc.intended_distribution } : {};
+    if (Array.isArray(fc.target_focus_mix)) {
+        targetFocusMix = fc.target_focus_mix.map(function (t) { return { ...t }; });
+    } else if (fc.intended_distribution) {
+        // Older workspaces stored the target mix as a focus -> percentage map.
+        targetFocusMix = Object.keys(fc.intended_distribution).map(function (name) {
+            const source = assessmentFoci.find(function (f) { return f.focus === name; }) || {};
+            return {
+                focus: name,
+                prompt_section: source.prompt_section || '',
+                target: Number(fc.intended_distribution[name]) || 0,
+            };
+        });
+    } else {
+        targetFocusMix = [];
+    }
+    adjustedReportedFoci = Array.isArray(fc.adjusted_reported_foci)
+        ? fc.adjusted_reported_foci.map(function (f) { return { ...f }; })
+        : [];
     window.generatedFromAdjustedPrompt = !!fc.generated_from_adjusted;
     if (fc.generated_from_adjusted && fc.adjusted_output) {
         if (adjustedOutput) {
@@ -8742,9 +8855,6 @@ function restoreFocusControlState(fc) {
         if (adjustedOutputContainer) {
             adjustedOutputContainer.classList.remove('hidden');
         }
-        if (compareIntentBtn) {
-            compareIntentBtn.classList.remove('hidden');
-        }
     } else {
         if (adjustedOutput) {
             adjustedOutput.textContent = '';
@@ -8752,7 +8862,12 @@ function restoreFocusControlState(fc) {
         if (adjustedOutputContainer) {
             adjustedOutputContainer.classList.add('hidden');
         }
-        if (compareIntentBtn) {
+    }
+    if (compareIntentBtn) {
+        // Comparison stays available only while both halves of the pairing exist.
+        if (targetFocusMix.length > 0 && adjustedReportedFoci.length > 0) {
+            compareIntentBtn.classList.remove('hidden');
+        } else {
             compareIntentBtn.classList.add('hidden');
         }
     }
