@@ -800,7 +800,7 @@ function adjustFociForPromptEdit(fociList, previousText, nextText) {
 
 function remapFocusMessageId(previousId, nextId) {
     if (!previousId || previousId === nextId) return;
-    foci = foci.map(function (focus) {
+    function remap(focus) {
         const updated = { ...focus };
         if (updated.message_id === previousId) updated.message_id = nextId;
         if (Array.isArray(updated.message_ids)) {
@@ -816,7 +816,10 @@ function remapFocusMessageId(previousId, nextId) {
             });
         }
         return updated;
-    });
+    }
+    foci = foci.map(remap);
+    batchFoci = batchFoci.map(remap);
+    agentFoci = agentFoci.map(remap);
     if (activeScenarioMessageId === previousId) activeScenarioMessageId = nextId;
 }
 
@@ -955,6 +958,28 @@ function legacyPromptScenario(prompt) {
     };
 }
 
+// Keep readable names in the editor and portable, unique IDs in requests and spans.
+function syncScenarioMessageId(card, index) {
+    const previousId = card.dataset.messageId;
+    const name = card.querySelector('.scenario-message-id').value.trim();
+    const portable = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
+    const base = name.normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^A-Za-z0-9_.-]+/g, '-').replace(/^[^A-Za-z0-9]+/, '')
+        .slice(0, 128) || (portable.test(previousId || '') ? previousId : 'message-' + (index + 1));
+    const occupied = new Set(Array.from(document.querySelectorAll('#scenario-messages .scenario-message-card'))
+        .filter(function (other) { return other !== card; })
+        .map(function (other) { return other.dataset.messageId; }));
+    let nextId = base;
+    let suffix = 2;
+    while (occupied.has(nextId)) {
+        const ending = '-' + suffix++;
+        nextId = base.slice(0, 128 - ending.length) + ending;
+    }
+    remapFocusMessageId(previousId, nextId);
+    card.dataset.messageId = nextId;
+    return nextId;
+}
+
 function scenarioMessageCardHtml(message, index) {
     const roles = ['system', 'developer', 'user', 'assistant'];
     const modes = ['analyse', 'retain'];
@@ -963,7 +988,7 @@ function scenarioMessageCardHtml(message, index) {
         <div class="scenario-order-rail" aria-hidden="true">${index + 1}</div>
         <div class="scenario-message-body">
             <div class="scenario-message-controls">
-                <input class="scenario-message-id" value="${escapeScenarioAttribute(message.id)}" aria-label="Message ID">
+                <input class="scenario-message-id" value="${escapeScenarioAttribute(message.id)}" aria-label="Message name">
                 <select class="scenario-role" aria-label="Message role">${roles.map(function (role) {
                     return `<option value="${role}"${role === message.role ? ' selected' : ''}>${role[0].toUpperCase() + role.slice(1)}</option>`;
                 }).join('')}</select>
@@ -1048,18 +1073,20 @@ function readMainScenario(options) {
     const config = options || {};
     const cards = Array.from(document.querySelectorAll('#scenario-messages .scenario-message-card'));
     const messages = cards.map(function (card, index) {
-        const id = card.querySelector('.scenario-message-id').value.trim();
+        const id = syncScenarioMessageId(card, index);
         const role = card.querySelector('.scenario-role').value;
         const analysisMode = card.querySelector('.scenario-analysis-mode').value;
         const content = card.querySelector('.scenario-content').value;
-        if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(id)) {
-            throw new Error('Message ' + (index + 1) + ' needs a portable ID.');
-        }
         const message = { id: id, role: role, content: content, analysis_mode: analysisMode };
         const inputName = card.querySelector('.scenario-input-name').value.trim();
         if (analysisMode === 'retain' && inputName) message.input_name = inputName;
         return message;
     });
+    const scenario = { version: 1, messages: messages };
+    const validation = validateScenarioOutputContract();
+    if (validation.contract) scenario.output_contract = validation.contract;
+    // Saving a draft must not require an inference-ready conversation or schema.
+    if (config.draft) return scenario;
     if (!messages.length) throw new Error('Add at least one message.');
     if (new Set(messages.map(function (message) { return message.id; })).size !== messages.length) {
         throw new Error('Message IDs must be unique.');
@@ -1082,13 +1109,40 @@ function readMainScenario(options) {
             throw new Error('Named inputs must start with a letter or underscore.');
         }
     });
-    const scenario = { version: 1, messages: messages };
-    const validation = validateScenarioOutputContract();
     if (validation.error && !config.allowInvalidContract) {
         throw new Error('Output contract: ' + validation.error);
     }
-    if (validation.contract) scenario.output_contract = validation.contract;
     return scenario;
+}
+
+function collectScenarioEditorDraft() {
+    return {
+        message_names: Array.from(document.querySelectorAll('#scenario-messages .scenario-message-card'))
+            .map(function (card) {
+                return { id: card.dataset.messageId, name: card.querySelector('.scenario-message-id').value };
+            }),
+        output_contract: {
+            enabled: document.getElementById('scenario-contract-enabled').checked,
+            name: document.getElementById('scenario-contract-name').value,
+            schema: document.getElementById('scenario-contract-schema').value,
+        },
+    };
+}
+
+function restoreScenarioEditorDraft(draft) {
+    if (!draft) return;
+    const names = new Map((draft.message_names || []).map(function (item) { return [item.id, item.name]; }));
+    document.querySelectorAll('#scenario-messages .scenario-message-card').forEach(function (card) {
+        if (names.has(card.dataset.messageId)) card.querySelector('.scenario-message-id').value = names.get(card.dataset.messageId);
+    });
+    if (draft.output_contract) {
+        const contract = draft.output_contract;
+        document.getElementById('scenario-contract-enabled').checked = !!contract.enabled;
+        document.getElementById('scenario-contract-fields').classList.toggle('hidden', !contract.enabled);
+        document.getElementById('scenario-contract-name').value = contract.name;
+        document.getElementById('scenario-contract-schema').value = contract.schema;
+        validateScenarioOutputContract();
+    }
 }
 
 function scenarioRequestPayload(extra) {
@@ -1105,8 +1159,8 @@ function scenarioInputNames() {
     }
 }
 
-function getBatchScenario() {
-    const scenario = JSON.parse(JSON.stringify(readMainScenario()));
+function getBatchScenario(options) {
+    const scenario = JSON.parse(JSON.stringify(readMainScenario(options)));
     const batchText = batchPromptInput ? batchPromptInput.value : '';
     if (batchText && batchText.trim()) {
         const firstAnalysed = scenario.messages.find(function (message) {
@@ -1132,7 +1186,6 @@ function scenarioWithAgentInput(chatContent) {
 function updateScenarioOrderRails() {
     document.querySelectorAll('#scenario-messages .scenario-message-card').forEach(function (card, index) {
         card.querySelector('.scenario-order-rail').textContent = String(index + 1);
-        card.dataset.messageId = card.querySelector('.scenario-message-id').value.trim();
     });
 }
 
@@ -1176,9 +1229,8 @@ if (scenarioEditor) {
         }
         if (event.target.matches('.scenario-message-id')) {
             const previousId = card.dataset.messageId;
-            const nextId = event.target.value.trim();
-            remapFocusMessageId(previousId, nextId);
-            updateScenarioOrderRails();
+            const nextId = syncScenarioMessageId(card, Array.from(card.parentNode.children).indexOf(card));
+            if (nextId !== previousId) renderFoci();
         }
         if (event.target.matches('.scenario-input-name')) {
             updateManualInputFields();
@@ -2830,7 +2882,7 @@ function getScenarioCoverageData() {
             return card.querySelector('.scenario-analysis-mode').value === 'analyse';
         }).map(function (card) {
             return {
-                id: card.querySelector('.scenario-message-id').value.trim(),
+                id: card.dataset.messageId,
                 role: card.querySelector('.scenario-role').value,
                 content: card.querySelector('.scenario-content').value
             };
@@ -8674,7 +8726,8 @@ function collectPromptAnalysisWorkspace() {
         || null;
     return {
         prompt: promptInput ? promptInput.value : '',
-        scenario: readMainScenario(),
+        scenario: readMainScenario({ draft: true }),
+        scenario_editor: collectScenarioEditorDraft(),
         output: outputInput ? outputInput.value : '',
         foci: foci,
         assessment_payload: window.lastAssessmentApiPayload || null,
@@ -8728,7 +8781,7 @@ function collectWorkspaceSession() {
         prompt_analysis: collectPromptAnalysisWorkspace(),
         batch_analysis: {
             prompt: batchPromptInput ? batchPromptInput.value : '',
-            scenario: getBatchScenario(),
+            scenario: getBatchScenario({ draft: true }),
             foci: batchFoci,
             pairs: batchPairs,
             results: window.batchResultsData || null,
@@ -8904,6 +8957,7 @@ function restorePromptAnalysisWorkspace(pa) {
     }
     if (pa.scenario) setMainScenario(pa.scenario);
     else if (pa.prompt != null) setMainScenario(legacyPromptScenario(pa.prompt));
+    restoreScenarioEditorDraft(pa.scenario_editor);
     if (pa.output != null && outputInput) {
         outputInput.value = pa.output;
     }
@@ -8991,11 +9045,11 @@ function restorePromptAnalysisWorkspace(pa) {
     }
 }
 
-function restoreBatchAnalysisWorkspace(ba) {
+function restoreBatchAnalysisWorkspace(ba, preserveMainScenario) {
     if (!ba) {
         return;
     }
-    if (ba.scenario) setMainScenario(ba.scenario);
+    if (ba.scenario && !preserveMainScenario) setMainScenario(ba.scenario);
     if (batchPromptInput && ba.prompt != null) {
         batchPromptInput.value = ba.prompt;
     }
@@ -9076,7 +9130,7 @@ function restoreAgentBuilderWorkspace(ab) {
 function restoreWorkspaceSession(data) {
     restoreModelSettings(data);
     restorePromptAnalysisWorkspace(data.prompt_analysis);
-    restoreBatchAnalysisWorkspace(data.batch_analysis);
+    restoreBatchAnalysisWorkspace(data.batch_analysis, !!data.prompt_analysis);
     restoreAgentBuilderWorkspace(data.agent_builder);
     if (data.optimization) {
         if (optimizationResults) {
@@ -9092,16 +9146,24 @@ function restoreWorkspaceSession(data) {
 }
 
 function exportWorkspaceSessionFile() {
-    const payload = collectWorkspaceSession();
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'focalprompt-workspace-' + new Date().toISOString().split('T')[0] + '.json';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    let url;
+    let anchor;
+    try {
+        const payload = collectWorkspaceSession();
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+        url = URL.createObjectURL(blob);
+        anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = 'focalprompt-workspace-' + new Date().toISOString().split('T')[0] + '.json';
+        document.body.appendChild(anchor);
+        anchor.click();
+    } catch (error) {
+        showErrorModal('Could not export workspace: ' + error.message);
+    } finally {
+        if (anchor && anchor.parentNode) anchor.remove();
+        // Let the browser start the download before releasing its object URL.
+        if (url) setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    }
 }
 
 function importWorkspaceSessionFile(file) {
