@@ -3,6 +3,7 @@
     'use strict';
     let state = null;
     let busy = false;
+    const assessmentProtocol = 'context-grounded-v2';
     const el = id => document.getElementById(id);
     const esc = value => escapeHtml(String(value == null ? '' : value));
     const number = (value, places = 1) => value == null ? '—' : Number(value).toFixed(places);
@@ -41,8 +42,17 @@
             if (!state) { status.textContent = ''; return; }
             requireCurrent();
             status.textContent = 'Current run: ' + state.context.model.provider + '/' + state.context.model.model
-                + ' · ' + state.context.n_baseline + ' outputs · temperature ' + state.context.temperature;
+                + ' · ' + state.context.n_baseline + ' baseline outputs · generation temperature ' + state.context.temperature;
+            if (state.prospective.assessment_protocol !== assessmentProtocol) {
+                status.textContent += ' · Saved prediction uses an earlier assessment method. Predict again to start a new run.';
+            }
         } catch (error) { status.textContent = error.message; }
+    }
+
+    function requireCurrentMethod(current) {
+        if (current.prospective.assessment_protocol !== assessmentProtocol) {
+            throw new Error('The assessment method has been updated. Start a new prediction in step 2 before continuing. Your saved results remain available.');
+        }
     }
 
     async function post(path, payload, model) {
@@ -98,6 +108,7 @@
 
     async function sampleBaseline() {
         const current = requireCurrent();
+        requireCurrentMethod(current);
         // Clicking again after a completed run explicitly starts a fresh sample set.
         if (current.diagnostics) {
             current.samples = [];
@@ -133,6 +144,7 @@
 
     async function retrospective() {
         const current = requireCurrent();
+        requireCurrentMethod(current);
         const c = current.context;
         if (!current.diagnostics || current.samples.filter(Boolean).length !== c.n_baseline) {
             throw new Error('Finish baseline sampling and diagnostics in step 3 first.');
@@ -152,8 +164,20 @@
     }
 
     function allocationTable(assessment) {
-        return '<div class="workflow-table-wrap"><table class="workflow-table"><thead><tr><th>Focus</th><th>Budget</th><th>Justification</th></tr></thead><tbody>'
+        const applicability = {direct: 'Direct contribution', background: 'Background constraint', inactive: 'Inactive for this response'};
+        const request = assessment.request_summary ? '<p><strong>Current request (model interpretation):</strong> '
+            + esc(assessment.request_summary) + '</p>' : '';
+        const evidence = assessment.request_evidence?.length ? '<details><summary>Evidence used to identify the request</summary>'
+            + assessment.request_evidence.map(item => '<p><strong>' + esc(item.message_id) + ':</strong> “'
+                + esc(item.quote) + '”</p>').join('') + '</details>' : '';
+        const temperature = assessment.assessment_temperature != null ? '<p class="info-text">Assessment temperature: '
+            + esc(assessment.assessment_temperature) + '</p>' : '';
+        const normalized = assessment.budget_normalized ? '<p class="info-text">The model’s scores totaled '
+            + esc(assessment.raw_score_total) + '. Rescaled proportionally to 100%; relative weights and zero scores are unchanged.</p>' : '';
+        return request + evidence + temperature + normalized
+            + '<div class="workflow-table-wrap"><table class="workflow-table"><thead><tr><th>Focus</th><th>Budget</th><th>Justification</th></tr></thead><tbody>'
             + assessment.foci.map(row => '<tr><th scope="row">' + (row.focus_index + 1) + '. ' + esc(row.focus)
+                + (applicability[row.applicability] ? '<br><span class="info-text">' + applicability[row.applicability] + '</span>' : '')
                 + '</th><td><strong>' + number(row.score) + '%</strong><div class="workflow-budget"><span style="width:'
                 + Math.min(100, Math.max(0, Number(row.score))) + '%"></span></div></td><td>' + esc(row.explanation) + '</td></tr>').join('')
             + '</tbody></table></div>';
@@ -218,7 +242,8 @@
                 + (state.diagnostics ? ' · group ' + (state.diagnostics.output_distribution.membership[i] + 1) : '')
                 + '</summary><pre>' + esc(sample.content) + '</pre></details>' : '').join('') : '';
         if (el('retrospective-results')) el('retrospective-results').innerHTML = state ?
-            (state.summary ? comparisonTable(state.summary) : '<p class="info-text">' + state.retrospective.filter(Boolean).length + ' outputs assessed.</p>')
+            (state.summary ? '<p class="info-text">Retrospective assessments use temperature 0.2; generation temperature is shown above.</p>'
+                + comparisonTable(state.summary) : '<p class="info-text">' + state.retrospective.filter(Boolean).length + ' outputs assessed.</p>')
             + state.retrospective.map((assessment, i) => assessment ? '<details class="workflow-output"><summary>Output ' + (i + 1)
                 + ' · retrospective allocation</summary><pre>' + esc(state.samples[i].content) + '</pre>' + allocationTable(assessment) + '</details>' : '').join('') : '';
         renderAblationComparison(global.singleAblationResults);

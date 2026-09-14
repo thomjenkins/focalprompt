@@ -10,7 +10,7 @@ from flask import Flask
 
 from core.focal_assessor import FocalAssessor
 from services.focus_workflow_service import (
-    FocusWorkflowService, attach_focus_workflow, compare_assessments, validate_allocation,
+    ASSESSMENT_PROTOCOL, FocusWorkflowService, attach_focus_workflow, compare_assessments, validate_allocation,
 )
 from utils.output_distribution import describe_output_distribution
 
@@ -34,9 +34,10 @@ def foci():
 
 
 def allocation(first=60):
-    return {'foci': [
-        {'focus_index': 1, 'score': 100 - first, 'explanation': 'Sources support the response.'},
-        {'focus_index': 0, 'score': first, 'explanation': 'A brief answer is appropriate.'},
+    return {'request_summary': 'Answer the retained question briefly with sources.',
+            'request_evidence': [{'message_id': 'chat', 'quote': 'question'}], 'foci': [
+        {'focus_index': 1, 'applicability': 'direct', 'score': 100 - first, 'explanation': 'Sources support the response.'},
+        {'focus_index': 0, 'applicability': 'background', 'score': first, 'explanation': 'A brief answer is appropriate.'},
     ]}
 
 
@@ -59,11 +60,74 @@ def test_assessment_isolation_and_retained_input(scenario, foci):
     assert request['model'] == forecast['model'] == 'same-model'
     assert scenario == before
     assert [f['score'] for f in forecast['foci']] == [60, 40]
+    assert forecast['request_evidence'] == [{'message_id': 'chat', 'quote': 'question'}]
+    assert forecast['assessment_protocol'] == ASSESSMENT_PROTOCOL
+    assert forecast['assessment_temperature'] == request['temperature'] == 0.2
     service.assess(scenario, foci, phase='retrospective', output='Only this output')
     source = json.loads(provider.chat_completion.call_args.kwargs['messages'][1]['content'])
     assert source['output'] == 'Only this output'
     assert 'prospective' not in source
     assert 'retrospective' not in source
+
+
+@pytest.mark.parametrize('mutation', ['missing_summary', 'missing_evidence', 'fabricated_quote',
+                                     'unknown_message', 'instructions_only', 'missing_applicability',
+                                     'invalid_applicability', 'inactive_with_budget'])
+def test_live_assessment_requires_grounding(scenario, foci, mutation):
+    payload = allocation()
+    if mutation == 'missing_summary': payload.pop('request_summary')
+    if mutation == 'missing_evidence': payload.pop('request_evidence')
+    if mutation == 'fabricated_quote': payload['request_evidence'][0]['quote'] = 'Invented request'
+    if mutation == 'unknown_message': payload['request_evidence'][0]['message_id'] = 'missing'
+    if mutation == 'instructions_only': payload['request_evidence'] = [{'message_id': 'instructions', 'quote': 'Be concise.'}]
+    if mutation == 'missing_applicability': payload['foci'][0].pop('applicability')
+    if mutation == 'invalid_applicability': payload['foci'][0]['applicability'] = []
+    if mutation == 'inactive_with_budget': payload['foci'][0]['applicability'] = 'inactive'
+    with pytest.raises(ValueError):
+        validate_allocation(payload, foci, scenario=scenario)
+
+
+def test_grounding_can_use_analysed_user_request_and_preserves_zero_and_equal_scores(scenario, foci):
+    scenario['messages'][-1]['analysis_mode'] = 'analyse'
+    payload = allocation(50)
+    result = validate_allocation(payload, foci, scenario=scenario)
+    assert [f['score'] for f in result['foci']] == [50, 50]
+    payload = allocation(100)
+    payload['foci'][0]['applicability'] = 'inactive'
+    result = validate_allocation(payload, foci, scenario=scenario)
+    assert result['foci'][1]['score'] == 0
+    assert result['foci'][1]['applicability'] == 'inactive'
+
+
+def test_rescaling_preserves_model_ratios_raw_scores_and_zeros(scenario, foci):
+    payload = allocation()
+    payload['foci'][0]['score'] = 10
+    payload['foci'][1]['score'] = 20
+    result = validate_allocation(payload, foci, scenario=scenario, normalize_budget=True)
+    assert result['budget_normalized'] is True
+    assert result['raw_score_total'] == 30
+    assert [f['raw_score'] for f in result['foci']] == [20, 10]
+    assert result['foci'][0]['score'] / result['foci'][1]['score'] == 2
+    assert sum(f['score'] for f in result['foci']) == pytest.approx(100)
+    payload['foci'][0].update(score=0, applicability='inactive')
+    result = validate_allocation(payload, foci, scenario=scenario, normalize_budget=True)
+    assert [f['score'] for f in result['foci']] == [100, 0]
+    payload['foci'][1]['score'] = 0
+    with pytest.raises(ValueError, match='sum to 100'):
+        validate_allocation(payload, foci, scenario=scenario, normalize_budget=True)
+
+
+def test_comparison_preserves_legacy_runs_but_refuses_mixed_methods(foci):
+    legacy = allocation()
+    legacy.pop('request_summary')
+    legacy.pop('request_evidence')
+    for row in legacy['foci']: row.pop('applicability')
+    assert compare_assessments(foci, legacy, [legacy])['n_outputs'] == 1
+    new = {**allocation(), 'assessment_protocol': ASSESSMENT_PROTOCOL}
+    assert compare_assessments(foci, new, [new])['n_outputs'] == 1
+    for before, after in ((legacy, new), (new, legacy)):
+        with pytest.raises(ValueError, match='same assessment method'):
+            compare_assessments(foci, before, [after])
 
 
 @pytest.mark.parametrize('bad_scores', [[-1, 101], [0, 0], [float('nan'), 100], [True, 99], [50, 49]])

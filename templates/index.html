@@ -379,7 +379,8 @@
                     <button id="predict-focus-btn" class="btn btn-primary">Predict Focus</button>
                 </div>
                 <div class="card-body">
-                    <p class="info-text">Given the full scenario and retained chat, the model predicts a 100% budget across the labelled foci, with a short justification for each. Steps 2–4 use the baseline model selected below.</p>
+                    <p class="info-text">The model identifies the current request from the full scenario and retained chat, then predicts a 100% budget across the labelled foci. Each focus is marked direct, background or inactive, with a justification tied to this request. Retained chat informs the prediction but does not receive a separate budget share.</p>
+                    <p class="info-text">Steps 2–4 use the baseline model selected below. Prediction and retrospective assessment use temperature 0.2; baseline generation uses the configurable temperature in step 3.</p>
                     <p id="focus-workflow-status" class="info-text" role="status"></p>
                     <div id="prospective-results"><p class="empty-state">Label foci, then predict their contribution before sampling outputs.</p></div>
                 </div>
@@ -427,7 +428,7 @@
                 </div>
                 <div class="card-body">
                     <p class="info-text">
-                        Each baseline output gets an independent 100% focus self-assessment and short justifications. Compare their average with the prospective prediction. These are behavioural self-reports, not internal attention measurements. The model selector here applies only to the optional single-output assessment.
+                        Each baseline output gets an independent 100% focus self-assessment at temperature 0.2, with justifications grounded in that output. Compare their average with the prospective prediction. These are behavioural self-reports, not internal attention measurements. The model selector here applies only to the optional single-output assessment.
                     </p>
                     <div id="retrospective-results"></div>
                     <div id="assessment-results" class="assessment-results">
