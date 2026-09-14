@@ -967,7 +967,6 @@ function scenarioMessageCardHtml(message, index) {
                 <input class="scenario-input-name${message.analysis_mode === 'analyse' ? ' hidden' : ''}" value="${escapeScenarioAttribute(inputName)}" placeholder="Input name" aria-label="Named batch input">
                 <button type="button" class="scenario-move-up btn btn-outline btn-small" aria-label="Move message up">↑</button>
                 <button type="button" class="scenario-move-down btn btn-outline btn-small" aria-label="Move message down">↓</button>
-    validateScenarioOutputContract();
                 <button type="button" class="scenario-delete btn btn-outline btn-small">Delete</button>
             </div>
             <textarea${index === 0 ? ' id="prompt-input"' : ''} class="textarea-large scenario-content" rows="${message.analysis_mode === 'analyse' ? 6 : 4}">${escapeHtml(message.content || '')}</textarea>
@@ -975,9 +974,6 @@ function scenarioMessageCardHtml(message, index) {
     </article>`;
 }
 
-function setMainScenario(scenario) {
-    const normalized = scenario && Array.isArray(scenario.messages) ? scenario : defaultInferenceScenario();
-    const container = document.getElementById('scenario-messages');
 function validateScenarioOutputContract() {
     const enabled = document.getElementById('scenario-contract-enabled');
     const schemaInput = document.getElementById('scenario-contract-schema');
@@ -1016,6 +1012,9 @@ function validateScenarioOutputContract() {
     };
 }
 
+function setMainScenario(scenario) {
+    const normalized = scenario && Array.isArray(scenario.messages) ? scenario : defaultInferenceScenario();
+    const container = document.getElementById('scenario-messages');
     if (!container) return;
     container.innerHTML = normalized.messages.map(scenarioMessageCardHtml).join('');
     const enabled = document.getElementById('scenario-contract-enabled');
@@ -1028,6 +1027,7 @@ function validateScenarioOutputContract() {
         if (name) name.value = normalized.output_contract.name || 'model_output';
         if (schema) schema.value = JSON.stringify(normalized.output_contract.schema || {}, null, 2);
     }
+    validateScenarioOutputContract();
     promptInput = container.querySelector('.scenario-message-card[data-message-id="' + CSS.escape(activeScenarioMessageId) + '"] .scenario-content')
         || container.querySelector('.scenario-message-card .scenario-content');
     if (promptInput) {
@@ -1059,7 +1059,6 @@ function readMainScenario(options) {
         throw new Error('Message IDs must be unique.');
     }
     const inputNames = messages.map(function (message) { return message.input_name; }).filter(Boolean);
-    if (validation.contract) scenario.output_contract = validation.contract;
     if (new Set(inputNames).size !== inputNames.length) {
         throw new Error('Named inputs must be unique.');
     }
@@ -1082,6 +1081,7 @@ function readMainScenario(options) {
     if (validation.error && !config.allowInvalidContract) {
         throw new Error('Output contract: ' + validation.error);
     }
+    if (validation.contract) scenario.output_contract = validation.contract;
     return scenario;
 }
 
@@ -1211,9 +1211,6 @@ if (scenarioEditor) {
         validateScenarioOutputContract();
         updateScenarioOrderRails();
         updateManualInputFields();
-document.querySelectorAll('#scenario-contract-schema, #scenario-contract-name').forEach(function (input) {
-    input.addEventListener('input', validateScenarioOutputContract);
-});
         updateCoverageVisualization();
         updateCoverageStats();
     });
@@ -1241,8 +1238,12 @@ const scenarioContractEnabled = document.getElementById('scenario-contract-enabl
 if (scenarioContractEnabled) {
     scenarioContractEnabled.addEventListener('change', function () {
         document.getElementById('scenario-contract-fields').classList.toggle('hidden', !scenarioContractEnabled.checked);
+        validateScenarioOutputContract();
     });
 }
+document.querySelectorAll('#scenario-contract-schema, #scenario-contract-name').forEach(function (input) {
+    input.addEventListener('input', validateScenarioOutputContract);
+});
 window.getInferenceScenario = readMainScenario;
 window.setInferenceScenario = setMainScenario;
 
