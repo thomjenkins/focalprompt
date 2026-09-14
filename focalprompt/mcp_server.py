@@ -110,24 +110,34 @@ def create_mcp_server() -> FastMCP:
     server = FastMCP('focalprompt')
 
     @server.tool(name='extract_foci', description=EXTRACT_FOCI_DESCRIPTION)
-    async def extract_foci_tool(prompt: str, model: str = 'gpt-4o-mini') -> Dict[str, Any]:
+    async def extract_foci_tool(
+        prompt: Optional[str] = None,
+        model: str = 'gpt-4o-mini',
+        scenario: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         try:
-            return detect_foci(prompt, **_inference_kwargs(model))
+            return detect_foci(
+                prompt,
+                scenario=scenario,
+                **_inference_kwargs(model),
+            )
         except Exception as exc:
             _raise_tool_error(exc)
             raise AssertionError('unreachable')
 
     @server.tool(name='report_focus', description=REPORT_FOCUS_DESCRIPTION)
     async def report_focus_tool(
-        prompt: str,
-        completion: str,
+        prompt: Optional[str] = None,
+        completion: str = '',
         model: str = 'gpt-4o-mini',
+        scenario: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         try:
             return assess_focus(
                 prompt,
                 completion,
                 foci=None,
+                scenario=scenario,
                 **_inference_kwargs(model),
             )
         except Exception as exc:
@@ -136,9 +146,10 @@ def create_mcp_server() -> FastMCP:
 
     @server.tool(name='ablation_analysis', description=ABLATION_DESCRIPTION)
     async def ablation_analysis_tool(
-        prompt: str,
+        prompt: Optional[str] = None,
         model: str = 'gpt-4o-mini',
         options: Optional[Dict[str, Any]] = None,
+        scenario: Optional[Dict[str, Any]] = None,
         ctx: Context = None,  # type: ignore[assignment]
     ) -> Dict[str, Any]:
         opts = dict(options or {})
@@ -151,7 +162,7 @@ def create_mcp_server() -> FastMCP:
             foci = raw.get('foci') if isinstance(raw, dict) else raw
         if not foci:
             try:
-                detected = detect_foci(prompt, **inf)
+                detected = detect_foci(prompt, scenario=scenario, **inf)
                 foci = detected.get('foci') or []
             except Exception as exc:
                 _raise_tool_error(exc)
@@ -183,6 +194,8 @@ def create_mcp_server() -> FastMCP:
                 ablate,
                 prompt,
                 foci,
+                scenario=scenario,
+                inputs=opts.get('inputs'),
                 n_baseline=n_baseline,
                 n_ablated=n_ablated,
                 temperature=temperature,

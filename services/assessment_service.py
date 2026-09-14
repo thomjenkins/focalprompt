@@ -426,6 +426,58 @@ class AssessmentService:
             'usage': usage,
         }
 
+    def detect_foci_scenario(self, scenario: Dict[str, Any]) -> Dict[str, Any]:
+        """Detect and ground foci independently inside each Analyse message."""
+        from utils.inference_scenario import scenario_analysis_messages, scenario_coverage
+
+        all_foci: List[Dict[str, Any]] = []
+        rejected: List[Dict[str, Any]] = []
+        usage = {'prompt_tokens': 0, 'completion_tokens': 0, 'total_tokens': 0}
+        quality_by_message: Dict[str, Any] = {}
+        for message in scenario_analysis_messages(scenario):
+            if not message['content'].strip():
+                quality_by_message[message['id']] = {
+                    'accepted_count': 0,
+                    'rejected_count': 0,
+                    'span_size_distribution': {'count': 0, 'sizes': []},
+                    'overlap_count': 0,
+                }
+                continue
+            result = self.detect_foci(message['content'])
+            for focus in result.get('foci') or []:
+                item = dict(focus)
+                spans = []
+                for span in item.get('spans') or []:
+                    exact = message['content'][span['char_start']:span['char_end']]
+                    spans.append({
+                        'message_id': message['id'],
+                        'char_start': span['char_start'],
+                        'char_end': span['char_end'],
+                        'text_snapshot': exact,
+                    })
+                item['spans'] = spans
+                item['message_id'] = message['id']
+                item['message_ids'] = [message['id']]
+                item['analysis_mode'] = 'analyse'
+                all_foci.append(item)
+            for item in result.get('rejected_proposals') or []:
+                rejected.append({**item, 'message_id': message['id']})
+            for key in usage:
+                usage[key] += int((result.get('usage') or {}).get(key) or 0)
+            quality_by_message[message['id']] = result.get('quality') or {}
+        coverage = scenario_coverage(scenario, all_foci)
+        return {
+            'foci': all_foci,
+            'rejected_proposals': rejected,
+            'coverage': coverage,
+            'quality': {
+                'accepted_count': len(all_foci),
+                'rejected_count': len(rejected),
+                'by_message': quality_by_message,
+            },
+            'usage': usage,
+        }
+
     def detect_dynamic_foci(
         self,
         prompt: str,

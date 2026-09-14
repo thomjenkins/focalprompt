@@ -9,7 +9,7 @@ Significance: permutation test of centroid cosine distance.
 import numpy as np
 import time
 import random
-from typing import List, Dict, Optional
+from typing import Any, List, Dict, Mapping, Optional
 from services.embedding_service import EmbeddingService
 from services.cost_calculator import CostCalculator
 from utils.span_alignment import (
@@ -38,6 +38,15 @@ from utils.ablation_stability import (
 )
 from utils.reported_focus_dynamics import build_reported_focus_dynamics
 from services.behavioral_difference_service import enrich_influence_item_for_review
+from utils.inference_scenario import (
+    ablate_scenario,
+    bind_scenario_inputs,
+    complete_scenario,
+    normalize_scenario_foci,
+    project_scenario_for_legacy_scoring,
+    scenario_coverage,
+    validate_scenario,
+)
 
 # Space sequential completions so a 429 on sample 1 does not become a burst.
 SAMPLE_GAP_SECONDS = 1.5
@@ -94,6 +103,85 @@ class AblationService:
                 in_tok += response['usage']['prompt_tokens']
                 out_tok += response['usage']['completion_tokens']
         return outputs, in_tok, out_tok
+
+    def _complete_scenario(
+        self,
+        scenario: Mapping[str, Any],
+        temperature: float,
+    ) -> Dict[str, Any]:
+        response = complete_scenario(
+            self.provider,
+            self.model,
+            self.provider_name,
+            scenario,
+            temperature=temperature,
+        )
+        if not response or not response.get('content'):
+            raise Exception(
+                'Model returned an empty response. Check model/provider selection and try again.'
+            )
+        return response
+
+    def _sample_scenario_outputs(
+        self,
+        scenario: Mapping[str, Any],
+        n: int,
+        temperature: float,
+    ):
+        outputs: List[str] = []
+        metadata: List[Dict[str, Any]] = []
+        in_tok = 0
+        out_tok = 0
+        for i in range(n):
+            if i > 0:
+                time.sleep(SAMPLE_GAP_SECONDS)
+            response = self._complete_scenario(scenario, temperature)
+            outputs.append(response['content'])
+            metadata.append(dict(response.get('scenario_metadata') or {}))
+            usage = response.get('usage') or {}
+            in_tok += int(usage.get('prompt_tokens') or 0)
+            out_tok += int(usage.get('completion_tokens') or 0)
+        return outputs, in_tok, out_tok, metadata
+
+    def sample_scenario_completion(
+        self,
+        scenario: Mapping[str, Any],
+        foci_list: List[Dict],
+        kind: str,
+        temperature: float,
+        *,
+        focus_index: Optional[int] = None,
+        inputs: Optional[Mapping[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """One baseline/ablated completion without flattening the scenario."""
+        require_stochastic_temperature(temperature)
+        bound, binding = bind_scenario_inputs(scenario, inputs)
+        classified = normalize_scenario_foci(bound, foci_list)
+        kind = (kind or 'baseline').lower()
+        request_scenario = bound
+        ablation_meta: Dict[str, Any] = {'ablation_mode': 'baseline'}
+        if kind == 'ablated':
+            if focus_index is None:
+                raise ValueError('focus_index is required for ablated samples')
+            idx = int(focus_index)
+            if idx < 0 or idx >= len(classified):
+                raise ValueError('focus_index out of range')
+            focus = classified[idx]
+            request_scenario, deletion = ablate_scenario(bound, focus)
+            ablation_meta = {
+                'ablation_mode': 'subtractive',
+                'focus': focus.get('focus'),
+                'focus_index': idx,
+                'spans': focus.get('spans') or [],
+                **deletion,
+            }
+        elif kind != 'baseline':
+            raise ValueError("kind must be 'baseline' or 'ablated'")
+        response = dict(self._complete_scenario(request_scenario, temperature))
+        response['scenario'] = request_scenario
+        response['input_binding'] = binding
+        response.update(ablation_meta)
+        return response
 
     def sample_completion(
         self,
@@ -640,6 +728,117 @@ class AblationService:
             input_tokens=total_input_tokens,
             output_tokens=total_output_tokens,
         )
+
+    def score_scenario_from_samples(
+        self,
+        scenario: Mapping[str, Any],
+        foci_list: List[Dict],
+        baseline_outputs: List[str],
+        ablated_outputs: Dict,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        """Score collected scenario samples using the existing statistical engine."""
+        normalized = validate_scenario(scenario)
+        classified = normalize_scenario_foci(normalized, foci_list)
+        projection, projected_foci = project_scenario_for_legacy_scoring(
+            normalized, classified
+        )
+        result = self.score_from_samples(
+            projection,
+            projected_foci,
+            baseline_outputs,
+            ablated_outputs,
+            **kwargs,
+        )
+        for index, row in enumerate(result.get('ablation_results') or []):
+            focus = classified[index]
+            row['spans'] = focus.get('spans') or []
+            row['message_ids'] = focus.get('message_ids') or []
+            if focus.get('attributable'):
+                arm, deletion = ablate_scenario(normalized, focus)
+                row['ablated_scenario'] = arm
+                row.update(deletion)
+            row.pop('ablated_prompt', None)
+        for item in result.get('influence_scores') or []:
+            idx = item.get('focus_index')
+            if isinstance(idx, int) and 0 <= idx < len(classified):
+                item['spans'] = classified[idx].get('spans') or []
+                item['message_ids'] = classified[idx].get('message_ids') or []
+        result['scenario'] = normalized
+        result.pop('prompt', None)
+        result['foci_list'] = classified
+        coverage = scenario_coverage(normalized, classified)
+        result['coverage'] = coverage
+        result['unique_coverage_percent'] = coverage['unique_coverage_percent']
+        result['focus_density_percent'] = coverage['focus_density_percent']
+        result['reproducibility'] = {
+            'scenario_version': normalized['version'],
+            'message_ids': [m['id'] for m in normalized['messages']],
+            'output_contract': normalized.get('output_contract'),
+        }
+        return result
+
+    def run_scenario_ablation(
+        self,
+        scenario: Mapping[str, Any],
+        foci_list: List[Dict],
+        *,
+        inputs: Optional[Mapping[str, Any]] = None,
+        num_samples: Optional[int] = None,
+        n_baseline: int = 10,
+        n_ablated: int = 5,
+        n_permutations: int = DEFAULT_N_PERMUTATIONS,
+        alpha: float = DEFAULT_ALPHA,
+        permutation_seed: Optional[int] = None,
+        temperature: float = 0.7,
+    ) -> Dict[str, Any]:
+        """Run every model-under-test arm as an ordered scenario."""
+        require_stochastic_temperature(temperature)
+        if num_samples is not None:
+            n_baseline = int(num_samples)
+        n_baseline = int(n_baseline)
+        n_ablated = int(n_ablated)
+        if n_baseline < 1 or n_ablated < 1:
+            raise ValueError('n_baseline and n_ablated must be at least 1.')
+        bound, binding = bind_scenario_inputs(scenario, inputs)
+        classified = normalize_scenario_foci(bound, foci_list)
+        baseline_outputs, total_in, total_out, baseline_meta = (
+            self._sample_scenario_outputs(bound, n_baseline, temperature)
+        )
+        ablated_by_index: Dict[int, List[str]] = {}
+        arm_metadata: Dict[str, Any] = {}
+        for index, focus in enumerate(classified):
+            if not focus.get('attributable'):
+                continue
+            arm, deletion = ablate_scenario(bound, focus)
+            texts, tin, tout, metadata = self._sample_scenario_outputs(
+                arm, n_ablated, temperature
+            )
+            total_in += tin
+            total_out += tout
+            ablated_by_index[index] = texts
+            arm_metadata[str(index)] = {
+                'scenario_metadata': metadata,
+                **deletion,
+            }
+        result = self.score_scenario_from_samples(
+            bound,
+            classified,
+            baseline_outputs,
+            ablated_by_index,
+            n_permutations=n_permutations,
+            alpha=alpha,
+            permutation_seed=permutation_seed,
+            temperature=temperature,
+            input_tokens=total_in,
+            output_tokens=total_out,
+        )
+        result['scenario_metadata'] = {
+            'input_binding': binding,
+            'baseline': baseline_meta,
+            'ablated_arms': arm_metadata,
+        }
+        return result
 
     def refine_focus_stability_samples(
         self,

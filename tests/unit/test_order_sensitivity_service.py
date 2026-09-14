@@ -64,7 +64,7 @@ def no_sleep(monkeypatch):
 
 
 def test_estimate_cost():
-    svc = OrderSensitivityService(Mock(), 'm')
+    svc = OrderSensitivityService(Mock(), 'm', embedding_service=Mock())
     est = svc.estimate_cost(k_permutations=5, m_samples=3, run_position_sweep=True)
     assert est['global_order_model_calls'] == 15
     assert est['total_model_calls'] >= 15
@@ -91,8 +91,111 @@ def test_run_focus_order_experiment_mocked(mock_provider, mock_embedding):
     assert result['global_order_experiment']['summary']['n_permutations'] == 2
 
 
+def test_behavioral_judge_uses_analysis_model_provider(mock_embedding):
+    mut_provider = Mock()
+    mut_provider.chat_completion.side_effect = [
+        {'content': 'mut output 1', 'usage': {'prompt_tokens': 5, 'completion_tokens': 3}},
+        {'content': 'mut output 2', 'usage': {'prompt_tokens': 5, 'completion_tokens': 3}},
+    ]
+    analysis_provider = Mock()
+    analysis_provider.chat_completion.return_value = {
+        'content': '{"classification":"COMPLIES","score":90,"rationale":"ok"}',
+        'usage': {'prompt_tokens': 7, 'completion_tokens': 2},
+    }
+    svc = OrderSensitivityService(
+        mut_provider,
+        'gpt-3.5-turbo',
+        provider_name='openai',
+        judge_provider=analysis_provider,
+        judge_model='gpt-4o',
+        judge_provider_name='openai',
+        embedding_service=mock_embedding,
+    )
+
+    result = svc.run_focus_order_experiment(
+        prompt=PROMPT,
+        foci=_foci(),
+        baseline_outputs=['b1', 'b2', 'b3'],
+        k_permutations=1,
+        m_samples=2,
+        order_seed=3,
+        temperature=0.7,
+        behavioral_criterion='Must comply',
+        run_behavioral_judge=True,
+    )
+
+    assert result['ok'] is True
+    assert mut_provider.chat_completion.call_args_list[0].kwargs['model'] == 'gpt-3.5-turbo'
+    assert analysis_provider.chat_completion.call_args_list[0].kwargs['model'] == 'gpt-4o'
+
+
 def test_prepare_refuses_single_movable():
     prep = prepare_order_experiment('Only one.\n\nTwo.', [
         {'focus': 'A', 'prompt_section': 'Only one.', 'is_dynamic': False},
     ])
     assert prep['ok'] is False
+
+
+def test_scenario_order_experiment_preserves_message_boundaries(mock_provider, mock_embedding):
+    scenario = {
+        'version': 1,
+        'messages': [
+            {
+                'id': 'rules',
+                'role': 'system',
+                'content': 'Rule A.\n\nRule B.',
+                'analysis_mode': 'analyse',
+            },
+            {
+                'id': 'question',
+                'role': 'user',
+                'content': 'Never move me',
+                'analysis_mode': 'retain',
+            },
+        ],
+    }
+    foci = [
+        {
+            'focus': 'A',
+            'spans': [{
+                'message_id': 'rules',
+                'char_start': 0,
+                'char_end': 7,
+                'text_snapshot': 'Rule A.',
+            }],
+        },
+        {
+            'focus': 'B',
+            'spans': [{
+                'message_id': 'rules',
+                'char_start': 9,
+                'char_end': 16,
+                'text_snapshot': 'Rule B.',
+            }],
+        },
+    ]
+    svc = OrderSensitivityService(
+        mock_provider, 'gpt-4o-mini', embedding_service=mock_embedding
+    )
+
+    result = svc.run_scenario_order_experiment(
+        scenario=scenario,
+        foci=foci,
+        baseline_outputs=['baseline 1', 'baseline 2'],
+        k_permutations=2,
+        m_samples=1,
+        order_seed=4,
+        temperature=0.7,
+    )
+
+    assert result['ok'] is True
+    assert result['scenario'] == scenario
+    assert result['scenario_metadata']['ordering_message_id'] == 'rules'
+    assert result['ordering_groups'] == [{
+        'message_id': 'rules',
+        'role': 'system',
+        'focus_indices': [0, 1],
+    }]
+    for call in mock_provider.chat_completion.call_args_list:
+        assert [message['role'] for message in call.kwargs['messages']] == ['system', 'user']
+        assert call.kwargs['messages'][1]['content'] == 'Never move me'

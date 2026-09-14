@@ -24,23 +24,12 @@
     },
     "/api/v1/detect-foci": {
       "post": {
-        "summary": "Detect foci in a prompt",
+        "summary": "Detect foci in an inference scenario",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": {
-                "type": "object",
-                "required": ["prompt"],
-                "properties": {
-                  "prompt": { "type": "string" },
-                  "model": { "type": "string" },
-                  "provider": { "type": "string" },
-                  "backend": { "type": "string", "description": "vercel_gateway | direct | openai_compatible" },
-                  "api_key": { "type": "string" },
-                  "base_url": { "type": "string" }
-                }
-              }
+              "schema": { "$ref": "#/components/schemas/InferenceRequest" }
             }
           }
         },
@@ -57,18 +46,45 @@
       "post": {
         "summary": "Experiment A — reported focus distribution",
         "description": "Behavioural self-report for one completion; not transformer attention.",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": {
+            "allOf": [
+              { "$ref": "#/components/schemas/InferenceRequest" },
+              { "type": "object", "required": ["output"], "properties": {
+                "output": { "type": "string" },
+                "foci": { "type": "array", "items": { "$ref": "#/components/schemas/Focus" } }
+              } }
+            ]
+          } } }
+        },
         "responses": { "200": { "description": "Focus scores" } }
       }
     },
     "/api/v1/generate-output": {
       "post": {
-        "summary": "Generate a completion for a prompt",
+        "summary": "Generate a completion for a scenario or legacy prompt",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/InferenceRequest" } } }
+        },
         "responses": { "200": { "description": "Model output" } }
       }
     },
     "/api/v1/rewrite-prompt": {
       "post": {
-        "summary": "Rewrite prompt toward an intended focus mix",
+        "summary": "Rewrite Analyse messages toward an intended focus mix",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": {
+            "allOf": [
+              { "$ref": "#/components/schemas/InferenceRequest" },
+              { "type": "object", "required": ["foci"], "properties": {
+                "foci": { "type": "array", "items": { "$ref": "#/components/schemas/Focus" } }
+              } }
+            ]
+          } } }
+        },
         "responses": { "200": { "description": "Rewritten prompt" } }
       }
     },
@@ -80,8 +96,101 @@
     },
     "/api/v1/ablation-analysis": {
       "post": {
-        "summary": "Experiment B — leave-one-focus-out perturbation analysis",
+        "summary": "Experiment B — leave-one-focus-out scenario perturbation",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": {
+            "allOf": [
+              { "$ref": "#/components/schemas/InferenceRequest" },
+              { "type": "object", "required": ["foci"], "properties": {
+                "foci": { "type": "array", "items": { "$ref": "#/components/schemas/Focus" } },
+                "inputs": { "type": "object", "additionalProperties": { "type": "string" } },
+                "n_baseline": { "type": "integer", "minimum": 1, "default": 10 },
+                "n_ablated": { "type": "integer", "minimum": 1, "default": 5 },
+                "temperature": { "type": "number", "exclusiveMinimum": 0, "default": 0.7 }
+              } }
+            ]
+          } } }
+        },
         "responses": { "200": { "description": "Permutation + BH results" } }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "InferenceRequest": {
+        "type": "object",
+        "description": "Provide exactly one of scenario or legacy prompt.",
+        "oneOf": [
+          { "required": ["scenario"], "not": { "required": ["prompt"] } },
+          { "required": ["prompt"], "not": { "required": ["scenario"] } }
+        ],
+        "properties": {
+          "scenario": { "$ref": "#/components/schemas/InferenceScenario" },
+          "prompt": { "type": "string", "minLength": 1, "deprecated": true },
+          "inputs": { "type": "object", "additionalProperties": { "type": "string" } },
+          "model": { "type": "string" },
+          "provider": { "type": "string" },
+          "backend": { "type": "string", "description": "vercel_gateway | direct | openai_compatible" },
+          "api_key": { "type": "string" },
+          "base_url": { "type": "string" }
+        }
+      },
+      "InferenceScenario": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["version", "messages"],
+        "properties": {
+          "version": { "type": "integer", "enum": [1] },
+          "messages": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "$ref": "#/components/schemas/ScenarioMessage" }
+          },
+          "output_contract": { "$ref": "#/components/schemas/OutputContract" }
+        }
+      },
+      "ScenarioMessage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "role", "content"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$" },
+          "role": { "type": "string", "enum": ["system", "developer", "user", "assistant"] },
+          "content": { "type": "string" },
+          "analysis_mode": { "type": "string", "enum": ["analyse", "retain"] },
+          "input_name": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_.-]{0,127}$" }
+        }
+      },
+      "OutputContract": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "name", "strict", "schema"],
+        "properties": {
+          "type": { "type": "string", "enum": ["json_schema"] },
+          "name": { "type": "string" },
+          "strict": { "type": "boolean", "enum": [true] },
+          "schema": { "type": "object", "description": "JSON Schema, preserved unchanged across experimental arms." }
+        }
+      },
+      "FocusSpan": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["message_id", "char_start", "char_end", "text_snapshot"],
+        "properties": {
+          "message_id": { "type": "string" },
+          "char_start": { "type": "integer", "minimum": 0 },
+          "char_end": { "type": "integer", "minimum": 1 },
+          "text_snapshot": { "type": "string" }
+        }
+      },
+      "Focus": {
+        "type": "object",
+        "required": ["focus", "spans"],
+        "properties": {
+          "focus": { "type": "string" },
+          "spans": { "type": "array", "items": { "$ref": "#/components/schemas/FocusSpan" } }
+        }
       }
     }
   }

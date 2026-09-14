@@ -16,6 +16,16 @@ from core.ai_gateway_provider import RateLimitError
 from routes.http_errors import internal_error
 from utils.json_safe import sanitize_non_finite
 from utils.request_inference import request_inference_fields
+from utils.inference_scenario import (
+    ProviderCapabilityError,
+    ScenarioValidationError,
+    StructuredOutputError,
+    ablate_scenario,
+    bind_scenario_inputs,
+    normalize_scenario_foci,
+    scenario_analysis_document,
+    scenario_from_request,
+)
 
 
 ablation_bp = Blueprint('ablation', __name__)
@@ -25,8 +35,8 @@ def _analysis_json(data):
     return jsonify(sanitize_non_finite(data))
 
 
-def _ablation_service(data):
-    fields = request_inference_fields(data)
+def _ablation_service(data, model_role='mut'):
+    fields = request_inference_fields(data, model_role=model_role)
     assessor = get_assessor(data=fields)
     api_key = fields.get('api_key')
     return AblationService(
@@ -54,6 +64,7 @@ def ablation_analysis():
     """Run ablation analysis to determine focus influence."""
     try:
         data = request.json
+        scenario, is_legacy = scenario_from_request(data)
         prompt = data.get('prompt', '')
         foci_list = data.get('foci', [])
         num_samples = data.get('num_samples')
@@ -65,27 +76,26 @@ def ablation_analysis():
         temperature = data.get('temperature', 0.7)
         inputs = data.get('inputs', {})
         
-        if not prompt:
-            return jsonify({'error': 'Prompt is required'}), 400
-        
         if not foci_list or len(foci_list) == 0:
             return jsonify({'error': 'Foci are required for ablation analysis'}), 400
         
         ablation_service = _ablation_service(data)
         
         # Run ablation
-        result_data = ablation_service.run_ablation(
-            prompt,
-            foci_list,
-            num_samples=num_samples,
-            inputs=inputs,
-            n_baseline=n_baseline,
-            n_ablated=n_ablated,
-            n_permutations=n_permutations,
-            alpha=alpha,
-            permutation_seed=permutation_seed,
-            temperature=temperature,
-        )
+        if is_legacy:
+            result_data = ablation_service.run_ablation(
+                prompt, foci_list, num_samples=num_samples, inputs=inputs,
+                n_baseline=n_baseline, n_ablated=n_ablated,
+                n_permutations=n_permutations, alpha=alpha,
+                permutation_seed=permutation_seed, temperature=temperature,
+            )
+        else:
+            result_data = ablation_service.run_scenario_ablation(
+                scenario, foci_list, num_samples=num_samples, inputs=inputs,
+                n_baseline=n_baseline, n_ablated=n_ablated,
+                n_permutations=n_permutations, alpha=alpha,
+                permutation_seed=permutation_seed, temperature=temperature,
+            )
         
         # Save checkpoint
         checkpoint_service = CheckpointService()
@@ -97,10 +107,17 @@ def ablation_analysis():
             'result_data': result_data,
             'complete': True
         }
+        if not is_legacy:
+            checkpoint_data['scenario'] = scenario
+            checkpoint_data['workspace_version'] = 2
         checkpoint_service.save_checkpoint(session_id, checkpoint_data, 'single_ablation')
         
         return _analysis_json(result_data)
         
+    except (ProviderCapabilityError, StructuredOutputError) as e:
+        return jsonify({'error': str(e), 'code': 'inference_contract_error'}), 422
+    except ScenarioValidationError as e:
+        return jsonify({'error': str(e)}), 400
     except RateLimitError as e:
         return _rate_limit_response(e)
     except Exception as e:
@@ -115,22 +132,28 @@ def ablation_sample():
     """One chat completion for client-paced ablation sampling."""
     try:
         data = request.json or {}
+        scenario, is_legacy = scenario_from_request(data)
         prompt = data.get('prompt', '')
         foci_list = data.get('foci', [])
         kind = data.get('kind', 'baseline')
         focus_index = data.get('focus_index')
         temperature = data.get('temperature', 0.7)
-        if not prompt:
-            return jsonify({'error': 'Prompt is required'}), 400
         service = _ablation_service(data)
-        result = service.sample_completion(
-            prompt,
-            foci_list,
-            kind=kind,
-            temperature=temperature,
-            focus_index=focus_index,
-        )
+        if is_legacy:
+            result = service.sample_completion(
+                prompt, foci_list, kind=kind, temperature=temperature,
+                focus_index=focus_index,
+            )
+        else:
+            result = service.sample_scenario_completion(
+                scenario, foci_list, kind=kind, temperature=temperature,
+                focus_index=focus_index, inputs=data.get('inputs'),
+            )
         return _analysis_json(result)
+    except (ProviderCapabilityError, StructuredOutputError) as e:
+        return jsonify({'error': str(e), 'code': 'inference_contract_error'}), 422
+    except ScenarioValidationError as e:
+        return jsonify({'error': str(e)}), 400
     except RateLimitError as e:
         return _rate_limit_response(e)
     except Exception as e:
@@ -145,6 +168,7 @@ def ablation_refine_stability():
     """Generate additional ablated samples for one focus; refresh stability metrics."""
     try:
         data = request.json or {}
+        scenario, is_legacy = scenario_from_request(data)
         prompt = data.get('prompt', '')
         foci_list = data.get('foci', [])
         focus_index = data.get('focus_index')
@@ -158,8 +182,6 @@ def ablation_refine_stability():
         behavioral_criterion = data.get('behavioral_criterion') or data.get('eval_criteria')
         run_behavioral_judge = bool(data.get('run_behavioral_judge'))
 
-        if not prompt:
-            return jsonify({'error': 'Prompt is required'}), 400
         if not foci_list:
             return jsonify({'error': 'Foci are required'}), 400
         if focus_index is None:
@@ -170,22 +192,64 @@ def ablation_refine_stability():
             return jsonify({'error': 'ablated_outputs for this focus is required'}), 400
 
         service = _ablation_service(data)
-        result = service.refine_focus_stability_samples(
-            prompt,
-            foci_list,
-            int(focus_index),
-            baseline_outputs,
-            list(existing),
-            n_additional,
-            n_permutations=n_permutations,
-            alpha=alpha,
-            permutation_seed=permutation_seed,
-            temperature=temperature,
-            behavioral_criterion=behavioral_criterion,
-            task_context=data.get('task_context') or '',
-            run_behavioral_judge=run_behavioral_judge,
-        )
+        if is_legacy:
+            result = service.refine_focus_stability_samples(
+                prompt,
+                foci_list,
+                int(focus_index),
+                baseline_outputs,
+                list(existing),
+                n_additional,
+                n_permutations=n_permutations,
+                alpha=alpha,
+                permutation_seed=permutation_seed,
+                temperature=temperature,
+                behavioral_criterion=behavioral_criterion,
+                task_context=data.get('task_context') or '',
+                run_behavioral_judge=run_behavioral_judge,
+            )
+        else:
+            bound, binding = bind_scenario_inputs(scenario, data.get('inputs'))
+            classified = normalize_scenario_foci(bound, foci_list)
+            idx = int(focus_index)
+            if idx < 0 or idx >= len(classified):
+                raise ValueError('focus_index out of range')
+            arm, deletion = ablate_scenario(bound, classified[idx])
+            new_texts, tin, tout, metadata = service._sample_scenario_outputs(
+                arm, n_additional, temperature
+            )
+            merged = list(existing) + list(new_texts)
+            scored = service.score_scenario_from_samples(
+                bound,
+                classified,
+                baseline_outputs,
+                {idx: merged},
+                n_permutations=n_permutations,
+                alpha=alpha,
+                permutation_seed=permutation_seed,
+                temperature=temperature,
+                input_tokens=tin,
+                output_tokens=tout,
+            )
+            result = {
+                'focus_index': idx,
+                'focus': classified[idx].get('focus'),
+                'ablated_outputs': merged,
+                'n_ablated_samples': len(merged),
+                'n_additional_generated': n_additional,
+                'score': scored,
+                'scenario': bound,
+                'scenario_metadata': {
+                    'input_binding': binding,
+                    'additional_samples': metadata,
+                    **deletion,
+                },
+            }
         return _analysis_json(result)
+    except (ProviderCapabilityError, StructuredOutputError) as e:
+        return jsonify({'error': str(e), 'code': 'inference_contract_error'}), 422
+    except ScenarioValidationError as e:
+        return jsonify({'error': str(e)}), 400
     except RateLimitError as e:
         return _rate_limit_response(e)
     except ValueError as e:
@@ -237,6 +301,7 @@ def ablation_score():
     """Permutation test on samples collected by /api/ablation-sample."""
     try:
         data = request.json or {}
+        scenario, is_legacy = scenario_from_request(data)
         prompt = data.get('prompt', '')
         foci_list = data.get('foci', [])
         baseline_outputs = data.get('baseline_outputs') or []
@@ -247,37 +312,42 @@ def ablation_score():
         temperature = data.get('temperature', 0.7)
         input_tokens = data.get('input_tokens', 0)
         output_tokens = data.get('output_tokens', 0)
-        if not prompt:
-            return jsonify({'error': 'Prompt is required'}), 400
         if not foci_list:
             return jsonify({'error': 'Foci are required for ablation analysis'}), 400
         service = _ablation_service(data)
-        result_data = service.score_from_samples(
-            prompt,
-            foci_list,
-            baseline_outputs,
-            ablated_outputs,
-            n_permutations=n_permutations,
-            alpha=alpha,
-            permutation_seed=permutation_seed,
-            temperature=temperature,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
+        score_kwargs = dict(
+            n_permutations=n_permutations, alpha=alpha,
+            permutation_seed=permutation_seed, temperature=temperature,
+            input_tokens=input_tokens, output_tokens=output_tokens,
         )
+        if is_legacy:
+            result_data = service.score_from_samples(
+                prompt, foci_list, baseline_outputs, ablated_outputs, **score_kwargs
+            )
+        else:
+            result_data = service.score_scenario_from_samples(
+                scenario, foci_list, baseline_outputs, ablated_outputs, **score_kwargs
+            )
         checkpoint_service = CheckpointService()
         session_id = str(uuid.uuid4())
+        checkpoint_data = {
+            'session_id': session_id,
+            'timestamp': datetime.now().isoformat(),
+            'type': 'single_ablation',
+            'result_data': result_data,
+            'complete': True,
+        }
+        if not is_legacy:
+            checkpoint_data['scenario'] = scenario
+            checkpoint_data['workspace_version'] = 2
         checkpoint_service.save_checkpoint(
             session_id,
-            {
-                'session_id': session_id,
-                'timestamp': datetime.now().isoformat(),
-                'type': 'single_ablation',
-                'result_data': result_data,
-                'complete': True,
-            },
+            checkpoint_data,
             'single_ablation',
         )
         return _analysis_json(result_data)
+    except ScenarioValidationError as e:
+        return jsonify({'error': str(e)}), 400
     except Exception as e:
         return internal_error('ablation_score', e)
 
@@ -326,6 +396,8 @@ def ablation_shuffle_robustness():
             inputs=inputs or None,
         )
         return _analysis_json(result)
+    except ScenarioValidationError as e:
+        return jsonify({'error': str(e)}), 400
     except RateLimitError as e:
         return _rate_limit_response(e)
     except Exception as e:
@@ -344,7 +416,8 @@ def ablation_reported_focus_dynamics():
     """
     try:
         data = request.json or {}
-        prompt = data.get('prompt', '')
+        scenario, is_legacy = scenario_from_request(data)
+        prompt = data.get('prompt', '') if is_legacy else scenario_analysis_document(scenario)
         foci_list = data.get('foci', [])
         baseline_outputs = data.get('baseline_outputs') or []
         ablated_outputs = data.get('ablated_outputs') or {}
@@ -364,7 +437,7 @@ def ablation_reported_focus_dynamics():
         for key, vals in ablated_outputs.items():
             ablated_map[int(key)] = list(vals or [])
 
-        fields = request_inference_fields(data)
+        fields = request_inference_fields(data, model_role='analysis')
         assessor = get_assessor(data=fields)
         assessment_service = AssessmentService(assessor)
         service = _ablation_service(data)
@@ -378,6 +451,8 @@ def ablation_reported_focus_dynamics():
             association_focus=association_focus,
         )
         return _analysis_json(result)
+    except ScenarioValidationError as e:
+        return jsonify({'error': str(e)}), 400
     except RateLimitError as e:
         return _rate_limit_response(e)
     except Exception as e:

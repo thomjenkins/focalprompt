@@ -28,7 +28,7 @@ behavioral_difference_bp = Blueprint('behavioral_difference', __name__)
 
 
 def _llm_evaluator(data):
-    fields = request_inference_fields(data)
+    fields = request_inference_fields(data, model_role='analysis')
     assessor = get_assessor(data=fields)
     return LLMBehavioralDifferenceEvaluator(
         assessor.provider,
@@ -216,7 +216,7 @@ def explain_reported_vs_revealed_route():
             tagged_foci=tagged or None,
         )
 
-    fields = request_inference_fields(data)
+    fields = request_inference_fields(data, model_role='analysis')
     assessor = get_assessor(data=fields)
     explainer = ReportedVsRevealedExplainer(
         assessor.provider,

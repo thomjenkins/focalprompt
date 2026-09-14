@@ -6,9 +6,15 @@ Handles prompt optimization analysis based on comprehensive data.
 """
 
 import json
-from typing import List, Dict, Optional
+from typing import Any, List, Dict, Mapping, Optional
 from services.cost_calculator import CostCalculator
 from utils.results_copy import NON_SIGNIFICANT_CAUTION
+from utils.inference_scenario import (
+    rewrite_analysed_messages,
+    scenario_analysis_messages,
+    scenario_analysis_document,
+    validate_scenario,
+)
 
 
 class OptimizationService:
@@ -221,7 +227,8 @@ class OptimizationService:
         batch_analysis: Dict,
         agent_results: List[Dict],
         foci_list: List[Dict],
-        original_prompt: str
+        original_prompt: str,
+        optimized_message_ids: Optional[List[str]] = None,
     ) -> Dict:
         """
         Analyze all data and get LLM recommendations for prompt optimization.
@@ -250,6 +257,25 @@ class OptimizationService:
         # Create LLM prompt for recommendations
         foci_json = json.dumps([{'focus': f.get('focus', ''), 'prompt_section': f.get('prompt_section', '')[:500]} for f in foci_list], indent=2)
         
+        scenario_rewrite_instruction = ''
+        optimized_messages_field = ''
+        if optimized_message_ids:
+            example_map = {
+                message_id: f'Complete rewritten content for {message_id}'
+                for message_id in optimized_message_ids
+            }
+            scenario_rewrite_instruction = f"""
+VERSIONED SCENARIO REWRITE:
+- ORIGINAL PROMPT is an analysis-only view of several distinct messages.
+- Return optimized_messages as an object keyed by these exact Analyse message IDs: {json.dumps(optimized_message_ids)}.
+- Rewrite each message independently. Do not combine roles or move content between messages.
+- Do not include retained inputs or an output schema in those rewrites.
+- Include every listed ID with the complete replacement text for that message.
+"""
+            optimized_messages_field = (
+                ',\n  "optimized_messages": ' + json.dumps(example_map)
+            )
+
         recommendation_prompt = f"""You are an expert at optimizing AI agent prompts based on comprehensive empirical data.
 
 You have access to multiple types of analysis data:
@@ -269,6 +295,7 @@ ORIGINAL PROMPT:
 
 CURRENT FOCI:
 {foci_json}
+{scenario_rewrite_instruction}
 
 TASK:
 Analyze this comprehensive data and provide structured recommendations for optimizing the prompt. Consider:
@@ -317,7 +344,7 @@ Return a JSON object with this structure:
     "confidence": "Overall confidence in recommendations based on data quality",
     "gaps": "Any gaps in the data that limit recommendations"
   }},
-  "optimized_prompt": "A complete, optimized version of the prompt that incorporates all the recommendations. This should be a ready-to-use prompt that the user can copy and use directly. Include all high and medium priority foci, remove or consolidate low priority ones based on recommendations, and organize it according to the suggested structure. For dynamic foci (chat, RAG, tools), use placeholders like {{CHAT_CONTENT}}, {{RAG_CONTEXT}}, {{TOOL_RESULTS}} where appropriate. The optimized prompt should be well-structured, clear, and implement the key recommendations."
+  "optimized_prompt": "A complete, optimized version of the prompt that incorporates all the recommendations. This should be a ready-to-use prompt that the user can copy and use directly. Include all high and medium priority foci, remove or consolidate low priority ones based on recommendations, and organize it according to the suggested structure. For dynamic foci (chat, RAG, tools), use placeholders like {{CHAT_CONTENT}}, {{RAG_CONTEXT}}, {{TOOL_RESULTS}} where appropriate. The optimized prompt should be well-structured, clear, and implement the key recommendations."{optimized_messages_field}
 }}"""
         
         response = self.provider.chat_completion(
@@ -357,4 +384,43 @@ Return a JSON object with this structure:
             'cost_breakdown': cost_breakdown
         }
 
-
+    def analyze_scenario_optimization(
+        self,
+        single_assessment: List[Dict],
+        single_ablation: Dict,
+        batch_analysis: Dict,
+        agent_results: List[Dict],
+        foci_list: List[Dict],
+        scenario: Mapping[str, Any],
+    ) -> Dict[str, Any]:
+        """Optimize only Analyse messages and return a complete scenario."""
+        normalized = validate_scenario(scenario)
+        analysed = scenario_analysis_messages(normalized)
+        result = self.analyze_prompt_optimization(
+            single_assessment,
+            single_ablation,
+            batch_analysis,
+            agent_results,
+            foci_list,
+            scenario_analysis_document(normalized),
+            optimized_message_ids=[message['id'] for message in analysed],
+        )
+        recommendations = result.get('recommendations') or {}
+        explicit = recommendations.get('optimized_messages')
+        rewrites: Dict[str, str] = {}
+        if isinstance(explicit, Mapping):
+            rewrites = {
+                str(message_id): str(content)
+                for message_id, content in explicit.items()
+                if isinstance(content, str) and content.strip()
+            }
+        elif result.get('optimized_prompt'):
+            if len(analysed) == 1:
+                rewrites[analysed[0]['id']] = str(result['optimized_prompt'])
+            elif analysed:
+                result.setdefault('scenario_warnings', []).append(
+                    'Optimizer omitted optimized_messages; no Analyse message was changed.'
+                )
+        result['optimized_scenario'] = rewrite_analysed_messages(normalized, rewrites)
+        result['scenario'] = normalized
+        return result

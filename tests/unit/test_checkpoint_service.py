@@ -115,7 +115,8 @@ def test_accepts_valid_session_ids(temp_checkpoint_dir, session_id):
     service = CheckpointService(checkpoint_dir=temp_checkpoint_dir)
     path = service.get_checkpoint_path(session_id, 'batch_analysis')
     assert path.endswith(f'batch_analysis_{session_id}.json')
-    assert os.path.commonpath([temp_checkpoint_dir, path]) == os.path.realpath(temp_checkpoint_dir)
+    root = os.path.realpath(temp_checkpoint_dir)
+    assert os.path.commonpath([root, path]) == root
 
 
 def test_rejects_unknown_checkpoint_type(temp_checkpoint_dir):

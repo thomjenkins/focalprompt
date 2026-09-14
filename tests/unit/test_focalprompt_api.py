@@ -2,7 +2,9 @@
 
 from unittest.mock import MagicMock, patch
 
-from focalprompt.api import _compare_reported_vs_revealed, analyze
+import pytest
+
+from focalprompt.api import _compare_reported_vs_revealed, analyze, generate_output
 
 
 def test_compare_reported_vs_revealed():
@@ -49,3 +51,36 @@ def test_analyze_skip_live(monkeypatch):
         out = analyze('You are x.', output='hi', run_assess=True, run_ablation=True)
         assert out['comparison'] is not None
         assert out['meta']['model'] == 'gpt-4o-mini'
+
+
+def test_generate_output_accepts_scenario_and_named_inputs():
+    scenario = {
+        'version': 1,
+        'messages': [
+            {'id': 'rules', 'role': 'system', 'content': 'Be brief.', 'analysis_mode': 'analyse'},
+            {'id': 'question', 'role': 'user', 'content': '', 'analysis_mode': 'retain', 'input_name': 'question'},
+        ],
+    }
+    assessor = MagicMock()
+    assessor.generate_output_response.return_value = {
+        'content': 'answer', 'scenario_metadata': {'scenario_version': 1}
+    }
+    with patch('focalprompt.api.get_assessor', return_value=assessor):
+        out = generate_output(scenario=scenario, inputs={'question': 'Why?'})
+    assert out['output'] == 'answer'
+    # Mocked assessors may omit the compiled scenario; the helper preserves the source.
+    assert out['scenario'] == scenario
+    assert assessor.generate_output_response.call_args.kwargs['inputs'] == {'question': 'Why?'}
+
+
+def test_generate_output_rejects_prompt_and_scenario_together():
+    with pytest.raises(ValueError, match='exactly one'):
+        generate_output(
+            'legacy',
+            scenario={
+                'version': 1,
+                'messages': [
+                    {'id': 'user', 'role': 'user', 'content': 'x', 'analysis_mode': 'analyse'}
+                ],
+            },
+        )

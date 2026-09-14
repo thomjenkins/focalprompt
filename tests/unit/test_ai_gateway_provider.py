@@ -133,6 +133,61 @@ def test_direct_openai_provider_forwards_max_tokens():
     assert provider.client.chat.completions.create.call_args.kwargs['max_tokens'] == 4096
 
 
+def test_direct_openai_provider_omits_temperature_for_gpt_5_6():
+    provider = OpenAIProvider.__new__(OpenAIProvider)
+    usage = Mock(prompt_tokens=1, completion_tokens=2, total_tokens=3)
+    choice = Mock()
+    choice.message.content = 'hello'
+    response = Mock(choices=[choice], usage=usage)
+    provider.client = Mock()
+    provider.client.chat.completions.create.return_value = response
+
+    out = provider.chat_completion(
+        [{'role': 'user', 'content': 'hi'}],
+        model='gpt-5.6-sol',
+        temperature=0.3,
+        max_tokens=4096,
+    )
+
+    kwargs = provider.client.chat.completions.create.call_args.kwargs
+    assert 'temperature' not in kwargs
+    assert 'max_tokens' not in kwargs
+    assert kwargs['max_completion_tokens'] == 4096
+    assert out['provider_metadata']['sampling'] == {
+        'requested_temperature': 0.3,
+        'effective_temperature': 1.0,
+        'temperature_parameter': 'omitted_model_default',
+    }
+    assert out['provider_metadata']['token_limit']['parameter'] == 'max_completion_tokens'
+
+
+@patch('core.ai_gateway_provider.time.sleep', return_value=None)
+@patch('core.ai_gateway_provider._check_requests')
+def test_gateway_omits_temperature_for_openai_gpt_5_6(check, _sleep):
+    ok = Mock()
+    ok.raise_for_status.return_value = None
+    ok.json.return_value = {
+        'choices': [{'message': {'content': 'hello'}}],
+        'usage': {'prompt_tokens': 1, 'completion_tokens': 1, 'total_tokens': 2},
+    }
+    check.return_value = _requests_mod([ok])
+    provider = AIGatewayProvider('test-key')
+
+    out = provider.chat_completion(
+        [{'role': 'user', 'content': 'hi'}],
+        model='gpt-5.6-sol',
+        provider='openai',
+        temperature=0.3,
+        max_tokens=4096,
+    )
+
+    payload = check.return_value.post.call_args.kwargs['json']
+    assert 'temperature' not in payload
+    assert 'max_tokens' not in payload
+    assert payload['max_completion_tokens'] == 4096
+    assert out['provider_metadata']['sampling']['effective_temperature'] == 1.0
+
+
 @patch('core.ai_gateway_provider.time.sleep', return_value=None)
 @patch('core.ai_gateway_provider._check_requests')
 def test_429_uses_retry_after_header(check, _sleep):

@@ -16,6 +16,7 @@ from utils.data_processing import (
 )
 from routes.http_errors import internal_error
 from utils.request_inference import request_inference_fields
+from utils.inference_scenario import ScenarioValidationError, named_inputs, validate_scenario
 
 
 batch_bp = Blueprint('batch', __name__)
@@ -38,9 +39,15 @@ def parse_batch_csv():
             return jsonify({'error': 'No file selected', 'errors': ['No file selected'], 'pairs': []}), 400
 
         raw = file.read()
-        result = parse_batch_csv_bytes(raw)
+        expected = None
+        raw_scenario = request.form.get('scenario')
+        if raw_scenario:
+            expected = named_inputs(validate_scenario(json.loads(raw_scenario)))
+        result = parse_batch_csv_bytes(raw, expected_input_names=expected)
         body, status = parse_result_to_response(result)
         return jsonify(body), status
+    except (ScenarioValidationError, json.JSONDecodeError) as e:
+        return jsonify({'error': str(e), 'errors': [str(e)], 'pairs': []}), 400
     except Exception as e:
         return internal_error(
             'batch_parse_csv',
@@ -147,6 +154,9 @@ def batch_analysis_stream():
             temperature = data.get('temperature', 0.7)
             session_id = data.get('session_id')
             resume = data.get('resume', False)
+            scenario = None
+            if data.get('scenario') is not None:
+                scenario = validate_scenario(data['scenario'])
 
             if not pairs or len(pairs) == 0:
                 yield f"data: {json.dumps({'type': 'error', 'message': 'At least one pair is required'})}\n\n"
@@ -156,7 +166,7 @@ def batch_analysis_stream():
                 yield f"data: {json.dumps({'type': 'error', 'message': 'Foci are required'})}\n\n"
                 return
 
-            fields = request_inference_fields(data)
+            fields = request_inference_fields(data, model_role='mut')
             model = fields['model']
             provider = fields['provider']
 
@@ -191,9 +201,12 @@ def batch_analysis_stream():
                 alpha=alpha,
                 permutation_seed=permutation_seed,
                 temperature=temperature,
+                scenario=scenario,
             ):
                 yield chunk
 
+        except (ScenarioValidationError, ValueError) as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 

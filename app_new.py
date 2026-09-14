@@ -5,6 +5,7 @@ Flask web application for Focal Prompt — research toolkit UI + optional hosted
 
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -134,6 +135,29 @@ try:
     register_v1_routes(app)
 except Exception as e:
     print(f"Error registering v1 API routes: {e}", file=sys.stderr)
+
+
+def open_lab_in_chrome(host: str, port: int) -> None:
+    """Open the local analysis lab in Chrome without delaying server startup."""
+    browser_host = '127.0.0.1' if host in {'0.0.0.0', '::'} else host
+    url = f'http://{browser_host}:{port}/lab'
+    if sys.platform == 'darwin':
+        command = ['open', '-a', 'Google Chrome', url]
+    elif sys.platform.startswith('win'):
+        command = ['cmd', '/c', 'start', '', 'chrome', url]
+    else:
+        command = ['google-chrome', url]
+
+    try:
+        subprocess.Popen(
+            command,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError as exc:
+        print(f'Could not open Focal Prompt lab in Chrome: {exc}', file=sys.stderr)
+    else:
+        print(f'Opened Focal Prompt lab in Chrome: {url}', file=sys.stderr)
 
 
 def _page_copy():
@@ -476,6 +500,7 @@ if __name__ == '__main__':
     from waitress import serve
     port = int(os.environ.get('PORT', 5001))
     host = os.environ.get('HOST', '127.0.0.1')
+    open_lab_in_chrome(host, port)
     # Use waitress with 10-minute timeout for long-running ablation analysis
     serve(app, host=host, port=port, threads=4, channel_timeout=600)
 

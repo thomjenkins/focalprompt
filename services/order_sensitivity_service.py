@@ -51,10 +51,16 @@ class OrderSensitivityService:
         embedding_service: Optional[EmbeddingService] = None,
         cost_calculator: Optional[CostCalculator] = None,
         provider_name: Optional[str] = None,
+        judge_provider=None,
+        judge_model: Optional[str] = None,
+        judge_provider_name: Optional[str] = None,
     ):
         self.provider = provider
         self.model = model
         self.provider_name = provider_name or 'openai'
+        self.judge_provider = judge_provider or provider
+        self.judge_model = judge_model or model
+        self.judge_provider_name = judge_provider_name or self.provider_name
         self.api_key = api_key
         self.embedding_service = embedding_service or EmbeddingService()
         self.cost_calculator = cost_calculator or CostCalculator()
@@ -194,7 +200,7 @@ class OrderSensitivityService:
         judge = None
         if run_behavioral_judge and behavioral_criterion:
             judge = BehavioralCriterionJudge(
-                self.provider, self.model, self.provider_name
+                self.judge_provider, self.judge_model, self.judge_provider_name
             )
 
         baseline_judgments = self._maybe_judge(
@@ -388,3 +394,132 @@ class OrderSensitivityService:
                 'Self-reported focus weights describe model-stated emphasis, not internal activations.',
             ],
         }
+
+    def run_scenario_order_experiment(
+        self,
+        *,
+        scenario: Mapping[str, Any],
+        foci: Sequence[Mapping[str, Any]],
+        baseline_outputs: Sequence[str],
+        inputs: Optional[Mapping[str, Any]] = None,
+        focus_index_for_sweep: Optional[int] = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        """Run an order experiment inside one message/role boundary.
+
+        The established statistical engine operates on one text document. A
+        proxy maps each reordered document back onto the selected scenario
+        message before generation, so retained history and output contracts
+        remain unchanged.
+        """
+        from copy import deepcopy
+
+        from utils.inference_scenario import (
+            bind_scenario_inputs,
+            complete_scenario,
+            normalize_scenario_foci,
+            scenario_order_groups,
+        )
+
+        bound, binding = bind_scenario_inputs(scenario, inputs)
+        classified = normalize_scenario_foci(bound, foci)
+        groups = scenario_order_groups(bound, classified)
+        if not groups:
+            return {
+                'ok': False,
+                'error': 'No foci are reorderable within the same message and role.',
+                'ordering_groups': [],
+            }
+        selected_group = None
+        if focus_index_for_sweep is not None:
+            index = int(focus_index_for_sweep)
+            selected_group = next(
+                (group for group in groups if index in group['focus_indices']), None
+            )
+        if selected_group is None:
+            selected_group = groups[0]
+        message_id = selected_group['message_id']
+        target = next(message for message in bound['messages'] if message['id'] == message_id)
+        global_indices = list(selected_group['focus_indices'])
+        local_foci: List[Dict[str, Any]] = []
+        for global_index in global_indices:
+            item = deepcopy(classified[global_index])
+            item['spans'] = [
+                {
+                    'char_start': span['char_start'],
+                    'char_end': span['char_end'],
+                    'text_snapshot': span['text_snapshot'],
+                }
+                for span in item['spans']
+            ]
+            item.pop('message_id', None)
+            item.pop('message_ids', None)
+            local_foci.append(item)
+
+        translations: List[Dict[str, Any]] = []
+        outer = self
+
+        class ScenarioProxy:
+            def chat_completion(
+                self,
+                messages,
+                model,
+                temperature=0.7,
+                response_format=None,
+                provider=None,
+                max_tokens=None,
+            ):
+                reordered_text = messages[-1]['content']
+                arm = deepcopy(bound)
+                for message in arm['messages']:
+                    if message['id'] == message_id:
+                        message['content'] = reordered_text
+                        break
+                response = complete_scenario(
+                    outer.provider,
+                    outer.model,
+                    outer.provider_name,
+                    arm,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+                translations.append(dict(response.get('scenario_metadata') or {}))
+                return response
+
+        proxy_service = OrderSensitivityService(
+            ScenarioProxy(),
+            self.model,
+            api_key=self.api_key,
+            embedding_service=self.embedding_service,
+            cost_calculator=self.cost_calculator,
+            provider_name=self.provider_name,
+            judge_provider=self.judge_provider,
+            judge_model=self.judge_model,
+            judge_provider_name=self.judge_provider_name,
+        )
+        local_sweep = None
+        if focus_index_for_sweep is not None and int(focus_index_for_sweep) in global_indices:
+            local_sweep = global_indices.index(int(focus_index_for_sweep))
+        result = proxy_service.run_focus_order_experiment(
+            prompt=target['content'],
+            foci=local_foci,
+            baseline_outputs=baseline_outputs,
+            focus_index_for_sweep=local_sweep,
+            **kwargs,
+        )
+        result['scenario'] = bound
+        result['scenario_metadata'] = {
+            'input_binding': binding,
+            'ordering_message_id': message_id,
+            'ordering_role': selected_group['role'],
+            'focus_index_map': {
+                str(local): global_index
+                for local, global_index in enumerate(global_indices)
+            },
+            'provider_translations': translations,
+        }
+        result['ordering_groups'] = groups
+        result['cross_message_foci_fixed'] = [
+            index for index in range(len(classified)) if index not in global_indices
+        ]
+        return result

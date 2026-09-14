@@ -35,7 +35,9 @@ class BatchCsvParseResult:
     pairs: List[Dict[str, Any]] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
-    columns: Dict[str, Optional[str]] = field(default_factory=dict)
+    columns: Dict[str, Any] = field(default_factory=dict)
+    missing_input_columns: List[str] = field(default_factory=list)
+    unused_input_columns: List[str] = field(default_factory=list)
 
 
 def _is_blank(value: Optional[str]) -> bool:
@@ -85,7 +87,10 @@ def _map_columns(fieldnames: Sequence[str]) -> Dict[str, Optional[str]]:
     return mapping
 
 
-def parse_batch_csv_bytes(raw: bytes) -> BatchCsvParseResult:
+def parse_batch_csv_bytes(
+    raw: bytes,
+    expected_input_names: Optional[Sequence[str]] = None,
+) -> BatchCsvParseResult:
     """Parse uploaded CSV bytes into batch pairs."""
     result = BatchCsvParseResult()
 
@@ -135,15 +140,47 @@ def parse_batch_csv_bytes(raw: bytes) -> BatchCsvParseResult:
         return result
 
     mapping = _map_columns(fieldnames)
-    result.columns = dict(mapping)
+    scenario_mode = expected_input_names is not None
+    expected = [str(name) for name in (expected_input_names or [])]
+    reserved_original = {
+        value for key, value in mapping.items()
+        if key in ('output', 'prompt') and value is not None
+    }
+    legacy_original = {
+        value for key, value in mapping.items()
+        if key not in ('output', 'prompt') and value is not None
+    } if not scenario_mode else set()
+    expected_by_lower = {name.lower(): name for name in expected}
+    named_columns: Dict[str, str] = {}
+    for header in fieldnames:
+        if header is None or header in reserved_original or header in legacy_original:
+            continue
+        normalized_header = header.strip().lower()
+        name = expected_by_lower.get(normalized_header, normalized_header)
+        if not name:
+            continue
+        if name in named_columns:
+            result.errors.append(f'Duplicate input column after normalization: {name}')
+            return result
+        named_columns[name] = header
+    result.missing_input_columns = [name for name in expected if name not in named_columns]
+    result.unused_input_columns = (
+        [name for name in named_columns if name not in set(expected)]
+        if scenario_mode else []
+    )
+    result.columns = {**mapping, 'named_inputs': named_columns}
 
-    has_input_col = any(
+    has_input_col = (scenario_mode and not expected) or bool(named_columns) or any(
         mapping[k] for k in ('chat_content', 'rag_context', 'tool_results', 'other_input')
     )
     has_prompt_col = mapping['prompt'] is not None
     has_output_col = mapping['output'] is not None
 
     header_errors: List[str] = []
+    if result.missing_input_columns:
+        header_errors.append(
+            'Missing named input columns: ' + ', '.join(result.missing_input_columns)
+        )
     if not has_input_col and not has_prompt_col:
         header_errors.append(
             'Missing required columns: need at least one input column '
@@ -158,8 +195,13 @@ def parse_batch_csv_bytes(raw: bytes) -> BatchCsvParseResult:
         result.errors.extend(header_errors)
         return result
 
+    if result.unused_input_columns:
+        result.warnings.append(
+            'Unused input columns: ' + ', '.join(result.unused_input_columns)
+        )
+
     # Index of each canonical column in the header row.
-    col_index = {name: fieldnames.index(name) for name in mapping.values() if name}
+    col_index = {name: fieldnames.index(name) for name in fieldnames if name}
 
     data_rows_seen = 0
     row_num = 1  # header is row 1
@@ -188,10 +230,13 @@ def parse_batch_csv_bytes(raw: bytes) -> BatchCsvParseResult:
                 return val if isinstance(val, str) else str(val)
 
             inputs: Dict[str, str] = {}
-            for key in ('chat_content', 'rag_context', 'tool_results', 'other_input'):
-                col = mapping[key]
-                if col:
-                    inputs[key] = cell(col)
+            if not expected:
+                for key in ('chat_content', 'rag_context', 'tool_results', 'other_input'):
+                    col = mapping[key]
+                    if col:
+                        inputs[key] = cell(col)
+            for name, col in named_columns.items():
+                inputs[name] = cell(col)
 
             output = cell(mapping['output'])
             prompt = cell(mapping['prompt']) if has_prompt_col else None
@@ -208,10 +253,20 @@ def parse_batch_csv_bytes(raw: bytes) -> BatchCsvParseResult:
             has_input = any(not _is_blank(v) for v in inputs.values())
             has_prompt = prompt is not None and not _is_blank(prompt)
 
-            if not has_input and not has_prompt:
+            if not has_input and not has_prompt and not (scenario_mode and not expected):
                 result.errors.append(
                     f'Row {row_num}: missing input and/or prompt '
                     '(need non-empty chat/rag/tools/other and/or prompt)'
+                )
+                continue
+
+            blank_named = [
+                name for name in expected
+                if name not in inputs or _is_blank(inputs.get(name))
+            ]
+            if blank_named:
+                result.errors.append(
+                    f"Row {row_num}: Blank named inputs: {', '.join(blank_named)}"
                 )
                 continue
 
@@ -263,6 +318,8 @@ def parse_result_to_response(result: BatchCsvParseResult) -> Tuple[Dict[str, Any
             'warnings': result.warnings,
             'pairs': [],
             'columns': result.columns,
+            'missing_input_columns': result.missing_input_columns,
+            'unused_input_columns': result.unused_input_columns,
         }, 400
     if fatal and not result.pairs:
         return {
@@ -271,6 +328,8 @@ def parse_result_to_response(result: BatchCsvParseResult) -> Tuple[Dict[str, Any
             'warnings': result.warnings,
             'pairs': [],
             'columns': result.columns,
+            'missing_input_columns': result.missing_input_columns,
+            'unused_input_columns': result.unused_input_columns,
         }, 400
 
     if not result.pairs:
@@ -280,6 +339,8 @@ def parse_result_to_response(result: BatchCsvParseResult) -> Tuple[Dict[str, Any
             'warnings': result.warnings,
             'pairs': [],
             'columns': result.columns,
+            'missing_input_columns': result.missing_input_columns,
+            'unused_input_columns': result.unused_input_columns,
         }, 400
 
     body: Dict[str, Any] = {
@@ -287,6 +348,8 @@ def parse_result_to_response(result: BatchCsvParseResult) -> Tuple[Dict[str, Any
         'errors': result.errors,
         'warnings': result.warnings,
         'columns': result.columns,
+        'missing_input_columns': result.missing_input_columns,
+        'unused_input_columns': result.unused_input_columns,
         'count': len(result.pairs),
     }
     return body, 200

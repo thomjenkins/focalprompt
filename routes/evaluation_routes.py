@@ -33,7 +33,7 @@ def evaluate_outputs_quality():
         if not outputs:
             return jsonify({'error': 'outputs array is required'}), 400
 
-        fields = request_inference_fields(data)
+        fields = request_inference_fields(data, model_role='analysis')
         assessor = get_assessor(data=fields)
         evaluator = OutputQualityEvaluator(
             assessor.provider,

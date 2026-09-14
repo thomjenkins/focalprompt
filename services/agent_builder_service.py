@@ -6,12 +6,21 @@ Handles building optimized agents for specific inputs.
 """
 
 import json
-from typing import List, Dict, Optional, Generator
+from copy import deepcopy
+from typing import Any, List, Dict, Mapping, Optional, Generator
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from services.cost_calculator import CostCalculator
 from services.checkpoint_service import CheckpointService
 from utils.prompt_builder import build_prompt_with_dynamic_foci, get_pair_inputs
+from utils.inference_scenario import (
+    ProviderCapabilityError,
+    StructuredOutputError,
+    bind_scenario_inputs,
+    complete_scenario,
+    normalize_scenario_foci,
+    validate_scenario,
+)
 
 
 class AgentBuilderService:
@@ -24,7 +33,10 @@ class AgentBuilderService:
         cost_calculator: Optional[CostCalculator] = None,
         checkpoint_service: Optional[CheckpointService] = None,
         max_workers: int = 10,
-        provider_name: Optional[str] = None
+        provider_name: Optional[str] = None,
+        generation_provider=None,
+        generation_model: Optional[str] = None,
+        generation_provider_name: Optional[str] = None
     ):
         """
         Initialize agent builder service.
@@ -40,6 +52,13 @@ class AgentBuilderService:
         self.provider = provider
         self.model = model
         self.provider_name = provider_name or getattr(provider, 'provider_name', None) or 'openai'
+        self.generation_provider = generation_provider or provider
+        self.generation_model = generation_model or model
+        self.generation_provider_name = (
+            generation_provider_name
+            or getattr(self.generation_provider, 'provider_name', None)
+            or self.provider_name
+        )
         self.cost_calculator = cost_calculator or CostCalculator()
         self.checkpoint_service = checkpoint_service or CheckpointService()
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
@@ -229,9 +248,12 @@ CRITICAL REQUIREMENTS:
     
     def generate_agent_response(
         self,
-        constructed_prompt: str,
-        temperature: float = 0.7
-    ) -> str:
+        constructed_prompt: Optional[str] = None,
+        temperature: float = 0.7,
+        *,
+        scenario: Optional[Mapping[str, Any]] = None,
+        inputs: Optional[Mapping[str, Any]] = None,
+    ) -> Any:
         """
         Generate response using agent prompt.
         
@@ -242,28 +264,117 @@ CRITICAL REQUIREMENTS:
         Returns:
             Generated response
         """
+        if scenario is not None:
+            if constructed_prompt and constructed_prompt.strip():
+                raise ValueError('Provide exactly one of scenario or constructed_prompt')
+            bound, binding = bind_scenario_inputs(scenario, inputs)
+            response = complete_scenario(
+                self.generation_provider,
+                self.generation_model,
+                self.generation_provider_name,
+                bound,
+                temperature=temperature,
+            )
+            return {
+                'output': response['content'],
+                'parsed_output': response.get('parsed_output'),
+                'scenario': bound,
+                'scenario_metadata': {
+                    **dict(response.get('scenario_metadata') or {}),
+                    'input_binding': binding,
+                },
+            }
+        if not isinstance(constructed_prompt, str) or not constructed_prompt.strip():
+            raise ValueError('Provide exactly one of scenario or constructed_prompt')
+
         # Check if provider needs provider parameter (AI Gateway)
         import inspect
-        sig = inspect.signature(self.provider.chat_completion)
+        sig = inspect.signature(self.generation_provider.chat_completion)
         needs_provider = 'provider' in sig.parameters
         
         chat_kwargs = {
-            'model': self.model,
+            'model': self.generation_model,
             'messages': [{"role": "user", "content": constructed_prompt}],
             'temperature': temperature
         }
         
         if needs_provider:
-            chat_kwargs['provider'] = self.provider_name
+            chat_kwargs['provider'] = self.generation_provider_name
         
-        response = self.provider.chat_completion(**chat_kwargs)
+        response = self.generation_provider.chat_completion(**chat_kwargs)
         return response['content']
+
+    @staticmethod
+    def build_agent_scenario(
+        scenario: Mapping[str, Any],
+        foci_list: List[Dict],
+        foci_weights: List[Dict],
+    ) -> tuple[Dict[str, Any], Dict[str, Any]]:
+        """Build one input-specific scenario without changing retained messages.
+
+        The legacy agent builder includes foci with normalized weight above 0.1.
+        For scenarios, keep the same threshold but reconstruct each targeted
+        Analyse message from the union of its selected exact source spans.
+        """
+        normalized = validate_scenario(scenario)
+        classified = normalize_scenario_foci(normalized, foci_list)
+        weights = {
+            str(item.get('focus') or ''): float(item.get('weight') or 0)
+            for item in (foci_weights or [])
+        }
+        all_ranges: Dict[str, List[tuple[int, int]]] = {}
+        selected_ranges: Dict[str, List[tuple[int, int]]] = {}
+        selected_names: List[str] = []
+        for focus in classified:
+            if not focus.get('attributable'):
+                continue
+            selected = weights.get(str(focus.get('focus') or ''), 0.0) > 0.1
+            if selected:
+                selected_names.append(str(focus.get('focus') or ''))
+            for span in focus.get('spans') or []:
+                pair = (int(span['char_start']), int(span['char_end']))
+                all_ranges.setdefault(span['message_id'], []).append(pair)
+                if selected:
+                    selected_ranges.setdefault(span['message_id'], []).append(pair)
+
+        result = deepcopy(normalized)
+        result_messages = []
+        changed_ids: List[str] = []
+        removed_ids: List[str] = []
+        for message in result['messages']:
+            message_id = message['id']
+            if message['analysis_mode'] != 'analyse' or message_id not in all_ranges:
+                result_messages.append(message)
+                continue
+            ranges: List[List[int]] = []
+            for start, end in sorted(selected_ranges.get(message_id, [])):
+                if ranges and start <= ranges[-1][1]:
+                    ranges[-1][1] = max(ranges[-1][1], end)
+                else:
+                    ranges.append([start, end])
+            content = '\n\n'.join(
+                message['content'][start:end] for start, end in ranges
+            )
+            if not content.strip() and message['role'] != 'user':
+                removed_ids.append(message_id)
+                continue
+            next_message = dict(message)
+            next_message['content'] = content
+            result_messages.append(next_message)
+            changed_ids.append(message_id)
+        result['messages'] = result_messages
+        return validate_scenario(result), {
+            'selected_focus_names': selected_names,
+            'changed_analyse_message_ids': changed_ids,
+            'removed_analyse_message_ids': removed_ids,
+        }
     
     def process_single_agent_pair(
         self,
         pair_data: Dict,
         pair_idx: int,
-        foci_list: List[Dict]
+        foci_list: List[Dict],
+        scenario: Optional[Mapping[str, Any]] = None,
     ) -> Dict:
         """
         Process a single agent pair - assess foci and generate response.
@@ -279,6 +390,12 @@ CRITICAL REQUIREMENTS:
         try:
             inputs = get_pair_inputs(pair_data)
             chat_content = inputs.get('chat_content', '')
+            if scenario is not None:
+                raw_inputs = dict(pair_data.get('inputs') or {})
+                chat_content = '\n\n'.join(
+                    f'{name}: {value}' for name, value in raw_inputs.items()
+                    if str(value).strip()
+                )
             expected_output = pair_data.get('output', '')
             
             # Assess chat foci
@@ -308,9 +425,22 @@ CRITICAL REQUIREMENTS:
             )
             
             # Generate response
-            generated_output = self.generate_agent_response(constructed_prompt)
+            if scenario is not None:
+                constructed_scenario, construction = self.build_agent_scenario(
+                    scenario,
+                    foci_list,
+                    assessment['foci_weights'],
+                )
+                generation = self.generate_agent_response(
+                    scenario=constructed_scenario,
+                    inputs=pair_data.get('inputs') or {},
+                )
+                generated_output = generation['output']
+            else:
+                generation = None
+                generated_output = self.generate_agent_response(constructed_prompt)
             
-            return {
+            result = {
                 'success': True,
                 'pair_index': pair_idx,
                 'foci_weights': assessment['foci_weights'],
@@ -319,6 +449,16 @@ CRITICAL REQUIREMENTS:
                 'generated_output': generated_output,
                 'expected_output': expected_output
             }
+            if generation is not None:
+                result['constructed_scenario'] = generation['scenario']
+                result['scenario_metadata'] = {
+                    **generation['scenario_metadata'],
+                    'agent_construction': construction,
+                }
+                result['parsed_output'] = generation.get('parsed_output')
+            return result
+        except (ProviderCapabilityError, StructuredOutputError):
+            raise
         except Exception as e:
             return {
                 'success': False,
@@ -331,7 +471,8 @@ CRITICAL REQUIREMENTS:
         pairs: List[Dict],
         foci_list: List[Dict],
         session_id: Optional[str] = None,
-        resume: bool = False
+        resume: bool = False,
+        scenario: Optional[Mapping[str, Any]] = None,
     ) -> Generator[str, None, None]:
         """
         Stream batch agent building results.
@@ -374,7 +515,8 @@ CRITICAL REQUIREMENTS:
                 self.process_single_agent_pair,
                 pair,
                 pair_idx,
-                foci_list
+                foci_list,
+                scenario,
             )
             futures[future] = pair_idx
         
@@ -393,8 +535,11 @@ CRITICAL REQUIREMENTS:
                 'completed': completed_count,
                 'total_pairs': total_pairs,
                 'results': results,
-                'complete': completed_count >= total_pairs
+            'complete': completed_count >= total_pairs
             }
+            if scenario is not None:
+                checkpoint_data['scenario'] = validate_scenario(scenario)
+                checkpoint_data['workspace_version'] = 2
             self.checkpoint_service.save_checkpoint(session_id, checkpoint_data, 'batch_agents')
             
             yield f"data: {json.dumps({'type': 'progress', 'stage': 'processing', 'completed': completed_count, 'total': total_pairs, 'pair_index': pair_idx})}\n\n"
@@ -412,7 +557,8 @@ CRITICAL REQUIREMENTS:
             'total_pairs': total_pairs,
             'results': results
         }
+        if scenario is not None:
+            final_result['scenario'] = validate_scenario(scenario)
+            final_result['workspace_version'] = 2
         
         yield f"data: {json.dumps(final_result)}\n\n"
-
-

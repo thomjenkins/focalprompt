@@ -10,6 +10,7 @@ from services.order_sensitivity_service import OrderSensitivityService
 from routes.http_errors import internal_error
 from utils.json_safe import sanitize_non_finite
 from utils.request_inference import request_inference_fields
+from utils.inference_scenario import ScenarioValidationError, scenario_from_request
 
 order_sensitivity_bp = Blueprint('order_sensitivity', __name__)
 
@@ -22,7 +23,7 @@ def _analysis_json(data):
 def estimate_focus_order_cost():
     try:
         data = request.json or {}
-        fields = request_inference_fields(data)
+        fields = request_inference_fields(data, model_role='mut')
         assessor = get_assessor(data=fields)
         svc = OrderSensitivityService(
             assessor.provider,
@@ -51,31 +52,38 @@ def run_focus_order_sensitivity():
     """
     try:
         data = request.json or {}
+        scenario, is_legacy = scenario_from_request(data)
         prompt = data.get('prompt') or ''
         foci = data.get('foci') or data.get('foci_list') or []
         baseline_outputs = data.get('baseline_outputs') or []
-        if not prompt.strip():
+        if is_legacy and not prompt.strip():
             return jsonify({'error': 'prompt is required'}), 400
         if not foci:
             return jsonify({'error': 'foci is required'}), 400
         if not baseline_outputs:
             return jsonify({'error': 'baseline_outputs from Experiment B are required'}), 400
 
-        fields = request_inference_fields(data)
+        fields = request_inference_fields(data, model_role='mut')
         assessor = get_assessor(data=fields)
+        analysis_fields = request_inference_fields(data, model_role='analysis')
+        analysis_assessor = get_assessor(data=analysis_fields)
         svc = OrderSensitivityService(
             assessor.provider,
             fields['model'],
             provider_name=getattr(assessor, 'provider_name', fields['provider']),
+            judge_provider=analysis_assessor.provider,
+            judge_model=analysis_fields['model'],
+            judge_provider_name=getattr(
+                analysis_assessor, 'provider_name', analysis_fields['provider']
+            ),
         )
 
         assessment_service = None
         if data.get('run_reported_focus'):
             from services.assessment_service import AssessmentService
-            assessment_service = AssessmentService(assessor)
+            assessment_service = AssessmentService(analysis_assessor)
 
-        result = svc.run_focus_order_experiment(
-            prompt=prompt,
+        experiment_kwargs = dict(
             foci=foci,
             baseline_outputs=baseline_outputs,
             k_permutations=int(data.get('k_permutations') or 5),
@@ -94,10 +102,17 @@ def run_focus_order_sensitivity():
             assessment_service=assessment_service,
             run_reported_focus=bool(data.get('run_reported_focus')),
         )
+        if is_legacy:
+            result = svc.run_focus_order_experiment(prompt=prompt, **experiment_kwargs)
+        else:
+            result = svc.run_scenario_order_experiment(
+                scenario=scenario,
+                **experiment_kwargs,
+            )
         if not result.get('ok'):
             return _analysis_json(result), 400
         return _analysis_json(result)
-    except ValueError as e:
+    except (ScenarioValidationError, ValueError) as e:
         return jsonify({'error': str(e)}), 400
     except Exception as e:
         return internal_error('order_sensitivity_run', e)

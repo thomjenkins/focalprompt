@@ -21,6 +21,13 @@ from services.checkpoint_service import CheckpointService
 from utils.prompt_builder import build_prompt_with_dynamic_foci
 from routes.http_errors import internal_error
 from utils.request_inference import request_inference_fields
+from utils.inference_scenario import (
+    ProviderCapabilityError,
+    ScenarioValidationError,
+    StructuredOutputError,
+    scenario_analysis_document,
+    scenario_from_request,
+)
 
 
 assessment_bp = Blueprint('assessment', __name__)
@@ -31,21 +38,20 @@ def detect_foci():
     """Use an agent to automatically detect foci from the prompt."""
     try:
         data = request.json
-        prompt = data.get('prompt', '')
+        scenario, _legacy = scenario_from_request(data)
         
-        if not prompt:
-            return jsonify({'error': 'Prompt is required'}), 400
-        
-        assessor = get_assessor(data=request_inference_fields(data))
+        assessor = get_assessor(data=request_inference_fields(data, model_role='analysis'))
         service = AssessmentService(assessor)
         
         try:
-            result = service.detect_foci(prompt)
+            result = service.detect_foci_scenario(scenario)
         except (ValueError, json.JSONDecodeError) as e:
             return internal_error('assessment_detect_foci_parse', e)
         
         return jsonify(result)
         
+    except ScenarioValidationError as e:
+        return jsonify({'error': str(e)}), 400
     except Exception as e:
         return internal_error('assessment_detect_foci', e)
 
@@ -55,23 +61,28 @@ def detect_dynamic_foci():
     """Auto-detect which foci should be marked as dynamic."""
     try:
         data = request.json
-        prompt = data.get('prompt', '')
+        scenario, is_legacy = scenario_from_request(data)
+        if not is_legacy:
+            return jsonify({
+                'error': 'Dynamic-focus tagging is replaced by analysis_mode=retain in scenarios.'
+            }), 400
+        prompt = data.get('prompt', '') if is_legacy else scenario_analysis_document(scenario)
         foci = data.get('foci', [])
         pairs = data.get('pairs', [])
         
-        if not prompt:
-            return jsonify({'error': 'Prompt is required'}), 400
         if not foci or len(foci) == 0:
             return jsonify({'error': 'Foci are required'}), 400
         if not pairs or len(pairs) == 0:
             return jsonify({'error': 'At least one pair is required to detect dynamic patterns'}), 400
         
-        assessor = get_assessor(data=request_inference_fields(data))
+        assessor = get_assessor(data=request_inference_fields(data, model_role='analysis'))
         service = AssessmentService(assessor)
         
         result = service.detect_dynamic_foci(prompt, foci, pairs)
         return jsonify(result)
         
+    except ScenarioValidationError as e:
+        return jsonify({'error': str(e)}), 400
     except Exception as e:
         return internal_error('assessment_detect_dynamic_foci', e)
 
@@ -81,17 +92,16 @@ def assess():
     """Assess focus distribution."""
     try:
         data = request.json
-        prompt = data.get('prompt', '')
+        scenario, is_legacy = scenario_from_request(data)
+        prompt = data.get('prompt', '') if is_legacy else scenario_analysis_document(scenario)
         output = data.get('output', '')
         user_foci = data.get('foci', [])
         max_foci = data.get('max_foci', None)
         
-        if not prompt:
-            return jsonify({'error': 'Prompt is required'}), 400
         if not output:
             return jsonify({'error': 'Output is required'}), 400
         
-        assessor = get_assessor(data=request_inference_fields(data))
+        assessor = get_assessor(data=request_inference_fields(data, model_role='analysis'))
         checkpoint_service = CheckpointService()
         service = AssessmentService(assessor, checkpoint_service=checkpoint_service)
         
@@ -107,6 +117,8 @@ def assess():
                 'result_data': {
                     **result,
                     'prompt': prompt,
+                    'scenario': scenario,
+                    'workspace_version': 2,
                     'output': output,
                     'user_foci': user_foci if user_foci else None,
                     'max_foci': max_foci
@@ -121,6 +133,8 @@ def assess():
         
         return jsonify(result)
         
+    except ScenarioValidationError as e:
+        return jsonify({'error': str(e)}), 400
     except Exception as e:
         return internal_error('assessment_assess', e)
 
@@ -150,24 +164,38 @@ def generate_output():
         if not data:
             return jsonify({'error': 'Request body is required'}), 400
             
-        prompt = data.get('prompt', '')
         temperature = data.get('temperature', 0.7)
+        scenario, is_legacy = scenario_from_request(data)
         
-        if not prompt:
-            return jsonify({'error': 'Prompt is required'}), 400
-        
-        fields = request_inference_fields(data)
+        fields = request_inference_fields(data, model_role='mut')
         model = fields.get('model', 'gpt-4o-mini')
         provider = fields.get('provider', 'openai')
         
         print(f"   Using model: {model}, provider: {provider}", file=sys.stderr)
         
         assessor = get_assessor(data=fields)
-        output = assessor.generate_output(prompt, temperature=temperature)
+        response = assessor.generate_output_response(
+            data.get('prompt') if is_legacy else None,
+            scenario=None if is_legacy else scenario,
+            inputs=data.get('inputs'),
+            temperature=temperature,
+        )
+        output = response['content']
         
         print(f"   ✅ Output generated successfully", file=sys.stderr)
-        return jsonify({'output': output})
+        payload = {
+            'output': output,
+            'scenario': response.get('scenario'),
+            'scenario_metadata': response.get('scenario_metadata'),
+        }
+        if 'parsed_output' in response:
+            payload['parsed_output'] = response['parsed_output']
+        return jsonify(payload)
         
+    except (ProviderCapabilityError, StructuredOutputError) as e:
+        return jsonify({'error': str(e), 'code': 'inference_contract_error'}), 422
+    except ScenarioValidationError as e:
+        return jsonify({'error': str(e)}), 400
     except Exception as e:
         return internal_error('assessment_generate_output', e)
 
@@ -175,24 +203,42 @@ def generate_output():
 @assessment_bp.route('/api/rewrite-prompt', methods=['POST'])
 def rewrite_prompt():
     """Rewrite prompt with emphasis based on focus weights."""
+    import sys
+    print(f"✅ /api/rewrite-prompt route handler called", file=sys.stderr)
+    print(f"   Method: {request.method}", file=sys.stderr)
+    print(f"   Path: {request.path}", file=sys.stderr)
+    print(f"   Blueprint: {assessment_bp.name}", file=sys.stderr)
+
     try:
         data = request.json
-        prompt = data.get('prompt', '')
+        scenario, is_legacy = scenario_from_request(data)
         foci_weights = data.get('foci', [])
-        
-        if not prompt:
-            return jsonify({'error': 'Prompt is required'}), 400
         if not foci_weights:
             return jsonify({'error': 'Foci with weights are required'}), 400
         
-        assessor = get_assessor(data=request_inference_fields(data))
+        fields = request_inference_fields(data, model_role='analysis')
+        model = fields.get('model', 'gpt-4o')
+        provider = fields.get('provider', 'openai')
+
+        print(f"   Using model: {model}, provider: {provider}", file=sys.stderr)
+
+        assessor = get_assessor(data=fields)
         service = PromptRewriteService(assessor)
         
-        rewritten = service.rewrite_prompt(prompt, foci_weights)
+        if is_legacy:
+            rewritten = service.rewrite_prompt(data.get('prompt', ''), foci_weights)
+        else:
+            rewritten = service.rewrite_scenario(scenario, foci_weights)
+
+        print(f"   ✅ Prompt rewritten successfully", file=sys.stderr)
+        if is_legacy:
+            return jsonify({'rewritten_prompt': rewritten})
+        return jsonify({'rewritten_scenario': rewritten})
         
-        return jsonify({'rewritten_prompt': rewritten})
-        
+    except ScenarioValidationError as e:
+        return jsonify({'error': str(e)}), 400
     except Exception as e:
+        print(f"   ❌ Prompt rewrite failed: {e}", file=sys.stderr)
         return internal_error('assessment_rewrite_prompt', e)
 
 

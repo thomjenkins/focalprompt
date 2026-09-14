@@ -14,6 +14,12 @@ from services.cost_calculator import CostCalculator
 from services.checkpoint_service import CheckpointService
 from routes.http_errors import internal_error
 from utils.request_inference import request_inference_fields
+from utils.inference_scenario import (
+    ProviderCapabilityError,
+    ScenarioValidationError,
+    StructuredOutputError,
+    validate_scenario,
+)
 
 agent_bp = Blueprint('agent', __name__)
 
@@ -31,7 +37,7 @@ def assess_chat_foci():
         if not foci_list or len(foci_list) == 0:
             return jsonify({'error': 'Foci are required'}), 400
         
-        fields = request_inference_fields(data)
+        fields = request_inference_fields(data, model_role='analysis')
         assessor = get_assessor(data=fields)
         cost_calculator = CostCalculator()
         
@@ -54,17 +60,31 @@ def assess_chat_foci():
 
 @agent_bp.route('/api/build-agent-prompt', methods=['POST'])
 def build_agent_prompt():
-    """Build agent prompt from foci weights and chat content."""
+    """Build a scenario (or legacy prompt) from focus weights."""
     try:
         data = request.json
         foci = data.get('foci', [])  # List of foci with weights
         chat_content = data.get('chat_content', '')
         chat_weight = data.get('chat_weight', 0.5)
-        # Prefer full foci catalog for dynamic_type lookup (is_dynamic / chat slots).
+        # The full focus catalog retains exact spans for scenario construction.
         foci_list = data.get('all_foci') or foci
         
         if not foci or len(foci) == 0:
             return jsonify({'error': 'Foci are required'}), 400
+
+        if data.get('scenario') is not None:
+            scenario = validate_scenario(data['scenario'])
+            constructed_scenario, metadata = AgentBuilderService.build_agent_scenario(
+                scenario,
+                foci_list,
+                foci,
+            )
+            return jsonify({
+                'constructed_scenario': constructed_scenario,
+                'scenario_metadata': metadata,
+                'foci_count': len(foci),
+                'chat_weight': chat_weight,
+            })
         
         # Build inputs dict for prompt builder
         inputs = {
@@ -97,6 +117,8 @@ def build_agent_prompt():
             'chat_weight': chat_weight
         })
         
+    except ScenarioValidationError as e:
+        return jsonify({'error': str(e)}), 400
     except Exception as e:
         return internal_error('agent_build_prompt', e)
 
@@ -106,20 +128,30 @@ def generate_agent_response():
     """Generate response using agent prompt."""
     try:
         data = request.json
-        constructed_prompt = data.get('constructed_prompt', '')
+        constructed_prompt = data.get('constructed_prompt')
+        scenario = data.get('scenario')
         temperature = data.get('temperature', 0.7)
         
-        if not constructed_prompt:
-            return jsonify({'error': 'Constructed prompt is required'}), 400
+        if (scenario is None) == (not bool((constructed_prompt or '').strip())):
+            return jsonify({'error': 'Provide exactly one of scenario or constructed_prompt'}), 400
         
-        fields = request_inference_fields(data)
+        fields = request_inference_fields(data, model_role='mut')
         assessor = get_assessor(data=fields)
         provider_name = getattr(assessor, 'provider_name', None) or fields['provider']
         service = AgentBuilderService(assessor.provider, fields['model'], provider_name=provider_name)
         
-        output = service.generate_agent_response(constructed_prompt, temperature)
-        return jsonify({'output': output})
+        output = service.generate_agent_response(
+            constructed_prompt,
+            temperature,
+            scenario=validate_scenario(scenario) if scenario is not None else None,
+            inputs=data.get('inputs'),
+        )
+        return jsonify(output if isinstance(output, dict) else {'output': output})
         
+    except (ProviderCapabilityError, StructuredOutputError) as e:
+        return jsonify({'error': str(e), 'code': 'inference_contract_error'}), 422
+    except ScenarioValidationError as e:
+        return jsonify({'error': str(e)}), 400
     except Exception as e:
         return internal_error('agent_generate_response', e)
 
@@ -140,6 +172,7 @@ def build_batch_agents_stream():
             foci_list = data.get('foci', [])
             session_id = data.get('session_id')
             resume = data.get('resume', False)
+            scenario = validate_scenario(data['scenario']) if data.get('scenario') is not None else None
             
             if not pairs or len(pairs) == 0:
                 yield f"data: {json.dumps({'type': 'error', 'message': 'Pairs are required'})}\n\n"
@@ -149,22 +182,32 @@ def build_batch_agents_stream():
                 yield f"data: {json.dumps({'type': 'error', 'message': 'Foci are required'})}\n\n"
                 return
             
-            fields = request_inference_fields(data)
+            fields = request_inference_fields(data, model_role='analysis')
             assessor = get_assessor(data=fields)
+            mut_fields = request_inference_fields(data, model_role='mut')
+            mut_assessor = get_assessor(data=mut_fields)
             cost_calculator = CostCalculator()
             checkpoint_service = CheckpointService()
             provider_name = getattr(assessor, 'provider_name', None) or fields['provider']
+            mut_provider_name = (
+                getattr(mut_assessor, 'provider_name', None) or mut_fields['provider']
+            )
             
             service = AgentBuilderService(
                 assessor.provider,
                 fields['model'],
                 cost_calculator,
                 checkpoint_service,
-                provider_name=provider_name
+                provider_name=provider_name,
+                generation_provider=mut_assessor.provider,
+                generation_model=mut_fields['model'],
+                generation_provider_name=mut_provider_name
             )
             
             # Stream results
-            for chunk in service.stream_batch_agents(pairs, foci_list, session_id, resume):
+            for chunk in service.stream_batch_agents(
+                pairs, foci_list, session_id, resume, scenario=scenario
+            ):
                 yield chunk
                 
         except Exception as e:
@@ -193,7 +236,7 @@ def llm_evaluate_batch_agents_stream():
                 yield f"data: {json.dumps({'type': 'error', 'message': 'Results are required'})}\n\n"
                 return
             
-            fields = request_inference_fields(data)
+            fields = request_inference_fields(data, model_role='analysis')
             assessor = get_assessor(data=fields)
             cost_calculator = CostCalculator()
             
