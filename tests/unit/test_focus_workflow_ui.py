@@ -1,0 +1,118 @@
+"""Execute browser orchestration without credentials or paid inference."""
+
+from pathlib import Path
+import subprocess
+
+
+REPO = Path(__file__).resolve().parents[2]
+
+
+def test_ordered_workflow_resume_reuse_and_staleness():
+    workflow = (REPO / 'static/js/focus_workflow.js').read_text()
+    app = (REPO / 'static/js/app.js').read_text()
+    paced = app[app.index('async function runPacedAblation('):app.index('if (runAblationBtn) {', app.index('async function runPacedAblation('))]
+    script = r"""
+const assert = require('node:assert/strict');
+const window = globalThis;
+const elements = new Map();
+const document = {
+  getElementById(id) {
+    if (!elements.has(id)) elements.set(id, {innerHTML: '', textContent: '', value: '',
+      classList: {add() {}, remove() {}}, addEventListener() {}});
+    return elements.get(id);
+  }, addEventListener() {}
+};
+let scenario = {version: 1, messages: [{id: 'rules', role: 'system', content: 'Be concise.', analysis_mode: 'analyse'},
+  {id: 'chat', role: 'user', content: 'Retained chat', analysis_mode: 'retain'}]};
+let foci = [{focus: 'Brief', prompt_section: 'Be concise.'}];
+let model = {model: 'model-under-test', provider: 'openai'};
+let config = {temperature: .7, n_baseline: 10, n_ablated: 3};
+let assessmentFoci = [];
+const outputInput = document.getElementById('output-input');
+function readMainScenario() { return scenario; }
+function getSectionModel() { return model; }
+function getApiBody(payload, role, selected) { return {...payload, ...selected}; }
+function getApiHeaders() { return {}; }
+function escapeHtml(s) { return s.replaceAll('<', '&lt;'); }
+function showLoading() {}
+function renderAssessment(data) { window.lastAssessmentApiPayload = data; }
+window.FocalPromptExperiment = {getState: () => config, temperatureRejection: () => null};
+const requests = [], generated = [];
+let failSample = true, calls = 0, scoreBody;
+async function fetchAblationSample(inference, fs, kind, index, temperature, controller, inputs, selected) {
+  assert.equal(temperature, .7);
+  assert.deepEqual(selected, model);
+  if (kind === 'baseline' && ++calls === 2 && failSample) { failSample = false; throw new Error('Transient failure'); }
+  const content = kind + ' output ' + generated.length;
+  generated.push({kind, content});
+  return {content, scenario: kind === 'baseline' ? structuredClone(inference) : {...inference, messages: inference.messages.slice(1)},
+    usage: {prompt_tokens: 10, completion_tokens: 20}};
+}
+const oneAllocation = {foci: [{focus: 'Brief', focus_index: 0, score: 100, explanation: 'A concise answer.'}]};
+async function fetch(path, options) {
+  const body = JSON.parse(options.body);
+  requests.push({path, body});
+  let result;
+  if (path === '/api/focus-self-assessment') {
+    assert.equal(body.model, model.model);
+    assert.equal(body.scenario.messages[1].content, 'Retained chat');
+    assert.equal(body.prospective, undefined);
+    assert.equal(body.baseline_outputs, undefined);
+    if (body.phase === 'prospective') assert.equal(body.output, undefined);
+    result = oneAllocation;
+  } else if (path === '/api/baseline-diagnostics') {
+    assert.equal(body.baseline_outputs.length, 10);
+    result = {baseline_stability: {}, output_distribution: {label: 'no_clear_multiple_modes', note: 'Advisory',
+      membership: Array(10).fill(0), projection: {coordinates: Array(10).fill([0, 0])},
+      pairwise_cosine_distances: Array.from({length: 10}, () => Array(10).fill(0))}};
+  } else if (path === '/api/focus-comparison') {
+    assert.equal(body.retrospective.length, 10);
+    result = {average: oneAllocation, comparison: []};
+  } else if (path === '/api/ablation-score') {
+    scoreBody = body;
+    result = {baseline_outputs: body.baseline_outputs};
+  } else throw new Error('Unexpected ' + path);
+  return {ok: true, json: async () => structuredClone(result)};
+}
+function isClientAttributableFocus() { return true; }
+async function mapPool(items, count, task) { return Promise.all(items.map(task)); }
+""" + workflow + '\n' + paced + r"""
+(async () => {
+  const flow = window.FocalPromptWorkflow;
+  assert.ok(flow.matches({a: 1, b: {c: 2, d: 3}}, {b: {d: 3, c: 2}, a: 1}));
+  assert.ok(!flow.matches({a: [1, 2]}, {a: [2, 1]}));
+  await assert.rejects(flow.sampleBaseline, /Predict focus/);
+  await flow.predict();
+  assert.equal(requests.length, 1);
+  await assert.rejects(flow.sampleBaseline, /Successful samples are saved/);
+  const completed = flow.collect().samples.filter(Boolean).length;
+  assert.ok(completed > 0 && completed < 10);
+  await flow.sampleBaseline();
+  assert.equal(generated.filter(s => s.kind === 'baseline').length, 10);
+  const original = flow.collect().samples.map(s => s.content);
+  await flow.retrospective();
+  const retros = requests.filter(r => r.body.phase === 'retrospective');
+  assert.equal(retros.length, 10);
+  assert.deepEqual(retros.map(r => r.body.output).sort(), [...original].sort());
+  assert.equal(window.lastAssessmentApiPayload.foci[0].score, 100);
+  const snapshot = flow.forAblation(scenario, foci, config, model);
+  await runPacedAblation(scenario, foci, config, null, null, 'ablation', snapshot);
+  assert.equal(generated.filter(s => s.kind === 'baseline').length, 10, 'baseline must be reused');
+  assert.equal(generated.filter(s => s.kind === 'ablated').length, 3);
+  assert.deepEqual(scoreBody.baseline_outputs, original);
+  assert.deepEqual(scoreBody.scenario, scenario, 'never score against the first ablated scenario');
+  assert.equal(scoreBody.input_tokens, 130);
+  assert.ok(scoreBody.focus_workflow.prospective);
+  assert.throws(() => flow.forAblation(scenario, foci, config, {model: 'other', provider: 'openai'}), /same scenario/);
+  const exported = flow.collect();
+  flow.restore(null);
+  flow.restore(exported);
+  assert.deepEqual(flow.forAblation(scenario, foci, config, model).samples, snapshot.samples);
+  config = {...config, temperature: .9};
+  assert.throws(() => flow.forAblation(scenario, foci, config, model), /changed/);
+  config = {...config, temperature: .7};
+  scenario.messages[1].content = 'Changed retained input';
+  await assert.rejects(flow.retrospective, /changed/);
+})().catch(error => { console.error(error); process.exit(1); });
+"""
+    subprocess.run(['node', '-e', script], check=True, capture_output=True, text=True)

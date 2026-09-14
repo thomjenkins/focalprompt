@@ -168,3 +168,12 @@ def test_before_request_gate(client, monkeypatch):
     r = client.post('/api/detect-foci', json={'prompt': 'hello'})
     assert r.status_code == 503
     assert r.get_json()['code'] == 'live_disabled'
+
+
+@pytest.mark.parametrize('path', ['/api/focus-self-assessment', '/api/baseline-diagnostics'])
+def test_focus_workflow_respects_hosted_inference_gate(client, monkeypatch, path):
+    monkeypatch.setenv('FOCALPROMPT_HOSTED_MODE', '1')
+    monkeypatch.setenv('FOCALPROMPT_ALLOW_LIVE_INFERENCE', '0')
+    r = client.post(path, json={})
+    assert r.status_code == 503
+    assert r.get_json()['code'] == 'live_disabled'

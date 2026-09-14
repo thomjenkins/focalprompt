@@ -261,7 +261,7 @@
     function fociForRoot(root) {
         var source = root.getAttribute('data-foci-source');
         if (source === 'batch') return global.batchFoci || [];
-        return global.foci || [];
+        return typeof global.getAblationFoci === 'function' ? global.getAblationFoci() : (global.foci || []);
     }
 
     function refreshRoot(root) {
@@ -299,7 +299,10 @@
         var nAttr = countPreviewAttributable(foci);
         var costEl = root.querySelector('.exp-cost-line');
         if (costEl) {
-            costEl.textContent = formatCostLine(state.n_baseline, state.n_ablated, nAttr, fociTagged);
+            costEl.textContent = root.getAttribute('data-reuse-baseline') === 'true'
+                ? 'Reuses ' + state.n_baseline + ' baseline outputs from step 3; generates '
+                    + state.n_ablated + ' × ' + (fociTagged ? nAttr : 'tested foci') + ' ablated outputs.'
+                : formatCostLine(state.n_baseline, state.n_ablated, nAttr, fociTagged);
         }
 
         var sug = suggestedSampleSizes(state.temperature);
