@@ -163,6 +163,8 @@ LIVE_INFERENCE_PREFIXES = (
     '/api/detect-foci',
     '/api/detect-dynamic-foci',
     '/api/assess',
+    '/api/focus-self-assessment',
+    '/api/baseline-diagnostics',
     '/api/generate-output',
     '/api/rewrite-prompt',
     '/api/build-agent-prompt',

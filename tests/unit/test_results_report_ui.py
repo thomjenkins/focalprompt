@@ -74,8 +74,8 @@ def test_experiment_c_not_a_separate_lab_card():
     assert 'id="experiment-c-section"' in HTML
     assert 'Experiment C — Reported vs revealed</h2>' not in HTML
     assert 'experiment-c-pointer' not in HTML
-    assert '7. Focus order sensitivity' in HTML
-    assert '8. Task quality evaluation' in HTML
+    assert '6. Focus order sensitivity' in HTML
+    assert '7. Task quality evaluation' in HTML
 
 
 def test_report_owns_concordance():
