@@ -6,6 +6,7 @@ Indices, rather than labels, identify foci (labels need not be unique).
 
 import json
 import math
+from collections import Counter
 from statistics import mean, stdev
 
 from services.assessment_service import AssessmentService
@@ -16,6 +17,7 @@ from utils.llm_json import parse_llm_json
 ASSESSMENT_PROTOCOL = 'context-grounded-v2'
 ASSESSMENT_TEMPERATURE = 0.2
 APPLICABILITY = frozenset({'direct', 'background', 'inactive'})
+REPAIR_BATCH_SIZE = 8
 
 
 def validate_foci(foci):
@@ -25,33 +27,25 @@ def validate_foci(foci):
         raise ValueError('Supply a non-empty list of named foci.')
 
 
-def validate_allocation(payload, foci, *, scenario=None, normalize_budget=False):
-    validate_foci(foci)
-    rows = payload.get('foci') if isinstance(payload, dict) else None
-    if not isinstance(rows, list) or len(rows) != len(foci):
-        raise ValueError('Return exactly one allocation for every focus.')
-    indexed = {}
-    for row in rows:
-        if not isinstance(row, dict):
-            raise ValueError('Each allocation must be an object.')
-        index, score = row.get('focus_index'), row.get('score')
-        if type(index) is not int or not 0 <= index < len(foci) or index in indexed:
-            raise ValueError('Focus indices must be unique and match the supplied foci.')
-        if type(score) not in (int, float) or not math.isfinite(score) or not 0 <= score <= 100:
-            raise ValueError('Focus scores must be finite percentages between 0 and 100.')
-        explanation = row.get('explanation')
-        if not isinstance(explanation, str) or not explanation.strip():
-            raise ValueError('Every focus needs a short justification, including zero scores.')
-        applicability = row.get('applicability')
-        if ((scenario is not None or applicability is not None)
-                and (not isinstance(applicability, str) or applicability not in APPLICABILITY)):
-            raise ValueError('Every focus needs applicability: direct, background or inactive.')
-        if applicability == 'inactive' and score != 0:
-            raise ValueError('An inactive focus must have a 0% allocation.')
-        indexed[index] = row
-    total = sum(row['score'] for row in rows)
-    if total <= 0 or (not normalize_budget and abs(total - 100) > 0.5):
-        raise ValueError('The focus budget must sum to 100%.')
+def _validate_allocation_row(row, count, *, require_applicability=False):
+    if not isinstance(row, dict):
+        raise ValueError('Each allocation must be an object.')
+    index, score = row.get('focus_index'), row.get('score')
+    if type(index) is not int or not 0 <= index < count:
+        raise ValueError('Focus indices must be unique and match the supplied foci.')
+    if type(score) not in (int, float) or not math.isfinite(score) or not 0 <= score <= 100:
+        raise ValueError('Focus scores must be finite percentages between 0 and 100.')
+    if not isinstance(row.get('explanation'), str) or not row['explanation'].strip():
+        raise ValueError('Every focus needs a short justification, including zero scores.')
+    applicability = row.get('applicability')
+    if ((require_applicability or applicability is not None)
+            and (not isinstance(applicability, str) or applicability not in APPLICABILITY)):
+        raise ValueError('Every focus needs applicability: direct, background or inactive.')
+    if applicability == 'inactive' and score != 0:
+        raise ValueError('An inactive focus must have a 0% allocation.')
+
+
+def _validate_request_context(payload, scenario):
     context = {}
     if scenario is not None:
         summary = payload.get('request_summary')
@@ -77,8 +71,26 @@ def validate_allocation(payload, foci, *, scenario=None, normalize_budget=False)
     else:
         # Historical workspaces predate these fields. Keep comparisons compatible.
         context = {key: payload[key] for key in ('request_summary', 'request_evidence') if key in payload}
+    return context
+
+
+def validate_allocation(payload, foci, *, scenario=None, normalize_budget=False):
+    validate_foci(foci)
+    rows = payload.get('foci') if isinstance(payload, dict) else None
+    if not isinstance(rows, list) or len(rows) != len(foci):
+        raise ValueError('Return exactly one allocation for every focus.')
+    indexed = {}
+    for row in rows:
+        _validate_allocation_row(row, len(foci), require_applicability=scenario is not None)
+        index = row['focus_index']
+        if index in indexed:
+            raise ValueError('Focus indices must be unique and match the supplied foci.')
+        indexed[index] = row
+    total = sum(row['score'] for row in rows)
+    if total <= 0 or (not normalize_budget and abs(total - 100) > 0.5):
+        raise ValueError('The focus budget must sum to 100%.')
     return {
-        **context,
+        **_validate_request_context(payload, scenario),
         **({'raw_score_total': total, 'budget_normalized': abs(total - 100) > 0.5} if normalize_budget else {}),
         'foci': [
             {**focus, 'focus_index': i, 'score': indexed[i]['score'] * 100 / total,
@@ -89,6 +101,26 @@ def validate_allocation(payload, foci, *, scenario=None, normalize_budget=False)
         ],
         'overall_summary': str(payload.get('overall_summary') or ''),
     }
+
+
+def _valid_partial_allocation(payload, count, requested_indices):
+    """Keep only unambiguous, validated model rows; never fill in absent scores."""
+    rows = payload.get('foci') if isinstance(payload, dict) else None
+    if not isinstance(rows, list):
+        return {}
+    counts = Counter(row['focus_index'] for row in rows
+                     if isinstance(row, dict) and type(row.get('focus_index')) is int)
+    accepted = {}
+    for row in rows:
+        try:
+            _validate_allocation_row(row, count, require_applicability=True)
+        except ValueError:
+            continue
+        index = row['focus_index']
+        if index in requested_indices and counts[index] == 1:
+            accepted[index] = {key: row[key] for key in
+                               ('focus_index', 'score', 'applicability', 'explanation')}
+    return accepted
 
 
 class FocusWorkflowService:
@@ -165,21 +197,76 @@ class FocusWorkflowService:
         messages = [{'role': 'system', 'content': system},
                     {'role': 'user', 'content': json.dumps(source, ensure_ascii=False)}]
         usage = {'prompt_tokens': 0, 'completion_tokens': 0, 'total_tokens': 0}
-        for attempt in range(2):
+        accepted, context = {}, {}
+        requested = list(range(len(grounded)))
+        repaired_indices = set()
+        max_repairs = 2 * math.ceil(len(grounded) / REPAIR_BATCH_SIZE)
+        for attempt in range(max_repairs + 1):
             response = self.assessment._chat(messages, temperature=ASSESSMENT_TEMPERATURE)
             for key in usage:
                 usage[key] += int((response.get('usage') or {}).get(key) or 0)
             try:
-                result = validate_allocation(parse_llm_json(response.get('content', '')), grounded,
+                payload = parse_llm_json(response.get('content', ''))
+            except ValueError:
+                # Do not guess scores from broken JSON. Recover in smaller batches.
+                payload = {}
+            new_rows = _valid_partial_allocation(payload, len(grounded), requested)
+            accepted.update(new_rows)
+            if attempt:
+                repaired_indices.update(new_rows)
+            if not context and isinstance(payload, dict):
+                try:
+                    context = _validate_request_context(payload, bound)
+                except ValueError:
+                    pass
+            candidate = {**context, 'foci': list(accepted.values()),
+                         'overall_summary': payload.get('overall_summary', '') if isinstance(payload, dict) else ''}
+            try:
+                result = validate_allocation(candidate, grounded,
                                              scenario=bound, normalize_budget=True)
                 return {**result, 'phase': phase, 'usage': usage,
                         'model': self.assessor.model, 'provider': self.assessor.provider_name,
                         'assessment_temperature': ASSESSMENT_TEMPERATURE,
-                        'assessment_protocol': ASSESSMENT_PROTOCOL}
+                        'assessment_protocol': ASSESSMENT_PROTOCOL,
+                        'allocation_recovery': {'calls': attempt,
+                                                'focus_indices': sorted(repaired_indices)}}
             except ValueError as exc:
-                if attempt:
-                    raise ValueError('Invalid focus allocation after retry: ' + str(exc)) from exc
-                messages[0]['content'] += '\nRetry requirement: ' + str(exc)
+                missing = [i for i in range(len(grounded)) if i not in accepted]
+                if attempt == max_repairs:
+                    detail = ('Missing or invalid allocations for ' + ', '.join(
+                        f'{i + 1}. {grounded[i]["focus"]}' for i in missing) + '.'
+                        if missing else str(exc))
+                    raise ValueError('The model could not complete the focus assessment after '
+                                     f'{attempt} recovery calls. {detail} Please retry this assessment '
+                                     'or choose a different baseline model.') from exc
+                if not missing and sum(row['score'] for row in accepted.values()) <= 0:
+                    # A complete all-zero budget has no valid relative scale to preserve.
+                    accepted.clear()
+                    missing = list(range(len(grounded)))
+                requested = missing[:REPAIR_BATCH_SIZE]
+                repair = {
+                    'requested_focus_indices': requested,
+                    'requested_foci': [source['foci'][i] for i in requested],
+                    'accepted_allocation': {**context, 'foci': list(accepted.values())},
+                    'validation_error': str(exc),
+                }
+                repair_system = (
+                    system + '\nRECOVERY OF THIS SAME ASSESSMENT: The prior response was incomplete or invalid. '
+                    'Return foci ONLY for requested_focus_indices, using their ORIGINAL indices from '
+                    'the full catalog; do not renumber them. Return every requested index, including '
+                    'inactive entries with explicit zero scores and explanations. If the list is empty, '
+                    'return foci: [] and repair request_summary and request_evidence only. '
+                    'Consider the complete scenario and ALL foci when estimating relative contributions. '
+                    'Accepted entries are your valid raw allocations from this same assessment; '
+                    'keep their scale and do not rewrite them. The 100% budget applies to the complete '
+                    'catalog, NOT this batch. Do not force this subset to total 100%. '
+                    'Return short justifications and the request context in the same JSON format.'
+                    f' For this recovery call, the foci array must contain exactly {len(requested)} '
+                    f'objects with focus_index values {json.dumps(requested)}. '
+                    'Their definitions are repeated in recovery.requested_foci for convenience.'
+                )
+                messages = [{'role': 'system', 'content': repair_system},
+                            {'role': 'user', 'content': json.dumps({**source, 'recovery': repair}, ensure_ascii=False)}]
 
 
 def compare_assessments(foci, prospective, retrospective, influence_scores=None):

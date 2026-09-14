@@ -150,7 +150,7 @@ def test_missing_duplicate_and_unknown_foci_rejected(foci):
             validate_allocation(payload, foci)
 
 
-def test_invalid_model_allocation_retried_once(scenario, foci):
+def test_invalid_model_allocation_recovery_is_bounded(scenario, foci):
     provider = Mock()
     provider.chat_completion.side_effect = [
         {'content': '{"foci":[]}', 'usage': {'total_tokens': 10}},
@@ -161,8 +161,131 @@ def test_invalid_model_allocation_retried_once(scenario, foci):
     assert provider.chat_completion.call_count == 2
     provider.chat_completion.side_effect = None
     provider.chat_completion.return_value = {'content': '{"foci":[]}'}
-    with pytest.raises(ValueError, match='after retry'):
+    provider.chat_completion.reset_mock()
+    with pytest.raises(ValueError, match='after 2 recovery calls.*1. Rule, 2. Rule'):
         FocusWorkflowService(FocalAssessor(provider_instance=provider)).assess(scenario, foci, phase='prospective')
+    assert provider.chat_completion.call_count == 3
+
+
+@pytest.mark.parametrize('phase', ['prospective', 'retrospective'])
+def test_missing_focus_repair_keeps_valid_rows_and_original_indices(scenario, foci, phase):
+    initial = allocation()
+    initial['foci'] = initial['foci'][:1]  # Only index 1: the first catalog row is missing.
+    repaired = allocation(20)
+    repaired['request_evidence'][0]['quote'] = 'Invented repair evidence'
+    provider = Mock()
+    provider.chat_completion.side_effect = [
+        {'content': json.dumps(initial), 'usage': {'total_tokens': 10}},
+        {'content': json.dumps(repaired), 'usage': {'total_tokens': 20}},
+    ]
+    result = FocusWorkflowService(FocalAssessor(provider_instance=provider)).assess(
+        scenario, foci, phase=phase, output='Actual response')
+    source = json.loads(provider.chat_completion.call_args.kwargs['messages'][1]['content'])
+    assert source['recovery']['requested_focus_indices'] == [0]
+    assert [row['focus_index'] for row in source['recovery']['requested_foci']] == [0]
+    assert source['recovery']['accepted_allocation']['foci'] == initial['foci']
+    assert len(source['foci']) == 2
+    assert (source.get('output') == 'Actual response') == (phase == 'retrospective')
+    assert [f['raw_score'] for f in result['foci']] == [20, 40]  # The retry's rewrite of index 1 is ignored.
+    assert [f['score'] for f in result['foci']] == pytest.approx([100 / 3, 200 / 3])
+    assert result['request_evidence'] == initial['request_evidence']
+    assert result['allocation_recovery'] == {'calls': 1, 'focus_indices': [0]}
+    assert result['usage']['total_tokens'] == 30
+
+
+@pytest.mark.parametrize('defect', ['duplicate', 'unknown', 'no_explanation', 'inactive_positive', 'nan'])
+def test_repair_reassesses_invalid_rows_without_inventing_scores(scenario, foci, defect):
+    initial = allocation()
+    row = initial['foci'][1]
+    if defect == 'duplicate': initial['foci'].append(copy.deepcopy(row))
+    if defect == 'unknown': row['focus_index'] = 99
+    if defect == 'no_explanation': row['explanation'] = ''
+    if defect == 'inactive_positive': row['applicability'] = 'inactive'
+    if defect == 'nan': row['score'] = float('nan')
+    provider = Mock()
+    provider.chat_completion.side_effect = [
+        {'content': json.dumps(initial)}, {'content': json.dumps(allocation())},
+    ]
+    result = FocusWorkflowService(FocalAssessor(provider_instance=provider)).assess(scenario, foci, phase='prospective')
+    source = json.loads(provider.chat_completion.call_args.kwargs['messages'][1]['content'])
+    assert source['recovery']['requested_focus_indices'] == [0]
+    assert [f['raw_score'] for f in result['foci']] == [60, 40]
+    assert len(result['foci']) == 2
+
+
+def test_truncated_response_recovers_large_catalog_in_batches_on_one_global_scale(scenario, foci):
+    catalog = foci * 9  # 18 foci, with deliberately repeated labels.
+    provider = Mock()
+    requested_batches = []
+
+    def reply(**kwargs):
+        source = json.loads(kwargs['messages'][1]['content'])
+        assert len(source['foci']) == 18
+        if 'recovery' not in source:
+            return {'content': '{"request_summary": "Cut off', 'finish_reason': 'length'}
+        requested = source['recovery']['requested_focus_indices']
+        requested_batches.append(requested)
+        assert 'NOT this batch' in kwargs['messages'][0]['content']
+        return {'content': json.dumps({**allocation(), 'foci': [
+            {'focus_index': i, 'score': i + 1, 'applicability': 'background',
+             'explanation': f'Constraint {i} shapes this answer.'} for i in reversed(requested)]})}
+
+    provider.chat_completion.side_effect = reply
+    result = FocusWorkflowService(FocalAssessor(provider_instance=provider)).assess(scenario, catalog, phase='prospective')
+    assert requested_batches == [list(range(8)), list(range(8, 16)), [16, 17]]
+    assert [f['focus_index'] for f in result['foci']] == list(range(18))
+    assert [f['raw_score'] for f in result['foci']] == list(range(1, 19))
+    assert result['raw_score_total'] == sum(range(1, 19))
+    assert sum(f['score'] for f in result['foci']) == pytest.approx(100)
+    assert result['foci'][-1]['score'] / result['foci'][0]['score'] == pytest.approx(18)
+    assert result['allocation_recovery'] == {'calls': 3, 'focus_indices': list(range(18))}
+
+
+def test_repair_retries_only_still_missing_entries(scenario, foci):
+    catalog = foci * 2
+    payload = allocation()
+    provider = Mock()
+    provider.chat_completion.side_effect = [
+        {'content': json.dumps(payload)},
+        {'content': json.dumps({'foci': [{**payload['foci'][0], 'focus_index': 3}]})},
+        {'content': json.dumps({'foci': [{**payload['foci'][0], 'focus_index': 2,
+                                        'score': 0, 'applicability': 'inactive'}]})},
+    ]
+    result = FocusWorkflowService(FocalAssessor(provider_instance=provider)).assess(scenario, catalog, phase='prospective')
+    sources = [json.loads(call.kwargs['messages'][1]['content']) for call in provider.chat_completion.call_args_list]
+    assert sources[1]['recovery']['requested_focus_indices'] == [2, 3]
+    assert sources[2]['recovery']['requested_focus_indices'] == [2]
+    assert [f['raw_score'] for f in result['foci']] == [60, 40, 0, 40]
+
+
+def test_grounding_only_repair_does_not_reallocate_valid_scores(scenario, foci):
+    payload = allocation()
+    payload['request_evidence'][0]['quote'] = 'Not a real quote'
+    repaired = allocation()
+    repaired['foci'] = []
+    provider = Mock()
+    provider.chat_completion.side_effect = [
+        {'content': json.dumps(payload)}, {'content': json.dumps(repaired)},
+    ]
+    result = FocusWorkflowService(FocalAssessor(provider_instance=provider)).assess(scenario, foci, phase='prospective')
+    source = json.loads(provider.chat_completion.call_args.kwargs['messages'][1]['content'])
+    assert source['recovery']['requested_focus_indices'] == []
+    assert [f['score'] for f in result['foci']] == [60, 40]
+    assert result['request_evidence'] == repaired['request_evidence']
+
+
+def test_all_zero_budget_requires_new_model_scores(scenario, foci):
+    payload = allocation()
+    for row in payload['foci']: row.update(score=0, applicability='inactive')
+    provider = Mock()
+    provider.chat_completion.side_effect = [
+        {'content': json.dumps(payload)}, {'content': json.dumps(allocation())},
+    ]
+    result = FocusWorkflowService(FocalAssessor(provider_instance=provider)).assess(scenario, foci, phase='prospective')
+    source = json.loads(provider.chat_completion.call_args.kwargs['messages'][1]['content'])
+    assert source['recovery']['accepted_allocation']['foci'] == []
+    assert source['recovery']['requested_focus_indices'] == [0, 1]
+    assert [f['score'] for f in result['foci']] == [60, 40]
 
 
 def test_average_deltas_and_ablation_shares(foci):
