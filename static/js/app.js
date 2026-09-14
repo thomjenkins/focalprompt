@@ -1116,11 +1116,17 @@ if (scenarioEditor) {
         lastPromptTextForSpanTracking = textarea.value;
     });
     scenarioEditor.addEventListener('mouseup', function (event) {
-        if (event.target.matches('.scenario-content')) handleTextSelection();
+        if (event.target.matches('.scenario-content')) handleTextSelection(event);
     });
     scenarioEditor.addEventListener('keyup', function (event) {
-        if (event.target.matches('.scenario-content')) handleTextSelection();
+        if (event.target.matches('.scenario-content')) handleTextSelection(event);
     });
+    scenarioEditor.addEventListener('scroll', function (event) {
+        const textarea = event.target.closest && event.target.closest('.scenario-content');
+        if (textarea === promptInput && !selectionToolbar.classList.contains('hidden')) {
+            positionSelectionToolbar(textarea);
+        }
+    }, true);
     scenarioEditor.addEventListener('input', function (event) {
         const card = event.target.closest('.scenario-message-card');
         if (!card) return;
@@ -1917,10 +1923,87 @@ detectFociBtn.addEventListener('click', async () => {
     }
 });
 
-// Handle text selection in prompt
-if (promptInput) {
-    promptInput.addEventListener('mouseup', handleTextSelection);
-    promptInput.addEventListener('keyup', handleTextSelection);
+// Position the contextual action beside the selected text, including selections
+// inside scrolled textareas whose text has no DOM range to measure.
+const TEXTAREA_CARET_STYLE_PROPERTIES = [
+    'borderTopStyle', 'borderRightStyle', 'borderBottomStyle', 'borderLeftStyle',
+    'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth',
+    'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
+    'fontFamily', 'fontSize', 'fontStyle', 'fontVariant', 'fontWeight',
+    'fontStretch', 'lineHeight', 'letterSpacing', 'wordSpacing',
+    'textAlign', 'textIndent', 'textTransform', 'direction', 'tabSize',
+    'whiteSpace', 'wordBreak', 'overflowWrap'
+];
+
+function getTextareaCaretRect(textarea, offset) {
+    const styles = window.getComputedStyle(textarea);
+    const textareaRect = textarea.getBoundingClientRect();
+    const mirror = document.createElement('div');
+    const marker = document.createElement('span');
+    const paddingX = parseFloat(styles.paddingLeft) + parseFloat(styles.paddingRight);
+    const paddingY = parseFloat(styles.paddingTop) + parseFloat(styles.paddingBottom);
+
+    mirror.setAttribute('aria-hidden', 'true');
+    mirror.style.position = 'fixed';
+    mirror.style.visibility = 'hidden';
+    mirror.style.pointerEvents = 'none';
+    mirror.style.left = textareaRect.left + 'px';
+    mirror.style.top = textareaRect.top + 'px';
+    mirror.style.boxSizing = 'content-box';
+    mirror.style.width = Math.max(0, textarea.clientWidth - paddingX) + 'px';
+    mirror.style.height = Math.max(0, textarea.clientHeight - paddingY) + 'px';
+    mirror.style.margin = '0';
+    mirror.style.overflow = 'hidden';
+    TEXTAREA_CARET_STYLE_PROPERTIES.forEach(function (property) {
+        mirror.style[property] = styles[property];
+    });
+
+    mirror.appendChild(document.createTextNode(textarea.value.substring(0, offset)));
+    marker.textContent = '\u200b';
+    mirror.appendChild(marker);
+    mirror.appendChild(document.createTextNode(textarea.value.substring(offset)));
+    document.body.appendChild(mirror);
+    mirror.scrollTop = textarea.scrollTop;
+    mirror.scrollLeft = textarea.scrollLeft;
+
+    const markerRect = marker.getBoundingClientRect();
+    const caretRect = {
+        left: markerRect.left,
+        top: markerRect.top,
+        bottom: markerRect.bottom || markerRect.top + (parseFloat(styles.fontSize) * 1.2)
+    };
+    mirror.remove();
+    return caretRect;
+}
+
+function positionSelectionToolbar(textarea, event) {
+    if (!selectionToolbar || !scenarioEditor) return;
+    const textareaRect = textarea.getBoundingClientRect();
+    const mouseAnchor = event && event.type === 'mouseup'
+        && event.clientX >= textareaRect.left && event.clientX <= textareaRect.right
+        && event.clientY >= textareaRect.top && event.clientY <= textareaRect.bottom;
+    const anchor = mouseAnchor
+        ? { left: event.clientX, top: event.clientY, bottom: event.clientY }
+        : getTextareaCaretRect(
+            textarea,
+            textarea.selectionDirection === 'backward'
+                ? textarea.selectionStart
+                : textarea.selectionEnd
+        );
+    const editorRect = scenarioEditor.getBoundingClientRect();
+    const toolbarRect = selectionToolbar.getBoundingClientRect();
+    const gap = 8;
+    const left = Math.min(
+        Math.max(gap, anchor.left - editorRect.left - (toolbarRect.width / 2)),
+        Math.max(gap, editorRect.width - toolbarRect.width - gap)
+    );
+    const above = anchor.top - editorRect.top - toolbarRect.height - gap;
+    const top = above >= gap
+        ? above
+        : anchor.bottom - editorRect.top + gap;
+
+    selectionToolbar.style.left = left + 'px';
+    selectionToolbar.style.top = top + 'px';
 }
 
 function handleTextSelection(event) {
@@ -1939,18 +2022,25 @@ function handleTextSelection(event) {
     const start = textarea.selectionStart;
     const end = textarea.selectionEnd;
     const selected = textarea.value.substring(start, end);
-    
+
     if (selected.trim().length > 0 && start !== end) {
         selectedText = selected;
         selectedStart = start;
         selectedEnd = end;
         selectionText.textContent = `"${selected.substring(0, 50)}${selected.length > 50 ? '...' : ''}"`;
         selectionToolbar.classList.remove('hidden');
+        positionSelectionToolbar(textarea, event);
     } else {
         selectionToolbar.classList.add('hidden');
         selectedText = '';
     }
 }
+
+window.addEventListener('resize', function () {
+    if (promptInput && selectionToolbar && !selectionToolbar.classList.contains('hidden')) {
+        positionSelectionToolbar(promptInput);
+    }
+});
 
 // Tag selected text as focus
 if (tagSelectionBtn) {
