@@ -48,7 +48,10 @@ async function fetchAblationSample(inference, fs, kind, index, temperature, cont
   return {content, scenario: kind === 'baseline' ? structuredClone(inference) : {...inference, messages: inference.messages.slice(1)},
     usage: {prompt_tokens: 10, completion_tokens: 20}};
 }
-const oneAllocation = {foci: [{focus: 'Brief', focus_index: 0, score: 100, explanation: 'A concise answer.'}]};
+const oneAllocation = {assessment_protocol: 'context-grounded-v2', assessment_temperature: .2,
+  budget_normalized: true, raw_score_total: 60,
+  request_summary: 'Answer <this> request.', request_evidence: [{message_id: 'chat', quote: 'Retained chat'}],
+  foci: [{focus: 'Brief', focus_index: 0, applicability: 'background', score: 100, explanation: 'A concise answer.'}]};
 async function fetch(path, options) {
   const body = JSON.parse(options.body);
   requests.push({path, body});
@@ -84,6 +87,16 @@ async function mapPool(items, count, task) { return Promise.all(items.map(task))
   await assert.rejects(flow.sampleBaseline, /Predict focus/);
   await flow.predict();
   assert.equal(requests.length, 1);
+  flow.restore(flow.collect());
+  assert.match(document.getElementById('focus-workflow-status').textContent, /generation temperature 0.7/);
+  const rendered = document.getElementById('prospective-results').innerHTML;
+  assert.match(rendered, /Assessment temperature: 0.2/);
+  assert.match(rendered, /Current request \(model interpretation\)/);
+  assert.match(rendered, /Answer &lt;this> request/);
+  assert.match(rendered, /Background constraint/);
+  assert.match(rendered, /Retained chat/);
+  assert.match(rendered, /scores totaled 60/);
+  assert.match(rendered, /Rescaled proportionally to 100%/);
   await assert.rejects(flow.sampleBaseline, /Successful samples are saved/);
   const completed = flow.collect().samples.filter(Boolean).length;
   assert.ok(completed > 0 && completed < 10);
@@ -105,6 +118,11 @@ async function mapPool(items, count, task) { return Promise.all(items.map(task))
   assert.ok(scoreBody.focus_workflow.prospective);
   assert.throws(() => flow.forAblation(scenario, foci, config, {model: 'other', provider: 'openai'}), /same scenario/);
   const exported = flow.collect();
+  const legacy = structuredClone(exported);
+  delete legacy.prospective.assessment_protocol;
+  flow.restore(legacy);
+  await assert.rejects(flow.sampleBaseline, /assessment method has been updated/);
+  await assert.rejects(flow.retrospective, /assessment method has been updated/);
   flow.restore(null);
   flow.restore(exported);
   assert.deepEqual(flow.forAblation(scenario, foci, config, model).samples, snapshot.samples);
