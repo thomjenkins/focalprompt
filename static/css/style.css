@@ -3213,7 +3213,7 @@ circle.fp-series-7 { fill: #8a8a8a; }
 }
 .scenario-message-controls input,
 .scenario-message-controls select,
-.scenario-output-contract input {
+.scenario-output-contract input:not([type="checkbox"]) {
     min-height: 34px;
     padding: 6px 8px;
     border: 1px solid var(--border-color);
@@ -3236,6 +3236,16 @@ circle.fp-series-7 { fill: #8a8a8a; }
     align-items: center;
     justify-content: space-between;
     gap: 16px;
+}
+.scenario-contract-heading > label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+.scenario-contract-heading input[type="checkbox"] {
+    margin: 0;
 }
 .scenario-contract-heading span {
     display: block;
