@@ -3,7 +3,7 @@
     'use strict';
     let state = null;
     let busy = false;
-    const assessmentProtocol = 'joint-budget-v3';
+    const assessmentProtocol = 'joint-budget-v4';
     const el = id => document.getElementById(id);
     const esc = value => escapeHtml(String(value == null ? '' : value));
     const number = (value, places = 1) => value == null ? '—' : Number(value).toFixed(places);
