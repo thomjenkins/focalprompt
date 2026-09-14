@@ -666,15 +666,26 @@
                         </div>
                     </div>
                     <div class="card-body">
+                        <div class="batch-input-guide" style="margin-bottom: 24px; padding: 16px; background: #f8fafc; border-radius: 6px;">
+                            <h3 style="margin-bottom: 12px;">Configure per-row inputs</h3>
+                            <p class="info-text">
+                                Batch Analysis uses the scenario from <strong>Prompt Analysis</strong>. For each message that varies by row, choose <strong>Retain</strong> and set its <strong>Input name</strong> to a CSV column name, such as <code>customer_message</code>. Each value replaces the entire message, not a placeholder within it.
+                            </p>
+                            <div aria-live="polite">
+                                <p id="batch-input-status" class="info-text"></p>
+                                <p id="batch-csv-columns" class="info-text">Required CSV columns: <code id="batch-csv-header">output</code>. Every row must contain a non-blank value for each column.</p>
+                            </div>
+                            <button type="button" id="batch-configure-inputs" class="btn btn-outline btn-small">Configure inputs in Prompt Analysis</button>
+                        </div>
                         <p class="info-text" style="margin-bottom: 16px;">
-                            CSV format: <code>output</code> and each named Retain input are expected. Any non-reserved column is treated as a named input; <code>prompt</code> remains reserved for legacy files. Missing, blank, and unused columns are reported explicitly.
+                            <code>output</code> is the recorded model response for each row. The <code>prompt</code> column is reserved for legacy files. Missing, blank, and unused columns are reported explicitly.
                         </p>
                         
                         <!-- Manual Entry Form -->
                         <div class="manual-entry-form" style="margin-bottom: 24px; padding: 16px; background: #f8fafc; border-radius: 6px;">
                             <h3 style="margin-bottom: 12px;">Add Pair Manually</h3>
                             <p class="info-text" style="margin-bottom: 12px; font-size: 0.9em;">
-                                Named Retain inputs from the scenario appear below. Enter every value for this row and the model <strong>output</strong> you want to analyze.
+                                Fill in the configured input fields below and the recorded model <strong>output</strong> for this row. The field names match your CSV columns.
                             </p>
                             <div id="manual-primary-input-group">
                                 <label id="manual-primary-input-label" for="manual-pair-input" style="display: block; font-weight: 600; margin-bottom: 6px;">Input</label>
@@ -705,7 +716,7 @@
                         <div class="batch-prompt-section" style="margin-bottom: 24px; padding: 16px; background: #fff3cd; border-radius: 6px; border: 1px solid #ffc107;">
                             <h3 style="margin-bottom: 12px;">Prompt (Applied to All Pairs)</h3>
                             <p class="info-text" style="margin-bottom: 12px; font-size: 0.9em;">
-                                Enter the prompt that was used to generate all outputs. This prompt will be applied to all input-output pairs.
+                                Enter the prompt that was used to generate all outputs. This shared prompt does not configure per-row inputs; use Input name on retained messages in Prompt Analysis for those.
                             </p>
                             <textarea 
                                 id="batch-prompt-input" 

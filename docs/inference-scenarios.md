@@ -44,6 +44,8 @@ For a single run, omitting `inputs` uses the contents already stored on retained
 
 In the web editor, **Input name** means “batch input column (optional).” Leave it blank for messages whose content should stay fixed across rows, or when only doing single runs. Naming an input does not itself replace the editor text; replacement happens when an input mapping is supplied.
 
+The Batch Analysis page lists the configured input names and required CSV columns. **Configure inputs in Prompt Analysis** takes you to the scenario editor. If no inputs are named, the page explicitly shows an output-only batch: message content stays fixed across rows.
+
 For the `customer_message` input above, upload a CSV such as:
 
 ```csv

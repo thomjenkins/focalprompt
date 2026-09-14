@@ -6000,10 +6000,41 @@ if (csvUpload) {
     });
 }
 
+const batchConfigureInputs = document.getElementById('batch-configure-inputs');
+if (batchConfigureInputs) {
+    batchConfigureInputs.addEventListener('click', function () {
+        switchTab('prompt-analysis');
+        const editor = document.getElementById('scenario-editor');
+        editor.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        const input = editor.querySelector('.scenario-input-name:not(.hidden)');
+        if (input) input.focus({ preventScroll: true });
+    });
+}
+
 // Manual fields are generated from named Retain inputs in the scenario.
 function updateManualInputFields() {
     if (!manualInputFields) return;
-    const names = scenarioInputNames();
+    let names = [];
+    let scenarioError = '';
+    try {
+        names = readMainScenario({ allowInvalidContract: true }).messages
+            .filter(function (message) { return message.analysis_mode === 'retain' && message.input_name; })
+            .map(function (message) { return message.input_name; });
+    } catch (error) {
+        scenarioError = error.message;
+    }
+    const status = document.getElementById('batch-input-status');
+    const columns = document.getElementById('batch-csv-columns');
+    const header = document.getElementById('batch-csv-header');
+    if (status) {
+        status.textContent = scenarioError
+            ? 'Fix the scenario in Prompt Analysis to see its required inputs: ' + scenarioError
+            : names.length
+                ? 'Configured inputs: ' + names.join(', ') + '. Messages without an Input name stay fixed across rows.'
+                : 'No per-row inputs are configured. Only Output is shown below; all message content stays fixed across rows. Configure an Input name if your examples have different user messages or context.';
+    }
+    if (columns) columns.classList.toggle('hidden', !!scenarioError);
+    if (header) header.textContent = names.concat('output').join(',');
     if (manualPairInput) {
         const group = document.getElementById('manual-primary-input-group');
         const label = document.getElementById('manual-primary-input-label');
