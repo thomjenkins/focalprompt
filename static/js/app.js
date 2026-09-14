@@ -986,8 +986,6 @@ if (scenarioEditor) {
                     selectedFocusIndex = null;
                     renderFoci();
                 }
-                updateCoverageVisualization();
-                updateCoverageStats();
             }
             lastPromptTextForSpanTracking = nextPromptText;
             selectionToolbar.classList.add('hidden');
@@ -1014,6 +1012,8 @@ if (scenarioEditor) {
             }
             updateManualInputFields();
         }
+        updateCoverageVisualization();
+        updateCoverageStats();
     });
     scenarioEditor.addEventListener('click', function (event) {
         const card = event.target.closest('.scenario-message-card');
@@ -1032,6 +1032,8 @@ if (scenarioEditor) {
         }
         updateScenarioOrderRails();
         updateManualInputFields();
+        updateCoverageVisualization();
+        updateCoverageStats();
     });
 }
 
@@ -2554,22 +2556,86 @@ function getDarkColor(lightColor) {
     return colorMap[lightColor] || '#64748b';
 }
 
+// Coverage uses every Analyse message, independently of the focused editor.
+function getScenarioCoverageData() {
+    const messages = Array.from(document.querySelectorAll('#scenario-messages .scenario-message-card'))
+        .filter(function (card) {
+            return card.querySelector('.scenario-analysis-mode').value === 'analyse';
+        }).map(function (card) {
+            return {
+                id: card.querySelector('.scenario-message-id').value.trim(),
+                role: card.querySelector('.scenario-role').value,
+                content: card.querySelector('.scenario-content').value
+            };
+        });
+    // Older unscoped foci are only unambiguous in a single-message analysis.
+    function localFoci(message) {
+        return foci.map(function (focus) {
+            const spans = focusSpansOf(focus).filter(function (span) {
+                return (span.message_id === message.id || (!span.message_id && messages.length === 1))
+                    && Number.isInteger(span.char_start) && Number.isInteger(span.char_end)
+                    && span.char_start >= 0 && span.char_end <= message.content.length;
+            }).map(function (span) {
+                return Object.assign({}, span, { message_id: null });
+            });
+            return Object.assign({}, focus, {
+                message_id: null, char_start: null, char_end: null, spans: spans
+            });
+        });
+    }
+    const combinedFoci = foci.map(function (focus) {
+        return Object.assign({}, focus, {
+            message_id: null, char_start: null, char_end: null, spans: []
+        });
+    });
+    let prompt = '';
+    messages.forEach(function (message) {
+        message.foci = localFoci(message);
+        message.foci.forEach(function (focus, index) {
+            focus.spans.forEach(function (span) {
+                combinedFoci[index].spans.push(Object.assign({}, span, {
+                    char_start: prompt.length + span.char_start,
+                    char_end: prompt.length + span.char_end
+                }));
+            });
+        });
+        // No separators: labels and layout must not affect coverage percentages.
+        prompt += message.content;
+    });
+    return { messages: messages, prompt: prompt, foci: combinedFoci };
+}
+
 // Update coverage visualization
 function updateCoverageVisualization() {
-    const prompt = promptInput.value.trim();
-    
-    if (!prompt || foci.length === 0) {
+    const data = getScenarioCoverageData();
+    if (!data.prompt || foci.length === 0) {
         promptVisualization.classList.add('hidden');
+        promptHighlighted.innerHTML = '';
         if (toggleVisualization) toggleVisualization.textContent = 'Show';
         return;
     }
-    
     promptVisualization.classList.remove('hidden');
     if (toggleVisualization) toggleVisualization.textContent = 'Hide';
-    
+    promptHighlighted.innerHTML = data.messages.map(function (message) {
+        return `<section class="coverage-message" data-message-id="${escapeScenarioAttribute(message.id)}">` +
+            `<div class="coverage-message-label">${escapeHtml(message.role)} · ${escapeHtml(message.id)}</div>` +
+            `<div>${renderCoverageMessage(message.content, message.foci)}</div></section>`;
+    }).join('');
+    updateLegend();
+}
+
+function renderCoverageMessage(prompt, focusList) {
+    function renderUncovered(text) {
+        return text.split(/(\s+)/).map(function (part) {
+            return part.trim()
+                ? `<span class="uncovered" title="Not covered by any focus">${escapeHtml(part)}</span>`
+                : escapeHtml(part);
+        }).join('');
+    }
+
     // Find all covered sections (every span of every focus)
     const coveredRanges = [];
-    foci.forEach((focus, index) => {
+    focusList.forEach((focus, index) => {
         if (focus.verified === false) {
             return;
         }
@@ -2611,41 +2677,35 @@ function updateCoverageVisualization() {
     // Build highlighted HTML
     let html = '';
     let lastIndex = 0;
-    let totalCovered = 0;
     
     for (const range of mergedRanges) {
         // Add uncovered text before this range
         if (range.start > lastIndex) {
             const uncovered = prompt.substring(lastIndex, range.start);
-            html += `<span class="uncovered" title="Not covered by any focus">${escapeHtml(uncovered)}</span>`;
+            html += renderUncovered(uncovered);
         }
         
         // Add covered text
         const covered = prompt.substring(range.start, range.end);
-        const focusNames = range.focusIndices.map(i => foci[i].focus).join(', ');
-        const colors = range.focusIndices.map(i => foci[i].color).join(', ');
+        const focusNames = range.focusIndices.map(i => focusList[i].focus).join(', ');
         const overlap = range.focusIndices.length > 1;
         const selected = selectedFocusIndex != null && range.focusIndices.includes(selectedFocusIndex);
         const cls = 'highlight' + (overlap ? ' highlight-overlap' : '') + (selected ? ' highlight-selected' : '');
         const bg = selected && selectedFocusIndex != null
-            ? (foci[selectedFocusIndex].color || foci[range.focusIndices[0]].color)
-            : foci[range.focusIndices[0]].color;
+            ? (focusList[selectedFocusIndex].color || focusList[range.focusIndices[0]].color)
+            : focusList[range.focusIndices[0]].color;
         html += `<span class="${cls}" style="background: ${bg};" title="Focus: ${escapeHtml(focusNames)}${overlap ? ' (overlap)' : ''}" data-focus-indices="${range.focusIndices.join(',')}">${escapeHtml(covered)}</span>`;
         
-        totalCovered += (range.end - range.start);
         lastIndex = range.end;
     }
     
     // Add remaining uncovered text
     if (lastIndex < prompt.length) {
         const uncovered = prompt.substring(lastIndex);
-        html += `<span class="uncovered" title="Not covered by any focus">${escapeHtml(uncovered)}</span>`;
+        html += renderUncovered(uncovered);
     }
     
-    promptHighlighted.innerHTML = html;
-    
-    // Update legend
-    updateLegend();
+    return html;
 }
 
 // Update legend
@@ -2665,15 +2725,20 @@ function updateLegend() {
 
 // Update coverage statistics
 function updateCoverageStats() {
-    const prompt = promptInput.value;
+    const data = getScenarioCoverageData();
+    const prompt = data.prompt;
     
     if (!prompt || foci.length === 0) {
         coverageIndicator.classList.add('hidden');
         coverageWarning.classList.add('hidden');
+        if (overlapMatrixEl) {
+            overlapMatrixEl.classList.add('hidden');
+            overlapMatrixEl.innerHTML = '';
+        }
         return;
     }
 
-    const stats = computeClientCoverage(prompt, foci);
+    const stats = computeClientCoverage(prompt, data.foci);
     const coverage = stats.uniquePct;
     const density = stats.densityPct;
 
@@ -2705,7 +2770,7 @@ function updateCoverageStats() {
         coverageWarning.classList.add('hidden');
     }
 
-    const pairs = computeClientOverlaps(prompt, foci);
+    const pairs = computeClientOverlaps(prompt, data.foci);
     if (overlapMatrixEl) {
         if (!pairs.length) {
             overlapMatrixEl.classList.add('hidden');

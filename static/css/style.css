@@ -576,6 +576,18 @@ header img {
     position: relative;
 }
 
+.coverage-message + .coverage-message {
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border-color);
+}
+
+.coverage-message-label {
+    margin-bottom: 6px;
+    font-family: var(--font-sans);
+    font-weight: 600;
+}
+
 .prompt-highlighted .highlight {
     padding: 2px 4px;
     border-radius: 3px;
