@@ -2,13 +2,19 @@
 
 Prediction uses the selected baseline model in separate assessment calls. It receives the complete ordered scenario, including retained chat, the output contract and the grounded focus definitions. It does not receive a generated output or a previous experiment's assessment. Retained input conditions the allocation; the 100% budget is distributed only among the supplied foci.
 
-The `joint-budget-v3` method separates two tasks:
+The `joint-budget-v4` method separates two tasks:
 
 - A short interpretation of the current request, supported by exact quotes from scenario messages. When retained user input exists, at least one quote must come from it.
 - A classification for every focus: `direct` contribution to content or action, `background` constraint on the response, or `inactive` for this case.
 - A case-specific justification for each focus, without numeric scores.
 
 After applicability and explanations cover the whole catalog, a separate call receives that assessment and the complete original scenario and focus definitions. It allocates one budget across **all** foci, returning a compact mapping from original focus indices to percentages and a short rationale for the allocation. Inactive foci receive zero. Equal weights are permitted; the application does not impose a preferred ranking.
+
+Version 4 clarifies the budget instruction in both prospective and retrospective assessment:
+
+> Distribute a total focus budget of 100% among the supplied foci for this specific response. Assign each focus its estimated percentage share of that shared total; all shares together must sum to 100%. Multiple foci may receive nonzero shares. A focus should receive 100% only if you assess every other focus as contributing zero.
+
+This replaces the ambiguous emphasis on “ONE” in version 3. It permits both distributed and concentrated allocations without prescribing a preferred distribution. This wording change has not established that the earlier wording caused any particular allocation or that the revised wording improves assessment validity. The historical model probes below apply to their stated protocol versions.
 
 Retrospective calls use the same method and additionally receive one actual output. Justifications must describe what that output contains, including departures from the instructions, rather than what an ideal response should contain. The prospective assessment is withheld.
 

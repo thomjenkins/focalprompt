@@ -48,7 +48,7 @@ async function fetchAblationSample(inference, fs, kind, index, temperature, cont
   return {content, scenario: kind === 'baseline' ? structuredClone(inference) : {...inference, messages: inference.messages.slice(1)},
     usage: {prompt_tokens: 10, completion_tokens: 20}};
 }
-const oneAllocation = {assessment_protocol: 'joint-budget-v3', assessment_temperature: .2,
+const oneAllocation = {assessment_protocol: 'joint-budget-v4', assessment_temperature: .2,
   budget_normalized: true, raw_score_total: 60,
   allocation_recovery: {calls: 1, focus_indices: [0]},
   request_summary: 'Answer <this> request.', request_evidence: [{message_id: 'chat', quote: 'Retained chat'}],
@@ -122,7 +122,7 @@ async function mapPool(items, count, task) { return Promise.all(items.map(task))
   assert.throws(() => flow.forAblation(scenario, foci, config, {model: 'other', provider: 'openai'}), /same scenario/);
   const exported = flow.collect();
   const flat = structuredClone(exported);
-  flat.prospective.assessment_protocol = 'context-grounded-v2';
+  flat.prospective.assessment_protocol = 'joint-budget-v3';
   flat.prospective.foci = Array.from({length: 17}, (_, i) => ({focus: 'Focus ' + i, focus_index: i,
     score: 100 / 17, explanation: 'Explanation'}));
   flat.prospective.overall_summary = 'Equal <weights>.';
