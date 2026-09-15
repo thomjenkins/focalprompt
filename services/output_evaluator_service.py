@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import random
 import json
+import math
+from collections import Counter
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from utils.gateway_chat import chat_completion as gateway_chat_completion
@@ -212,12 +214,26 @@ def normalize_output_items(
         out.append({'label': label, 'text': text})
     if not out:
         raise ValueError('All outputs were empty')
+    if len({item['label'] for item in out}) != len(out):
+        raise ValueError('Each output needs a unique label')
     if len(out) > max_outputs:
         raise ValueError(
             f'Too many outputs ({len(out)}). Maximum is {max_outputs} per evaluation run. '
             'Use a lower sample percentage or reduce Experiment B sample counts.'
         )
     return out
+
+
+def prepare_quality_evaluation(outputs, sample_fraction=1.0, sample_seed=0):
+    """Choose the shared sample once, before either judge starts inference."""
+    if not isinstance(outputs, list):
+        raise ValueError('outputs must be an array')
+    all_items = normalize_output_items(outputs)
+    items = normalize_output_items(sample_outputs_stratified(
+        outputs, sample_fraction, seed=sample_seed)) if sample_fraction < 1 else all_items
+    return {'version': 1, 'outputs': items, 'batch_size': QUALITY_EVAL_BATCH_SIZE,
+            'n_outputs_total': len(all_items), 'sample_fraction': sample_fraction,
+            'sample_seed': sample_seed}
 
 
 def _merge_usage(
@@ -243,27 +259,29 @@ def _normalize_evaluation_rows(
 ) -> List[Dict[str, Any]]:
     evaluations: List[Dict[str, Any]] = []
     seen = set()
+    normalized = []
     for row in parsed:
         if not isinstance(row, dict):
             continue
         label = str(row.get('label') or '').strip()
         if label not in by_label:
-            for key in by_label:
-                if (
-                    key.lower() == label.lower()
-                    or key.startswith(label)
-                    or label.startswith(key)
-                ):
-                    label = key
-                    break
-        if label not in by_label or label in seen:
+            matches = [key for key in by_label if key.lower() == label.lower()]
+            if len(matches) == 1:
+                label = matches[0]
+        normalized.append(dict(row, label=label))
+    counts = Counter(row['label'] for row in normalized)
+    for row in normalized:
+        label = row['label']
+        if label not in by_label or counts[label] != 1:
+            continue
+        try:
+            value = row.get('overall_score')
+            overall = float(value) if not isinstance(value, bool) else float('nan')
+        except (TypeError, ValueError):
+            overall = float('nan')
+        if not math.isfinite(overall) or not 0 <= overall <= 100:
             continue
         seen.add(label)
-        try:
-            overall = float(row.get('overall_score', 0))
-        except (TypeError, ValueError):
-            overall = 0.0
-        overall = max(0.0, min(100.0, overall))
         source = by_label.get(label) or {}
         evaluations.append({
             'label': label,
@@ -315,10 +333,14 @@ class OutputQualityEvaluator:
         temperature: float,
         include_comparative_notes: bool,
         scenario: Optional[Mapping[str, Any]] = None,
+        stable_ids: bool = False,
     ) -> Dict[str, Any]:
+        # Short, exact IDs avoid confusing adjacent samples with long shared labels.
+        aliases = {f'output_{i + 1}': item['label'] for i, item in enumerate(items)} if stable_ids else {}
+        prompt_items = [dict(item, label=key) for key, item in zip(aliases, items)] if aliases else items
         user_prompt = build_quality_evaluation_prompt(
             eval_criteria=eval_criteria,
-            outputs=items,
+            outputs=prompt_items,
             task_context=task_context,
             prompt=prompt,
             include_comparative_notes=include_comparative_notes,
@@ -357,6 +379,9 @@ class OutputQualityEvaluator:
         parsed = raw.get('evaluations') or []
         if not isinstance(parsed, list):
             parsed = []
+        if aliases:
+            parsed = [dict(row, label=aliases.get(str(row.get('label') or '').strip(), ''))
+                      for row in parsed if isinstance(row, dict)]
         evaluations = _normalize_evaluation_rows(parsed, by_label)
         return {
             'evaluations': evaluations,
@@ -375,6 +400,7 @@ class OutputQualityEvaluator:
         sample_fraction: float = 1.0,
         sample_seed: int = 0,
         scenario: Optional[Mapping[str, Any]] = None,
+        stable_ids: bool = False,
     ) -> Dict[str, Any]:
         """
         Score each output against eval_criteria.
@@ -414,6 +440,7 @@ class OutputQualityEvaluator:
                 temperature=temperature,
                 include_comparative_notes=(batch_index == len(batches) - 1),
                 scenario=scenario,
+                stable_ids=stable_ids,
             )
             usage = _merge_usage(usage, batch_result.get('usage'))
             all_evaluations.extend(batch_result.get('evaluations') or [])
@@ -439,6 +466,9 @@ class OutputQualityEvaluator:
             'n_outputs': len(items),
             'n_outputs_total': n_total,
             'n_outputs_evaluated': len(items),
+            'n_outputs_scored': sum(row['overall_score'] is not None for row in ordered_evaluations),
+            'missing_labels': [row['label'] for row in ordered_evaluations if row['overall_score'] is None],
+            'complete': all(row['overall_score'] is not None for row in ordered_evaluations),
             'sample_fraction': float(sample_fraction) if sample_fraction < 1.0 else 1.0,
             'sample_seed': sample_seed,
             'sampled_labels': [item['label'] for item in items],

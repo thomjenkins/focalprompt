@@ -647,7 +647,7 @@
                         </select>
                         <p class="info-text" style="margin-top:6px">
                             Sampling keeps at least one baseline and one sample per ablated focus.
-                            Cost scales with the number judged (batched 4 at a time). There is no fixed cap at 60.
+                            Each judge scores up to four outputs per request. Progress is saved after each batch; retries keep saved scores.
                         </p>
                     </div>
                     <p class="info-text" id="quality-eval-output-preview" style="margin-top: 10px;">

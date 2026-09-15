@@ -7,13 +7,34 @@ from flask import Blueprint, jsonify, request
 
 from services.assessor_factory import get_assessor
 from services.cost_calculator import CostCalculator
-from services.output_evaluator_service import OutputQualityEvaluator
+from services.output_evaluator_service import OutputQualityEvaluator, prepare_quality_evaluation, QUALITY_EVAL_BATCH_SIZE
 from routes.http_errors import internal_error
 from utils.request_inference import request_inference_fields
 from utils.inference_scenario import validate_scenario
 from utils.model_provider import resolve_model_and_provider
 
 evaluation_bp = Blueprint('evaluation', __name__)
+
+
+def _sample_fraction(data):
+    raw = data.get('sample_fraction')
+    if raw is None:
+        raw = data.get('sample_pct', 100)
+    fraction = float(raw)
+    if fraction > 1:
+        fraction /= 100
+    return max(0.01, min(1.0, fraction))
+
+
+@evaluation_bp.route('/api/quality-evaluation-plan', methods=['POST'])
+def quality_evaluation_plan():
+    """Deterministic sampling only; no credentials or model calls."""
+    try:
+        data = request.json or {}
+        return jsonify(prepare_quality_evaluation(data.get('outputs') or [], _sample_fraction(data),
+                                                  int(data.get('sample_seed') or 0)))
+    except (ValueError, TypeError) as exc:
+        return jsonify({'error': str(exc)}), 400
 
 
 @evaluation_bp.route('/api/evaluate-outputs-quality', methods=['POST'])
@@ -34,6 +55,10 @@ def evaluate_outputs_quality():
             return jsonify({'error': 'eval_criteria is required'}), 400
         if not outputs:
             return jsonify({'error': 'outputs array is required'}), 400
+        batch_mode = data.get('batch_mode') is True
+        sample_fraction = _sample_fraction(data)
+        if batch_mode and (not isinstance(outputs, list) or len(outputs) > QUALITY_EVAL_BATCH_SIZE or sample_fraction != 1):
+            return jsonify({'error': 'A quality batch must contain at most four preselected outputs; do not resample it.'}), 400
 
         judge_role = data.get('judge_role')
         if judge_role not in (None, 'self', 'external'):
@@ -61,14 +86,6 @@ def evaluate_outputs_quality():
             fields['model'],
             provider_name=getattr(assessor, 'provider_name', fields['provider']),
         )
-        raw_sample = data.get('sample_fraction')
-        if raw_sample is None:
-            raw_sample = data.get('sample_pct', 100)
-        sample_fraction = float(raw_sample)
-        if sample_fraction > 1.0:
-            sample_fraction /= 100.0
-        sample_fraction = max(0.01, min(1.0, sample_fraction))
-
         result = evaluator.evaluate_outputs(
             eval_criteria=eval_criteria,
             outputs=outputs,
@@ -78,6 +95,7 @@ def evaluate_outputs_quality():
             sample_fraction=sample_fraction,
             sample_seed=int(data.get('sample_seed') or 0),
             scenario=scenario,
+            stable_ids=batch_mode,
         )
 
         usage = result.get('usage') or {}
@@ -99,7 +117,7 @@ def evaluate_outputs_quality():
             'judge': {'role': judge_role or 'legacy', 'model': fields['model'],
                       'provider': getattr(assessor, 'provider_name', fields['provider']),
                       'temperature': float(data.get('temperature') or 0.2)},
-            'assessment_protocol': 'task-quality-scenario-v1',
+            'assessment_protocol': 'task-quality-batches-v2' if batch_mode else 'task-quality-scenario-v1',
         })
     except ValueError as e:
         return jsonify({'error': str(e)}), 400

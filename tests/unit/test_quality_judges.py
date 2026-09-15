@@ -11,6 +11,7 @@ import pytest
 
 from routes import evaluation_routes
 from services.output_evaluator_service import build_quality_evaluation_prompt
+from services.output_evaluator_service import _normalize_evaluation_rows, sample_outputs_stratified
 
 
 SCENARIO = {
@@ -135,3 +136,70 @@ def test_full_scenario_is_preserved_as_judge_evidence():
     assert 'END OF INSTRUCTIONS' in prompt
     assert 'Stale editor text' not in prompt
     assert scenario == before
+
+
+def test_shared_plan_preserves_sampling_for_95_outputs_without_inference(quality_client):
+    client, calls, selections = quality_client
+    outputs = [{'label': f'Baseline {i}', 'text': f'Answer {i}', 'group': 'baseline'} for i in range(10)]
+    outputs += [{'label': f'Focus {focus} sample {i}', 'text': f'Answer {focus}-{i}',
+                 'group': 'ablated', 'focus': str(focus)} for focus in range(17) for i in range(5)]
+    for pct in (100, 50, 25, 10):
+        response = client.post('/api/quality-evaluation-plan', json={
+            'outputs': outputs, 'sample_pct': pct, 'sample_seed': 0})
+        assert response.status_code == 200
+        plan = response.json
+        assert plan['outputs'] == sample_outputs_stratified(outputs, pct / 100, seed=0)
+        assert plan['batch_size'] == 4
+        assert plan['n_outputs_total'] == 95
+        assert len(plan['outputs']) >= 18
+    assert calls == selections == []
+
+
+def test_bounded_batch_maps_short_ids_back_to_full_labels(quality_client):
+    client, calls, _ = quality_client
+    data = payload(judge_role='self', batch_mode=True, sample_pct=100)
+    data['outputs'] = data['outputs'][:4]
+    response = client.post('/api/evaluate-outputs-quality', json=data)
+    assert response.status_code == 200, response.json
+    assert len(calls) == 1
+    assert re.findall(r'^--- (.+) ---$', calls[0]['messages'][1]['content'], re.M) == [
+        'output_1', 'output_2', 'output_3', 'output_4']
+    assert [r['label'] for r in response.json['evaluations']] == [r['label'] for r in data['outputs']]
+    assert response.json['n_outputs_scored'] == 4
+    assert response.json['missing_labels'] == []
+    assert response.json['complete'] is True
+    assert response.json['assessment_protocol'] == 'task-quality-batches-v2'
+
+
+@pytest.mark.parametrize('size,pct', [(5, 100), (95, 100), (4, 50)])
+def test_bounded_batch_rejects_large_requests_and_resampling(quality_client, size, pct):
+    client, calls, selections = quality_client
+    data = payload(judge_role='self', batch_mode=True, sample_pct=pct,
+                   outputs=[{'label': str(i), 'text': 'five'} for i in range(size)])
+    response = client.post('/api/evaluate-outputs-quality', json=data)
+    assert response.status_code == 400
+    assert calls == selections == []
+
+
+@pytest.mark.parametrize('score', [None, True, False, -1, 101, 'bad', float('nan'), float('inf')])
+def test_invalid_scores_remain_unscored(score):
+    rows = _normalize_evaluation_rows([{'label': 'A', 'overall_score': score}], {'A': {'text': 'five'}})
+    assert rows[0]['overall_score'] is None
+
+
+def test_missing_and_ambiguous_labels_do_not_become_zero_or_attach_to_first_sample():
+    labels = {'Baseline sample 1': {'text': 'five'}, 'Baseline sample 10': {'text': 'six'}}
+    rows = _normalize_evaluation_rows([
+        {'label': 'Baseline sample', 'overall_score': 85},
+        {'label': '', 'overall_score': 90},
+        {'label': 'Baseline sample 1'},
+        {'label': 'Baseline sample 10', 'overall_score': 0},
+    ], labels)
+    scores = {row['label']: row['overall_score'] for row in rows}
+    assert scores == {'Baseline sample 1': None, 'Baseline sample 10': 0}
+
+
+def test_duplicate_judgments_are_incomplete_instead_of_choosing_one_score():
+    rows = _normalize_evaluation_rows([{'label': 'A', 'overall_score': 80},
+                                       {'label': 'A', 'overall_score': 20}], {'A': {'text': 'five'}})
+    assert rows[0]['overall_score'] is None
