@@ -5482,7 +5482,10 @@ function qualityEvalResultHtml(data) {
             Number(data.cost_breakdown.total_cost).toFixed(4) + '</p>';
     }
     if (data.n_batches && data.n_batches > 1) {
-        html += '<p class="info-text">Scored in ' + data.n_batches + ' batches of up to 4 outputs each.</p>';
+        html += '<p class="info-text">Received ' + data.n_batches + ' evaluation batches of up to 4 outputs each.</p>';
+    }
+    if (data.assessment_protocols?.length > 1) {
+        html += '<p class="info-text">Includes saved scores from an earlier evaluator version. Batch history is preserved in workspace exports.</p>';
     }
 
     const baselineEvals = evals.filter(function (row) {
@@ -5530,16 +5533,22 @@ function renderQualityEvalResults(data) {
     }
     let html = '<p class="info-text">Self-assessment uses the generation model in a separate evaluation call. '
         + 'Each judge uses the same criteria and original task. Scores are independent and are not averaged together.</p>';
+    for (const judge of data.judges) {
+        const progress = window.FocalPromptQuality.progress(data, judge);
+        const status = judge.status === 'pending' ? 'Evaluating' : progress.complete ? 'Complete' : 'Incomplete';
+        html += '<div class="quality-judge-progress" role="status"><strong>' + escapeHtml(judge.title)
+            + ': ' + progress.scored + '/' + progress.total + ' scored · ' + status + '</strong>';
+        if (judge.active_batch) html += '<span> · batch ' + judge.active_batch + '</span>';
+        if (judge.error) html += '<p class="error-message">' + escapeHtml(judge.error) + '</p>';
+        if (judge.status !== 'pending' && !progress.complete) html += '<p>Run evaluation again to retry unfinished batches. Saved scores are retained.</p>';
+        html += '</div>';
+    }
     html += window.FocalPromptQuality.comparisonHtml(data, escapeHtml);
+    html += '<p class="info-text">— means no valid score is available; it is not a zero.</p>';
     for (const judge of data.judges) {
         html += '<section class="quality-judge-result"><h3>' + escapeHtml(judge.title) + ' · '
             + escapeHtml(judge.provider + '/' + judge.model) + '</h3>';
-        if (judge.status === 'error') {
-            html += '<p class="error-message">' + escapeHtml(judge.error)
-                + ' Run evaluation again to retry this judge; completed results are retained.</p>';
-        } else if (judge.status === 'pending') {
-            html += '<p class="info-text" role="status">Evaluating…</p>';
-        } else {
+        if (judge.result?.evaluations?.length) {
             html += '<details' + (data.judges.length === 1 ? ' open' : '') + '><summary>Scores and explanations</summary>'
                 + qualityEvalResultHtml(judge.result) + '</details>';
         }
@@ -5721,19 +5730,21 @@ if (runQualityEvalBtn) {
             generation_model: window.FocalPromptQuality.modelOf(ablation),
             ...(ablation.scenario ? {scenario: structuredClone(ablation.scenario)} : {prompt: ablation.prompt || ''})};
 
-        showLoading('Evaluating outputs with ' + judges.length + ' judge' + (judges.length === 1 ? '' : 's') + '…');
+        const originalButtonText = runQualityEvalBtn.textContent;
+        runQualityEvalBtn.textContent = 'Evaluating…';
         runQualityEvalBtn.disabled = true;
         try {
             await window.FocalPromptQuality.evaluate({context, judges, previous: window.lastQualityEvalResults,
                 onUpdate: renderQualityEvalResults,
+                prepare: async input => window.FocalPromptQuality.readResponse(await fetch('/api/quality-evaluation-plan', {
+                    method: 'POST', headers: getApiHeaders(),
+                    body: JSON.stringify({outputs: input.outputs, sample_pct: input.sample_pct, sample_seed: input.sample_seed})})),
                 request: async (input, judge) => {
                     const response = await fetch('/api/evaluate-outputs-quality', {
                         method: 'POST', headers: getApiHeaders(),
                         body: JSON.stringify(getApiBody({...input, judge_role: judge.id},
                             judge.id === 'self' ? 'mut' : 'analysis', judge))});
-                    const data = await response.json();
-                    if (!response.ok) throw new Error(data.error || 'Evaluation failed');
-                    return data;
+                    return window.FocalPromptQuality.readResponse(response);
                 }});
             if (qualityEvalResults && qualityEvalResults.scrollIntoView) {
                 qualityEvalResults.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -5742,7 +5753,7 @@ if (runQualityEvalBtn) {
             showError('Error running quality evaluation: ' + err.message);
             console.error(err);
         } finally {
-            hideLoading();
+            runQualityEvalBtn.textContent = originalButtonText;
             runQualityEvalBtn.disabled = false;
         }
     });

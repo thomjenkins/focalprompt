@@ -33,35 +33,128 @@
         });
     }
 
-    async function evaluate({context, judges, previous, request, onUpdate}) {
+    function scored(row) {
+        return typeof row?.overall_score === 'number' && Number.isFinite(row.overall_score)
+            && row.overall_score >= 0 && row.overall_score <= 100;
+    }
+
+    function progress(data, judge) {
+        const labels = data.plan?.outputs?.map(item => item.label)
+            || judge.result?.sampled_labels || data.context?.outputs?.map(item => item.label) || [];
+        const valid = new Set((judge.result?.evaluations || []).filter(scored).map(row => row.label));
+        const count = labels.filter(label => valid.has(label)).length;
+        return {scored: count, total: labels.length, complete: labels.length > 0 && count === labels.length};
+    }
+
+    async function readResponse(response) {
+        const text = await response.text();
+        let data;
+        try { data = JSON.parse(text); } catch (_) {
+            const timeout = [408, 504].includes(response.status) || /FUNCTION_INVOCATION_TIMEOUT/.test(text);
+            throw new Error(timeout ? 'The evaluation request timed out. Saved batches are retained.'
+                : 'The evaluation server returned a non-JSON response (HTTP ' + response.status + '). Saved batches are retained.');
+        }
+        if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('The evaluation server returned an invalid response. Saved batches are retained.');
+        if (!response.ok) throw new Error(data.error || 'Evaluation request failed (HTTP ' + response.status + ').');
+        return data;
+    }
+
+    function addNumbers(base, extra) {
+        const result = {...base};
+        for (const [key, value] of Object.entries(extra || {})) {
+            if (typeof value === 'number' && Number.isFinite(value)) result[key] = (Number(result[key]) || 0) + value;
+            else if (!(key in result)) result[key] = value;
+        }
+        return result;
+    }
+
+    async function evaluate({context, judges, previous, prepare, request, onUpdate}) {
         const snapshot = structuredClone(context);
         const sameContext = previous?.version === 2 && canonical(previous.context) === canonical(snapshot);
+        const plan = sameContext && previous.plan?.version === 1
+            ? structuredClone(previous.plan) : await prepare(structuredClone(snapshot));
+        if (plan?.version !== 1 || plan.batch_size !== 4 || !Array.isArray(plan.outputs) || !plan.outputs.length) {
+            throw new Error('Invalid quality evaluation plan. Please retry.');
+        }
+        const labels = new Set(plan.outputs.map(item => item.label));
+        const source = new Map(snapshot.outputs.map(item => [item.label, String(item.text).trim()]));
+        if (labels.size !== plan.outputs.length || plan.outputs.some(item => source.get(item.label) !== item.text)) {
+            throw new Error('The evaluation plan does not match the saved outputs. Please retry.');
+        }
         const retained = judge => sameContext && previous.judges?.find(row =>
-            row.id === judge.id && row.status === 'complete' && modelKey(row) === modelKey(judge));
-        // A retry or newly enabled judge can reuse the completed peer. An explicit
-        // rerun of a fully completed selection evaluates both afresh.
-        const resume = judges.some(judge => !retained(judge));
-        const state = {version: 2, evaluation_type: 'task_quality', context: snapshot,
-            judges: judges.map(judge => resume && retained(judge)
-                ? structuredClone(retained(judge)) : {...judge, status: 'pending'})};
+            row.id === judge.id && modelKey(row) === modelKey(judge));
+        // Missing scores make an old "complete" result resumable too. A fully
+        // finished pair is evaluated afresh when the user explicitly reruns it.
+        const resume = judges.some(judge => !progress({plan}, retained(judge) || {}).complete);
+        const state = {version: 2, evaluation_type: 'task_quality', context: snapshot, plan,
+            judges: judges.map(judge => {
+                const old = resume && retained(judge);
+                const next = old ? structuredClone(old) : {...judge};
+                next.result = next.result || {evaluations: []};
+                if (old && !old.batches) next.retained_result = structuredClone(old.result);
+                next.batches = next.batches || [];
+                next.status = progress({plan}, next).complete ? 'complete' : 'pending';
+                delete next.error;
+                return next;
+            })};
         const emit = () => onUpdate?.(structuredClone(state));
         emit();
         await Promise.all(state.judges.map(async judge => {
             if (judge.status === 'complete') return;
-            try {
-                // Only the common task data is sent. Peer scores and judge labels
-                // never enter the evaluator prompt.
-                judge.result = await request(structuredClone(snapshot), {...judge});
-                const actual = judge.result.judge;
-                if (!actual || actual.role !== judge.id || modelKey(actual) !== modelKey(judge)) {
-                    throw new Error('The evaluation returned a different judge identity. Please retry.');
+            const selection = judges.find(item => item.id === judge.id);
+            const rows = new Map((judge.result.evaluations || []).filter(scored).map(row => [row.label, row]));
+            const updateResult = () => {
+                const result = judge.result;
+                result.evaluations = plan.outputs.filter(item => rows.has(item.label)).map(item => rows.get(item.label));
+                Object.assign(result, {n_outputs: plan.outputs.length, n_outputs_total: plan.n_outputs_total,
+                    n_outputs_evaluated: result.evaluations.length, n_outputs_scored: result.evaluations.length,
+                    sampled_labels: [...labels], missing_labels: [...labels].filter(label => !rows.has(label)),
+                    sample_fraction: plan.sample_fraction, sample_seed: plan.sample_seed,
+                    n_batches: judge.batches.filter(batch => batch.result).length,
+                    complete: result.evaluations.length === plan.outputs.length});
+                const protocols = new Set(judge.batches.filter(batch => batch.result)
+                    .map(batch => batch.result.assessment_protocol || 'legacy'));
+                if (judge.retained_result?.evaluations?.length) protocols.add(judge.retained_result.assessment_protocol || 'legacy');
+                result.assessment_protocols = [...protocols];
+                result.assessment_protocol = protocols.size === 1 ? [...protocols][0] : 'mixed-resumed';
+            };
+            for (let i = 0; i < plan.outputs.length; i += plan.batch_size) {
+                const batch = plan.outputs.slice(i, i + plan.batch_size);
+                if (batch.every(item => rows.has(item.label))) continue;
+                judge.active_batch = Math.floor(i / plan.batch_size) + 1;
+                emit();
+                try {
+                    // Reuse the original batch on retry so each judge sees the
+                    // same neighbouring outputs. Never send either judge's scores.
+                    const result = await request({...structuredClone(snapshot), outputs: structuredClone(batch),
+                        sample_pct: 100, sample_fraction: 1, batch_mode: true}, {...selection});
+                    const actual = result.judge;
+                    if (!actual || actual.role !== judge.id || modelKey(actual) !== modelKey(judge)) {
+                        throw new Error('The evaluation returned a different judge identity. Please retry.');
+                    }
+                    judge.batches.push({batch_index: judge.active_batch, result: structuredClone(result)});
+                    const batchLabels = new Set(batch.map(item => item.label));
+                    for (const row of result.evaluations || []) {
+                        if (batchLabels.has(row.label) && scored(row) && !rows.has(row.label)) rows.set(row.label, row);
+                    }
+                    judge.result.usage = addNumbers(judge.result.usage, result.usage);
+                    judge.result.cost_breakdown = addNumbers(judge.result.cost_breakdown, result.cost_breakdown);
+                    judge.result.judge = result.judge;
+                    judge.result.task_context_source = result.task_context_source;
+                    if (result.comparative_notes) judge.result.comparative_notes =
+                        [judge.result.comparative_notes, result.comparative_notes].filter(Boolean).join(' ');
+                    updateResult();
+                    emit();
+                } catch (error) {
+                    judge.status = 'error';
+                    judge.error = error.message || 'Evaluation failed. Please retry.';
+                    judge.batches.push({batch_index: judge.active_batch, error: judge.error});
+                    break;
                 }
-                judge.status = 'complete';
-            } catch (error) {
-                delete judge.result;
-                judge.status = 'error';
-                judge.error = error.message || 'Evaluation failed. Please retry.';
             }
+            updateResult();
+            delete judge.active_batch;
+            if (judge.status !== 'error') judge.status = judge.result.complete ? 'complete' : 'partial';
             emit();
         }));
         return state;
@@ -72,9 +165,9 @@
         const external = data.judges.find(judge => judge.id === 'external')?.result;
         const selfRows = new Map((self?.evaluations || []).map(row => [row.label, row]));
         const externalRows = new Map((external?.evaluations || []).map(row => [row.label, row]));
-        const score = row => typeof row?.overall_score === 'number' && Number.isFinite(row.overall_score)
-            ? row.overall_score : null;
-        return (data.context.outputs || []).filter(item => selfRows.has(item.label) || externalRows.has(item.label))
+        const score = row => scored(row) ? row.overall_score : null;
+        const outputs = data.plan?.outputs || (data.context.outputs || []).filter(item => selfRows.has(item.label) || externalRows.has(item.label));
+        return outputs
             .map(item => {
                 const own = score(selfRows.get(item.label)), other = score(externalRows.get(item.label));
                 return {label: item.label, self: own, external: other,
@@ -95,5 +188,5 @@
             + '</tbody></table></div>';
     }
 
-    global.FocalPromptQuality = {modelOf, judgesFor, evaluate, comparisonRows, comparisonHtml};
+    global.FocalPromptQuality = {modelOf, judgesFor, evaluate, progress, readResponse, comparisonRows, comparisonHtml};
 })(window);

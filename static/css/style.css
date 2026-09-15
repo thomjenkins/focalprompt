@@ -1085,6 +1085,14 @@ header img {
     margin-top: 20px;
 }
 
+.quality-judge-progress {
+    margin: 10px 0;
+    padding: 12px;
+    background: #f8fafc;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+}
+
 .quality-judge-result > details > summary {
     cursor: pointer;
     margin-top: 6px;
