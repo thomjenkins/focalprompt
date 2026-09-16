@@ -46,17 +46,66 @@
         return {scored: count, total: labels.length, complete: labels.length > 0 && count === labels.length};
     }
 
+    const retryStatuses = new Set([408, 429, 500, 502, 503, 504]);
+    const retryDelays = [2000, 5000];
+    const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+    function requestError(message, response, kind) {
+        const error = new Error(message);
+        error.kind = kind || 'http';
+        error.status = response?.status;
+        error.retryable = retryStatuses.has(response?.status);
+        const retryAfter = response?.headers?.get('Retry-After');
+        if (retryAfter) {
+            const seconds = Number(retryAfter);
+            const delay = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(retryAfter) - Date.now();
+            if (Number.isFinite(delay) && delay >= 0) error.retryAfterMs = Math.min(delay, 30000);
+        }
+        return error;
+    }
+
     async function readResponse(response) {
         const text = await response.text();
         let data;
         try { data = JSON.parse(text); } catch (_) {
             const timeout = [408, 504].includes(response.status) || /FUNCTION_INVOCATION_TIMEOUT/.test(text);
-            throw new Error(timeout ? 'The evaluation request timed out. Saved batches are retained.'
-                : 'The evaluation server returned a non-JSON response (HTTP ' + response.status + '). Saved batches are retained.');
+            throw requestError(timeout ? 'The evaluation request timed out. Saved batches are retained.'
+                : 'The evaluation server returned a non-JSON response (HTTP ' + response.status + '). Saved batches are retained.',
+                response, timeout ? 'timeout' : 'http');
         }
-        if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('The evaluation server returned an invalid response. Saved batches are retained.');
-        if (!response.ok) throw new Error(data.error || 'Evaluation request failed (HTTP ' + response.status + ').');
+        if (!data || typeof data !== 'object' || Array.isArray(data)) throw requestError('The evaluation server returned an invalid response. Saved batches are retained.', response);
+        if (!response.ok) throw requestError(data.error || 'Evaluation request failed (HTTP ' + response.status + ').', response);
         return data;
+    }
+
+    async function fetchJson(path, options) {
+        // Only TypeErrors at the fetch/body-reading boundary are transport errors;
+        // programming and validation errors elsewhere must not trigger paid retries.
+        try { return await readResponse(await fetch(path, options)); }
+        catch (error) {
+            if (error instanceof TypeError || error.name === 'NetworkError') {
+                const failure = new Error('The browser could not receive a complete response from the evaluation service. Saved scores are retained.');
+                failure.kind = 'network';
+                failure.retryable = true;
+                throw failure;
+            }
+            throw error;
+        }
+    }
+
+    async function retryRequest(task, {wait = sleep, onRetry, onAttempt} = {}) {
+        for (let attempt = 1; ; attempt++) {
+            onAttempt?.(attempt);
+            try { return await task(); }
+            catch (error) {
+                error.attempts = attempt;
+                if (error.retryable !== true || attempt > retryDelays.length) throw error;
+                const delay = Math.max(retryDelays[attempt - 1], error.retryAfterMs || 0);
+                onRetry?.({attempt: attempt + 1, max_attempts: retryDelays.length + 1,
+                    delay_ms: delay, error: error.message, kind: error.kind, status: error.status});
+                await wait(delay);
+            }
+        }
     }
 
     function addNumbers(base, extra) {
@@ -68,11 +117,11 @@
         return result;
     }
 
-    async function evaluate({context, judges, previous, prepare, request, onUpdate}) {
+    async function evaluate({context, judges, previous, prepare, request, onUpdate, wait = sleep}) {
         const snapshot = structuredClone(context);
         const sameContext = previous?.version === 2 && canonical(previous.context) === canonical(snapshot);
         const plan = sameContext && previous.plan?.version === 1
-            ? structuredClone(previous.plan) : await prepare(structuredClone(snapshot));
+            ? structuredClone(previous.plan) : await retryRequest(() => prepare(structuredClone(snapshot)), {wait});
         if (plan?.version !== 1 || plan.batch_size !== 4 || !Array.isArray(plan.outputs) || !plan.outputs.length) {
             throw new Error('Invalid quality evaluation plan. Please retry.');
         }
@@ -95,6 +144,8 @@
                 next.batches = next.batches || [];
                 next.status = progress({plan}, next).complete ? 'complete' : 'pending';
                 delete next.error;
+                delete next.retry;
+                delete next.active_attempt;
                 return next;
             })};
         const emit = () => onUpdate?.(structuredClone(state));
@@ -126,13 +177,26 @@
                 try {
                     // Reuse the original batch on retry so each judge sees the
                     // same neighbouring outputs. Never send either judge's scores.
-                    const result = await request({...structuredClone(snapshot), outputs: structuredClone(batch),
-                        sample_pct: 100, sample_fraction: 1, batch_mode: true}, {...selection});
+                    const result = await retryRequest(() => request({...structuredClone(snapshot), outputs: structuredClone(batch),
+                        sample_pct: 100, sample_fraction: 1, batch_mode: true}, {...selection}), {
+                        wait,
+                        onAttempt: attempt => {
+                            judge.active_attempt = attempt;
+                            delete judge.retry;
+                            emit();
+                        },
+                        onRetry: retry => {
+                            judge.retry = retry;
+                            judge.batches.push({batch_index: judge.active_batch, attempt: retry.attempt - 1,
+                                error: retry.error, error_kind: retry.kind, status: retry.status,
+                                retry_delay_ms: retry.delay_ms, will_retry: true});
+                            emit();
+                        }});
                     const actual = result.judge;
                     if (!actual || actual.role !== judge.id || modelKey(actual) !== modelKey(judge)) {
                         throw new Error('The evaluation returned a different judge identity. Please retry.');
                     }
-                    judge.batches.push({batch_index: judge.active_batch, result: structuredClone(result)});
+                    judge.batches.push({batch_index: judge.active_batch, attempt: judge.active_attempt, result: structuredClone(result)});
                     const batchLabels = new Set(batch.map(item => item.label));
                     for (const row of result.evaluations || []) {
                         if (batchLabels.has(row.label) && scored(row) && !rows.has(row.label)) rows.set(row.label, row);
@@ -148,12 +212,16 @@
                 } catch (error) {
                     judge.status = 'error';
                     judge.error = error.message || 'Evaluation failed. Please retry.';
-                    judge.batches.push({batch_index: judge.active_batch, error: judge.error});
+                    if (error.attempts > 1) judge.error += ' Stopped after ' + error.attempts + ' attempts.';
+                    judge.batches.push({batch_index: judge.active_batch, error: judge.error,
+                        attempt: judge.active_attempt, error_kind: error.kind, status: error.status, will_retry: false});
                     break;
                 }
             }
             updateResult();
             delete judge.active_batch;
+            delete judge.active_attempt;
+            delete judge.retry;
             if (judge.status !== 'error') judge.status = judge.result.complete ? 'complete' : 'partial';
             emit();
         }));
@@ -188,5 +256,5 @@
             + '</tbody></table></div>';
     }
 
-    global.FocalPromptQuality = {modelOf, judgesFor, evaluate, progress, readResponse, comparisonRows, comparisonHtml};
+    global.FocalPromptQuality = {modelOf, judgesFor, evaluate, progress, readResponse, fetchJson, retryRequest, comparisonRows, comparisonHtml};
 })(window);

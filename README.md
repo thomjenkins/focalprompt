@@ -82,6 +82,8 @@ Task Quality Evaluation uses the model recorded in the ablation run for self-ass
 
 The browser prepares one shared stratified sample, then sends at most four outputs per HTTP request for each judge. Each returned batch is saved immediately and remains exportable while evaluation continues. Missing, invalid or ambiguously labelled scores make the run incomplete; they are never filled with zero. Retrying uses the original batches and keeps previously valid scores, including when resuming older dual-judge exports. New batches use short neutral output IDs (`task-quality-batches-v2`) to prevent label collisions; human-readable labels are restored in results. Workspace exports preserve the sampling plan, retained earlier results and each batch response or error, including protocol and cost metadata. A timeout may have incurred unreported provider usage. Rerunning a fully completed pair starts a fresh evaluation; changing task inputs also invalidates reuse.
 
+Transport failures and temporary HTTP errors (408, 429, 500, 502, 503, 504) automatically retry the same batch at most twice, after 2 and 5 seconds. `Retry-After` can extend those waits up to 30 seconds. The interface shows the retry attempt and retains the completed scores; exported batch history records failed transport attempts. Authentication, model-selection, validation and invalid-success-response errors are not automatically retried, nor are missing or unfavourable scores. A lost response can still incur provider usage before its retry; only received usage and costs can be reported.
+
 **CLI / Python**
 
 ```bash
