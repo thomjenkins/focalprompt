@@ -5539,6 +5539,9 @@ function renderQualityEvalResults(data) {
         html += '<div class="quality-judge-progress" role="status"><strong>' + escapeHtml(judge.title)
             + ': ' + progress.scored + '/' + progress.total + ' scored · ' + status + '</strong>';
         if (judge.active_batch) html += '<span> · batch ' + judge.active_batch + '</span>';
+        if (judge.retry) html += '<p>Temporary connection or service failure. Retrying this batch in '
+            + Math.ceil(judge.retry.delay_ms / 1000) + ' seconds (attempt ' + judge.retry.attempt + '/' + judge.retry.max_attempts
+            + '). Saved scores are retained.</p>';
         if (judge.error) html += '<p class="error-message">' + escapeHtml(judge.error) + '</p>';
         if (judge.status !== 'pending' && !progress.complete) html += '<p>Run evaluation again to retry unfinished batches. Saved scores are retained.</p>';
         html += '</div>';
@@ -5736,16 +5739,13 @@ if (runQualityEvalBtn) {
         try {
             await window.FocalPromptQuality.evaluate({context, judges, previous: window.lastQualityEvalResults,
                 onUpdate: renderQualityEvalResults,
-                prepare: async input => window.FocalPromptQuality.readResponse(await fetch('/api/quality-evaluation-plan', {
+                prepare: async input => window.FocalPromptQuality.fetchJson('/api/quality-evaluation-plan', {
                     method: 'POST', headers: getApiHeaders(),
-                    body: JSON.stringify({outputs: input.outputs, sample_pct: input.sample_pct, sample_seed: input.sample_seed})})),
-                request: async (input, judge) => {
-                    const response = await fetch('/api/evaluate-outputs-quality', {
+                    body: JSON.stringify({outputs: input.outputs, sample_pct: input.sample_pct, sample_seed: input.sample_seed})}),
+                request: async (input, judge) => window.FocalPromptQuality.fetchJson('/api/evaluate-outputs-quality', {
                         method: 'POST', headers: getApiHeaders(),
                         body: JSON.stringify(getApiBody({...input, judge_role: judge.id},
-                            judge.id === 'self' ? 'mut' : 'analysis', judge))});
-                    return window.FocalPromptQuality.readResponse(response);
-                }});
+                            judge.id === 'self' ? 'mut' : 'analysis', judge))})});
             if (qualityEvalResults && qualityEvalResults.scrollIntoView) {
                 qualityEvalResults.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
             }
