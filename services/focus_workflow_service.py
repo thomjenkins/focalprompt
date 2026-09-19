@@ -388,13 +388,17 @@ def compare_assessments(foci, prospective, retrospective, influence_scores=None)
 
 
 def attach_focus_workflow(result, workflow, scenario, foci, fields, temperature):
-    """Validate reuse provenance before saving comparisons in an ablation checkpoint."""
+    """Require valid baseline reuse; self-assessments add an optional comparison."""
     from utils.inference_scenario import validate_scenario
     from utils.model_provider import resolve_model_and_provider
     if not isinstance(workflow, dict):
         raise ValueError('focus_workflow must be an object')
     context = workflow.get('context') or {}
     samples = workflow.get('samples') or []
+    if (not isinstance(context, dict) or not isinstance(samples, list) or not samples
+            or any(not isinstance(sample, dict) or not isinstance(sample.get('content'), str)
+                   or not sample['content'].strip() for sample in samples)):
+        raise ValueError('Focus workflow requires complete, non-empty baseline outputs.')
     model = context.get('model') or {}
     resolved_model, resolved_provider = resolve_model_and_provider(model.get('model'), model.get('provider'))
     if (validate_scenario(context.get('scenario')) != scenario
@@ -404,14 +408,25 @@ def attach_focus_workflow(result, workflow, scenario, foci, fields, temperature)
             or context.get('n_baseline') != len(samples)
             or [sample.get('content') for sample in samples] != result['baseline_outputs']):
         raise ValueError('Focus workflow does not match this ablation scenario, model, settings or baseline outputs.')
-    retrospective = workflow.get('retrospective') or []
-    if len(retrospective) != len(samples):
-        raise ValueError('Each baseline output needs its own retrospective assessment.')
-    comparison = compare_assessments(foci, workflow.get('prospective'), retrospective,
-                                     result.get('influence_scores'))
     result['focus_workflow'] = {key: workflow.get(key) for key in (
         'context', 'prospective', 'samples', 'diagnostics', 'retrospective',
     )}
-    result['focus_workflow']['summary'] = comparison
-    result['focus_comparison'] = comparison
     result['baseline_reused'] = True
+    result['focus_comparison_status'] = 'pending_assessments'
+    result.pop('focus_comparison', None)
+    result.pop('focus_comparison_error', None)
+    comparison = None
+    retrospective = workflow.get('retrospective') or []
+    if (workflow.get('prospective') and isinstance(retrospective, list)
+            and len(retrospective) == len(samples) and all(retrospective)):
+        try:
+            comparison = compare_assessments(foci, workflow['prospective'], retrospective,
+                                             result.get('influence_scores'))
+        except ValueError as exc:
+            # An invalid/legacy self-report must not discard a valid ablation.
+            result['focus_comparison_status'] = 'unavailable'
+            result['focus_comparison_error'] = str(exc)
+        else:
+            result['focus_comparison_status'] = 'complete'
+            result['focus_comparison'] = comparison
+    result['focus_workflow']['summary'] = comparison

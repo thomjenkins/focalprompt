@@ -71,10 +71,12 @@ async function fetch(path, options) {
       pairwise_cosine_distances: Array.from({length: 10}, () => Array(10).fill(0))}};
   } else if (path === '/api/focus-comparison') {
     assert.equal(body.retrospective.length, 10);
+    assert.deepEqual(body.influence_scores, [{focus_index: 0, t_obs: .2}]);
     result = {average: oneAllocation, comparison: []};
   } else if (path === '/api/ablation-score') {
     scoreBody = body;
-    result = {baseline_outputs: body.baseline_outputs};
+    result = {baseline_outputs: body.baseline_outputs, focus_workflow: body.focus_workflow,
+      baseline_reused: true, influence_scores: [{focus_index: 0, t_obs: .2}]};
   } else throw new Error('Unexpected ' + path);
   return {ok: true, json: async () => structuredClone(result)};
 }
@@ -103,22 +105,40 @@ async function mapPool(items, count, task) { return Promise.all(items.map(task))
   await assert.rejects(flow.sampleBaseline, /Successful samples are saved/);
   const completed = flow.collect().samples.filter(Boolean).length;
   assert.ok(completed > 0 && completed < 10);
+  assert.throws(() => flow.forAblation(scenario, foci, config, model), /Finish generating baseline/);
   await flow.sampleBaseline();
   assert.equal(generated.filter(s => s.kind === 'baseline').length, 10);
   const original = flow.collect().samples.map(s => s.content);
+  const baselineOnly = flow.collect();
+  assert.equal(baselineOnly.summary, null);
+  baselineOnly.diagnostics = null;
+  flow.restore(baselineOnly);
+  const beforeAssessment = flow.forAblation(scenario, foci, config, model);
+  window.singleAblationResults = await runPacedAblation(scenario, foci, config, null, null, 'ablation', beforeAssessment);
+  flow.renderAblationComparison(window.singleAblationResults);
+  assert.match(document.getElementById('focus-ablation-comparison').innerHTML, /optional retrospective/);
+  assert.equal(requests.filter(r => r.body.phase === 'retrospective').length, 0);
   await flow.retrospective();
   const retros = requests.filter(r => r.body.phase === 'retrospective');
   assert.equal(retros.length, 10);
   assert.deepEqual(retros.map(r => r.body.output).sort(), [...original].sort());
   assert.equal(window.lastAssessmentApiPayload.foci[0].score, 100);
   const snapshot = flow.forAblation(scenario, foci, config, model);
-  await runPacedAblation(scenario, foci, config, null, null, 'ablation', snapshot);
   assert.equal(generated.filter(s => s.kind === 'baseline').length, 10, 'baseline must be reused');
   assert.equal(generated.filter(s => s.kind === 'ablated').length, 3);
+  assert.equal(window.singleAblationResults.focus_comparison_status, 'complete');
+  assert.equal(window.singleAblationResults.focus_workflow.retrospective.length, 10);
+  assert.ok(window.singleAblationResults.focus_comparison);
   assert.deepEqual(scoreBody.baseline_outputs, original);
   assert.deepEqual(scoreBody.scenario, scenario, 'never score against the first ablated scenario');
   assert.equal(scoreBody.input_tokens, 130);
   assert.ok(scoreBody.focus_workflow.prospective);
+  assert.equal(scoreBody.focus_workflow.retrospective.length, 0, 'scoring must permit no assessments');
+  const withoutPrediction = structuredClone(baselineOnly);
+  withoutPrediction.prospective = null;
+  flow.restore(withoutPrediction);
+  assert.deepEqual(flow.forAblation(scenario, foci, config, model).samples, snapshot.samples);
+  flow.restore(snapshot);
   assert.throws(() => flow.forAblation(scenario, foci, config, {model: 'other', provider: 'openai'}), /same scenario/);
   const exported = flow.collect();
   const flat = structuredClone(exported);
