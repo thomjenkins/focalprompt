@@ -108,6 +108,38 @@
         state.completed_at = new Date().toISOString();
         status('Comparison complete. Inspect outputs by arm below. Export workspace includes prompts, decisions and all outputs.');
     }
+    async function analysisWorkspace(id) {
+        // Use the saved arm even if the main editor has since changed.
+        const saved = clone(state), arm = saved?.arms?.[id];
+        if (!arm || !['selected', 'ordered'].includes(id)) throw new Error('Finish the Jev prompt preview first.');
+        const c = saved.context;
+        const original = global.collectWorkspaceSession();
+        const composed = await post('/api/jev-focus/compose', {scenario: c.scenario, foci: c.foci,
+            selected_indices: saved.selection.selected_indices, orders: id === 'ordered' ? saved.orders : undefined}, c.model);
+        if (!same(composed.scenario, arm.scenario)) throw new Error('The composed prompt differs from this saved arm. Start a new Jev preview before analysing it.');
+        if (!Array.isArray(composed.foci)) throw new Error('Could not prepare focus spans for this prompt. Please refresh and try again.');
+        const settings = clone(original.model_settings);
+        settings.sections = {...settings.sections, output: c.model, ablation: c.model, reported: c.model, 'jev-output': c.model};
+        const quality = original.prompt_analysis.quality_eval;
+        const config = {...original.prompt_analysis.ablation_config, n_baseline: Math.max(5, c.count),
+            temperature: c.temperature > 0 ? c.temperature : 0.7};
+        const notes = [];
+        if (c.count < 5) notes.push('Baseline count set to 5, the minimum for ablation.');
+        if (c.temperature === 0) notes.push('Generation temperature set to 0.7 because ablation requires stochastic outputs.');
+        if (!composed.foci.length) notes.push('Jev selected no foci. Label any remaining instructions in step 1 before analysing them.');
+        return {
+            focalprompt_workspace: true, version: 2, exported_at: new Date().toISOString(), active_tab: 'prompt-analysis',
+            model_settings: settings,
+            prompt_analysis: {scenario: composed.scenario, foci: composed.foci, output: '', ablation_config: config,
+                analysis_origin: {type: 'jev', arm: id, title: titles[id], created_at: new Date().toISOString(),
+                    source_created_at: saved.created_at, threshold: c.threshold, orders: composed.orders,
+                    source_focus_indices: composed.foci.map(f => f.source_focus_index), notes},
+                quality_eval: {criteria: quality?.criteria || '', sample_pct: quality?.sample_pct || '100',
+                    second_judge_enabled: quality?.second_judge_enabled === true}},
+            batch_analysis: {foci: [], pairs: [], prompt: ''}, agent_builder: {foci: [], chat_input: ''},
+            optimization: {html: '', visible: false},
+        };
+    }
     function scenarioHtml(scenario) {
         return scenario.messages.map(m => `<h4>${esc(m.id)} · ${esc(m.role)} · ${esc(m.analysis_mode)}</h4><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(m.content)}</pre>`).join('')
             + (scenario.output_contract ? `<h4>Output contract (preserved)</h4><pre>${esc(JSON.stringify(scenario.output_contract, null, 2))}</pre>` : '');
@@ -154,6 +186,11 @@
                 const samples = arm.samples.filter(Boolean), chars = arm.scenario.messages.reduce((n, m) => n + m.content.length, 0);
                 html += `<h3>${titles[id]} · ${samples.length}/${c.count} outputs · ${chars.toLocaleString()} prompt characters</h3>`;
                 html += `<details><summary>Inspect exact prompt messages</summary>${scenarioHtml(arm.scenario)}</details>`;
+                if (id !== 'full') {
+                    html += `<div class="button-group" style="margin:12px 0"><button type="button" class="btn btn-primary" data-jev-analyse="${id}" ${busy ? 'disabled' : ''}>Analyse this prompt ↗</button>
+                        <button type="button" class="btn btn-outline" data-jev-download="${id}" ${busy ? 'disabled' : ''}>Download analysis workspace</button></div>`;
+                    html += '<p class="info-text">Opens a separate lab with this exact prompt and its selected foci. Start at step 2 with fresh predictions and outputs, then run ablation and quality evaluation. Your original analysis stays in this tab.</p>';
+                }
                 html += arm.samples.map((sample, i) => sample ? `<details><summary>Output ${i + 1}</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(sample.output)}</pre></details>` : '').join('');
             }
         }
@@ -175,7 +212,7 @@
             el('jev-order').checked = !!c.order;
             state = data?.state ? clone(data.state) : null;
             status(state ? 'Restored saved Jev experiment. Completed work is retained.' : ''); render();
-        }, preview, generate, render, context,
+        }, preview, generate, render, context, analysisWorkspace,
     };
     el('jev-select-btn')?.addEventListener('click', () => run(preview));
     el('jev-generate-btn')?.addEventListener('click', () => run(generate));
@@ -185,6 +222,21 @@
         if (confirm('Start a new Jev experiment? Export workspace first to keep a copy of these Jev results.')) {
             state = null; status('Ready for a new Jev experiment.'); render();
         }
+    });
+    el('jev-results')?.addEventListener('click', event => {
+        const analyse = event.target.closest('[data-jev-analyse]');
+        const download = event.target.closest('[data-jev-download]');
+        if (busy || (!analyse && !download)) return;
+        const id = (analyse || download).dataset[analyse ? 'jevAnalyse' : 'jevDownload'];
+        // Open synchronously inside the click to preserve the browser's user gesture.
+        const action = analyse
+            ? global.FocalPromptWorkspaceTransfer.open(() => analysisWorkspace(id))
+            : analysisWorkspace(id).then(data => global.FocalPromptWorkspaceTransfer.download(data, 'focalprompt-jev-' + id + '.json'));
+        run(async () => {
+            await action;
+            status(analyse ? 'New analysis opened in a separate tab. The original experiment is preserved here.'
+                : 'Analysis workspace downloaded. Import it into a separate lab tab to begin.');
+        });
     });
     document.addEventListener('change', () => { if (!busy && state) render(); });
 })(window);

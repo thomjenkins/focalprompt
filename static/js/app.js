@@ -1839,6 +1839,8 @@ window.addEventListener('DOMContentLoaded', async () => {
     
     // Health check removed - users no longer need to set API keys
     // The service uses AI Gateway which is configured server-side
+    window.focalPromptWorkspaceReady = true;
+    window.dispatchEvent(new Event('focalprompt:ready'));
 });
 
 // Utility Functions
@@ -8789,6 +8791,7 @@ function collectPromptAnalysisWorkspace() {
         assessment_payload: window.lastAssessmentApiPayload || null,
         focus_workflow: window.FocalPromptWorkflow?.collect() || null,
         jev_experiment: window.FocalPromptJev?.collect() || null,
+        analysis_origin: window.analysisOrigin || null,
         focus_control: {
             weights: { ...focusWeights },
             assessment_foci: assessmentFoci.map(function (f) { return { ...f }; }),
@@ -9013,6 +9016,8 @@ function restorePromptAnalysisWorkspace(pa) {
     if (!pa) {
         return;
     }
+    window.analysisOrigin = pa.analysis_origin ? structuredClone(pa.analysis_origin) : null;
+    window.FocalPromptWorkspaceTransfer?.renderOrigin(window.analysisOrigin);
     if (pa.scenario) setMainScenario(pa.scenario);
     else if (pa.prompt != null) setMainScenario(legacyPromptScenario(pa.prompt));
     restoreScenarioEditorDraft(pa.scenario_editor);
