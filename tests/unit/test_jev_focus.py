@@ -139,7 +139,7 @@ def test_gateway_v4_transport_and_safe_failure(monkeypatch):
     assert args == (EVALUATION_URL,)
     assert kw['headers']['ai-model-id'] == 'typesafe-ai/jev'
     assert kw['headers']['ai-evaluation-model-specification-version'] == '4'
-    assert kw['json']['providerOptions']['gateway']['zeroDataRetention'] is True
+    assert 'providerOptions' not in kw['json']  # Use the project's existing Gateway policy/plan.
     assert not {'temperature', 'messages', 'max_tokens'} & kw['json'].keys()
     post.return_value.status_code = 401
     post.return_value.json.return_value = {'error': 'private prompt test-key'}

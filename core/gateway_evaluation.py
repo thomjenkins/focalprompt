@@ -35,8 +35,7 @@ class GatewayEvaluation:
                     'ai-evaluation-model-specification-version': '4',
                     'ai-model-id': JEV_MODEL,
                 },
-                json={'state': state, 'questions': questions,
-                      'providerOptions': {'gateway': {'zeroDataRetention': True}}},
+                json={'state': state, 'questions': questions},
                 timeout=(10, 60),
             )
         except requests.Timeout:

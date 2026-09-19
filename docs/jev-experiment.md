@@ -61,7 +61,7 @@ Python adapter implements the **experimental evaluation v4 wire contract** used
 by the public AI SDK (`/v4/ai/evaluation-model`, protocol `0.0.1`, model/specification
 headers). Keep it isolated and live-smoke-test it when the upstream protocol changes.
 No chat fallback, text parsing, temperature or max-token setting is used for Jev.
-The server's `AI_GATEWAY_API_KEY` is used with Zero Data Retention enabled. Credentials
+The server's `AI_GATEWAY_API_KEY` and standard Gateway routing settings are used. Credentials
 and response headers are excluded from experiment exports and upstream error bodies
 are not exposed or logged by this adapter.
 
