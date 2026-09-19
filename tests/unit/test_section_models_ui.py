@@ -57,9 +57,10 @@ def test_every_model_call_has_an_explicit_section():
     html = (REPO / 'templates/index.html').read_text()
     import re
     sections = re.findall(r'data-model-section="([^"]+)"', html)
-    assert len(sections) == 15
+    assert len(sections) == 16
     for section in sections:
-        assert re.search(r"[,(] ?'(?:mut|analysis)', '" + section + r"'\)", JS) or section in ('ablation', 'quality')
+        assert re.search(r"[,(] ?'(?:mut|analysis)', '" + section + r"'\)", JS) or section in ('ablation', 'quality', 'jev-output')
+    assert "getSectionModel('jev-output')" in (REPO / 'static/js/jev_experiment.js').read_text()
     assert "getSectionModel('quality')" in JS
     assert "judge.id === 'self' ? 'mut' : 'analysis', judge)" in JS
     assert "'mut', modelSelection" in JS
