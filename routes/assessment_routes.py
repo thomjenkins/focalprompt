@@ -67,7 +67,7 @@ def focus_comparison():
     try:
         data = request.json or {}
         return jsonify(compare_assessments(data.get('foci') or [], data.get('prospective'),
-                                          data.get('retrospective') or []))
+                                          data.get('retrospective') or [], data.get('influence_scores')))
     except ValueError as exc:
         return jsonify({'error': str(exc)}), 400
 

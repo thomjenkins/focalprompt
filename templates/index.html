@@ -153,10 +153,10 @@
                             <p>Before sampling, the baseline model uses the full scenario and retained chat to predict a 100% budget across the labelled foci. Each focus gets a short justification. No generated outputs are provided.</p>
                             <p><strong>3. Generate baseline outputs and inspect noise</strong></p>
                             <p>Default: 10 independent outputs at temperature 0.7. Both settings are configurable. Ordered roles, retained input and any strict JSON Schema contract stay intact. Inspect pairwise cosine distances, the projected similarity map and candidate output groups. Grouping is exploratory; ten outputs cannot establish the true number of modes.</p>
-                            <p><strong>4. Assess retrospective focus</strong></p>
+                            <p><strong>4. Assess retrospective focus (optional)</strong></p>
                             <p>The same model independently assesses each output against the full scenario. Each assessment allocates 100% and explains each focus. The prediction is withheld to avoid anchoring. Compare the per-output results and their mean with the prospective budget, using percentage-point differences. These are behavioural self-reports, not transformer attention weights.</p>
                             <p><strong>5. Ablate and compare</strong></p>
-                            <p>Reuse those baseline outputs, delete each verified focus span, sample the ablated scenarios and run the existing permutation tests with Benjamini–Hochberg correction. Compare descriptive shares of observed shifts against both prospective and retrospective budgets. Raw shifts, q-values and baseline noise remain available.</p>
+                            <p>Once baseline outputs are ready, delete each verified focus span, sample the ablated scenarios and run the existing permutation tests with Benjamini–Hochberg correction. Step 4 is optional and can be completed later to compare observed shifts against prospective and retrospective budgets without rerunning ablation. Raw shifts, q-values and baseline noise remain available.</p>
                             <p>Changing the scenario, foci, baseline model, count or temperature requires a new prediction. Partial sampling and assessments can be retried without repeating successful calls. Export the workspace to preserve the complete run.</p>
                             <p><strong>Continue exploring</strong></p>
                             <p>The results report, rewrite sliders, order sensitivity, task quality evaluation, batch analysis and agent builder remain available. A separate single-output assessment is also available. The report's reported-focus series uses the retrospective mean after step 4.</p>
@@ -414,7 +414,7 @@
             <!-- Assessment Section -->
             <section class="card" id="lab-experiment-a">
                 <div class="card-header">
-                    <h2>4. Assess retrospective focus</h2>
+                    <h2>4. Assess retrospective focus (optional)</h2>
                     <div class="section-model-control" data-model-section="reported"></div>
                     <div class="button-group">
                         <button id="load-assessment-checkpoint-btn" class="btn btn-outline">
@@ -429,7 +429,7 @@
                 </div>
                 <div class="card-body">
                     <p class="info-text">
-                        Each baseline output gets an independent 100% focus self-assessment at temperature 0.2, with justifications grounded in that output. Compare their average with the prospective prediction. These are behavioural self-reports, not internal attention measurements. The model selector here applies only to the optional single-output assessment.
+                        This step is optional for ablation and can be completed afterwards. Each baseline output gets an independent 100% focus self-assessment at temperature 0.2, with justifications grounded in that output. Compare their average with the prospective prediction. These are behavioural self-reports, not internal attention measurements. The model selector here applies only to the optional single-output assessment.
                     </p>
                     <div id="retrospective-results"></div>
                     <div id="assessment-results" class="assessment-results">
@@ -454,7 +454,7 @@
                 </div>
                 <div class="card-body">
                     <p class="info-text">
-                        Leave-one-focus-out ablation with permutation testing. Detects whether removing each focus shifts behaviour in embedding space — not correctness, quality, or safety, and not a delete recommendation. Reported vs revealed comparison appears in the <strong>Results report</strong> below (Overview + Focus map), not as a separate experiment step.
+                        Requires the complete baseline outputs from step 3; retrospective assessment and baseline diagnostics are not prerequisites. Leave-one-focus-out ablation with permutation testing detects whether removing each focus shifts behaviour in embedding space — not correctness, quality, or safety, and not a delete recommendation. Complete step 4 whenever you want to add the reported vs revealed comparison to the <strong>Results report</strong> below.
                     </p>
                     <div class="experiment-config" data-foci-source="ablation" data-reuse-baseline="true">
                         <h3 class="experiment-config-title">Experiment configuration</h3>

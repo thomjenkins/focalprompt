@@ -426,15 +426,81 @@ def test_comparison_provenance_checked_before_checkpoint(scenario, foci):
     attach_focus_workflow(result, valid, scenario, foci, fields, .7)
     assert result['baseline_reused']
     assert result['focus_comparison']['n_outputs'] == 2
-    for mutation in ('samples', 'temperature', 'model', 'scenario', 'retrospective'):
+    for mutation in ('samples', 'temperature', 'model', 'scenario'):
         bad = copy.deepcopy(valid)
         if mutation == 'samples': bad['samples'].reverse()
         if mutation == 'temperature': bad['context']['temperature'] = .9
         if mutation == 'model': bad['context']['model']['model'] = 'other'
         if mutation == 'scenario': bad['context']['scenario']['messages'][-1]['content'] = 'Other question'
-        if mutation == 'retrospective': bad['retrospective'].pop()
         with pytest.raises(ValueError):
             attach_focus_workflow(result, bad, scenario, foci, fields, .7)
+
+
+@pytest.mark.parametrize('retrospective', [None, [], [allocation()], [allocation(), None]])
+def test_ablation_reuses_baseline_without_complete_retrospective(scenario, foci, retrospective):
+    result = {'baseline_outputs': ['first', 'second'], 'influence_scores': [],
+              'focus_comparison': {'stale': True}}
+    saved = workflow(scenario, foci)
+    saved['retrospective'] = retrospective
+    saved['summary'] = {'stale': True}
+    saved['diagnostics'] = None
+    attach_focus_workflow(result, saved, scenario, foci, {'model': 'test-model', 'provider': 'openai'}, .7)
+    assert result['baseline_reused']
+    assert result['focus_comparison_status'] == 'pending_assessments'
+    assert 'focus_comparison' not in result
+    assert result['focus_workflow']['summary'] is None
+    assert result['focus_workflow']['retrospective'] == retrospective
+
+
+def test_ablation_does_not_require_prospective_or_valid_optional_comparison(scenario, foci):
+    result = {'baseline_outputs': ['first', 'second'], 'influence_scores': []}
+    saved = workflow(scenario, foci)
+    saved['prospective'] = None
+    attach_focus_workflow(result, saved, scenario, foci, {'model': 'test-model', 'provider': 'openai'}, .7)
+    assert result['focus_comparison_status'] == 'pending_assessments'
+    saved['prospective'] = allocation()
+    saved['retrospective'][0]['assessment_protocol'] = 'different-method'
+    attach_focus_workflow(result, saved, scenario, foci, {'model': 'test-model', 'provider': 'openai'}, .7)
+    assert result['baseline_reused']
+    assert result['focus_comparison_status'] == 'unavailable'
+    assert 'same assessment method' in result['focus_comparison_error']
+    assert 'focus_comparison' not in result
+
+
+@pytest.mark.parametrize('samples', [[], [None, {'content': 'second'}],
+                                    [{'content': ''}, {'content': 'second'}], [{'content': 'first'}]])
+def test_ablation_still_requires_complete_valid_baselines(scenario, foci, samples):
+    saved = workflow(scenario, foci)
+    saved['samples'] = samples
+    with pytest.raises(ValueError):
+        attach_focus_workflow({'baseline_outputs': ['first', 'second']}, saved, scenario, foci,
+                              {'model': 'test-model', 'provider': 'openai'}, .7)
+
+
+def test_ablation_score_route_saves_result_before_retrospective(scenario, foci, monkeypatch):
+    import routes.ablation_routes as routes
+    app = Flask(__name__)
+    app.register_blueprint(routes.ablation_bp)
+    saved = workflow(scenario, foci)
+    saved['retrospective'] = []
+    result = {'baseline_outputs': ['first', 'second'], 'influence_scores': []}
+    service = Mock()
+    service.score_scenario_from_samples.return_value = result
+    monkeypatch.setattr(routes, '_ablation_service', lambda _: service)
+    checkpoints = Mock()
+    monkeypatch.setattr(routes, 'CheckpointService', lambda: checkpoints)
+    response = app.test_client().post('/api/ablation-score', json={
+        'scenario': scenario, 'foci': foci, 'baseline_outputs': result['baseline_outputs'],
+        'ablated_outputs': {'0': ['changed']}, 'focus_workflow': saved,
+        'model': 'test-model', 'provider': 'openai', 'temperature': .7,
+    })
+    assert response.status_code == 200
+    assert response.json['baseline_reused']
+    assert response.json['focus_comparison_status'] == 'pending_assessments'
+    assert 'focus_comparison' not in response.json
+    checkpoints.save_checkpoint.assert_called_once()
+    checkpoint = checkpoints.save_checkpoint.call_args.args[1]
+    assert checkpoint['result_data']['focus_workflow']['retrospective'] == []
 
 
 def test_routes_refuse_forecast_leakage_and_use_mut(scenario, foci, monkeypatch):
@@ -453,6 +519,8 @@ def test_routes_refuse_forecast_leakage_and_use_mut(scenario, foci, monkeypatch)
     assert client.post('/api/focus-self-assessment', json=data).status_code == 200
     assert factory.call_args.kwargs['data']['model'] == 'model-under-test'
     response = client.post('/api/focus-comparison', json={
-        'foci': foci, 'prospective': allocation(), 'retrospective': [allocation(40), allocation(80)]})
+        'foci': foci, 'prospective': allocation(), 'retrospective': [allocation(40), allocation(80)],
+        'influence_scores': [{'focus_index': 0, 't_obs': .2}, {'focus_index': 1, 't_obs': .6}]})
     assert response.status_code == 200
     assert response.json['average']['foci'][0]['score'] == 60
+    assert response.json['comparison'][0]['ablation_shift_share'] == pytest.approx(25)

@@ -27,8 +27,10 @@
         return canonical(left) === canonical(right);
     }
 
-    function requireCurrent() {
-        if (!state?.prospective) throw new Error('Predict focus in step 2 first.');
+    function requireCurrent(requirePrediction = true) {
+        if (!state || (requirePrediction && !state.prospective)) {
+            throw new Error(requirePrediction ? 'Predict focus in step 2 first.' : 'Generate baseline outputs in step 3 before ablation.');
+        }
         if (!matches(state.context, context())) {
             throw new Error('The scenario, foci, baseline model or sampling settings changed. Start a new prediction in step 2.');
         }
@@ -40,10 +42,10 @@
         if (!status) return;
         try {
             if (!state) { status.textContent = ''; return; }
-            requireCurrent();
+            requireCurrent(false);
             status.textContent = 'Current run: ' + state.context.model.provider + '/' + state.context.model.model
                 + ' · ' + state.context.n_baseline + ' baseline outputs · generation temperature ' + state.context.temperature;
-            if (state.prospective.assessment_protocol !== assessmentProtocol) {
+            if (state.prospective && state.prospective.assessment_protocol !== assessmentProtocol) {
                 status.textContent += ' · Saved prediction uses an earlier assessment method. Predict again to start a new run.';
             }
         } catch (error) { status.textContent = error.message; }
@@ -101,7 +103,7 @@
         global.assessmentFoci = [];
         assessmentFoci = [];
         global.experimentCComparison = null;
-        el('ablation-results').innerHTML = '<p class="empty-state">Complete steps 3 and 4, then run ablation.</p>';
+        el('ablation-results').innerHTML = '<p class="empty-state">Generate baseline outputs in step 3, then run ablation. Step 4 is optional.</p>';
         el('assessment-results').innerHTML = '';
         el('focus-control-section').classList.add('hidden');
     }
@@ -121,7 +123,7 @@
         global.assessmentFoci = [];
         assessmentFoci = [];
         el('assessment-results').innerHTML = '';
-        el('ablation-results').innerHTML = '<p class="empty-state">Run ablation after retrospective assessment.</p>';
+        el('ablation-results').innerHTML = '<p class="empty-state">Run ablation once baseline outputs are ready. Retrospective assessment is optional.</p>';
         el('focus-control-section').classList.add('hidden');
         const c = current.context;
         const controller = new AbortController();
@@ -146,8 +148,8 @@
         const current = requireCurrent();
         requireCurrentMethod(current);
         const c = current.context;
-        if (!current.diagnostics || current.samples.filter(Boolean).length !== c.n_baseline) {
-            throw new Error('Finish baseline sampling and diagnostics in step 3 first.');
+        if (!hasCompleteBaseline(current)) {
+            throw new Error('Finish generating baseline outputs in step 3 first.');
         }
         await collectMissing(current.retrospective, c.n_baseline, async index => {
             const assessment = await post('/api/focus-self-assessment', {
@@ -156,10 +158,22 @@
             requireCurrent();
             return {...assessment, output_index: index};
         }, 'Assessing retrospective focus');
+        const ablation = global.singleAblationResults;
+        const matchesAblation = ablation?.focus_workflow
+            && matches(ablation.focus_workflow.context, c)
+            && matches(ablation.baseline_outputs, current.samples.map(sample => sample.content));
         current.summary = await post('/api/focus-comparison', {
             foci: c.foci, prospective: current.prospective, retrospective: current.retrospective,
+            influence_scores: matchesAblation ? ablation.influence_scores : undefined,
         }, c.model);
         requireCurrent();
+        if (matchesAblation && global.singleAblationResults === ablation) {
+            ablation.focus_workflow = structuredClone(current);
+            ablation.focus_comparison = structuredClone(current.summary);
+            ablation.focus_comparison_status = 'complete';
+            delete ablation.focus_comparison_error;
+            renderAblationComparison(ablation);
+        }
         renderAssessment(current.summary.average);
     }
 
@@ -263,16 +277,24 @@
     function renderAblationComparison(result) {
         const target = el('focus-ablation-comparison');
         if (target) target.innerHTML = result?.focus_comparison
-            ? '<h3>Prospective, retrospective and ablation comparison</h3>' + comparisonTable(result.focus_comparison, true) : '';
+            ? '<h3>Prospective, retrospective and ablation comparison</h3>' + comparisonTable(result.focus_comparison, true)
+            : result?.baseline_reused ? '<p class="info-text">Ablation is complete. Complete the optional retrospective assessment in step 4 to add the focus comparison; ablation samples will be reused.</p>'
+                + (result.focus_comparison_error ? '<p class="info-text">Focus comparison unavailable: ' + esc(result.focus_comparison_error) + '</p>' : '') : '';
+    }
+
+    function hasCompleteBaseline(current) {
+        const samples = current.samples;
+        return Array.isArray(samples) && samples.length > 0 && samples.length === current.context.n_baseline
+            && Array.from(samples).every(sample => typeof sample?.content === 'string' && sample.content.trim());
     }
 
     function forAblation(scenario, fociList, cfg, model) {
-        const current = requireCurrent();
-        if (!current.summary) throw new Error('Assess every baseline output in step 4 before ablation.');
+        const current = requireCurrent(false);
+        if (!hasCompleteBaseline(current)) throw new Error('Finish generating baseline outputs in step 3 before ablation.');
         const expected = {...current.context, scenario, foci: fociList, model,
             temperature: cfg.temperature, n_baseline: cfg.n_baseline};
         if (!matches(current.context, expected)) {
-            throw new Error('Ablation must use the same scenario, foci, model, temperature and baseline count as steps 2–4. Match those settings or start a new prediction.');
+            throw new Error('Ablation must use the same scenario, foci, model, temperature and baseline count as the baseline run in step 3. Match those settings or start a new prediction.');
         }
         return structuredClone(current);
     }
