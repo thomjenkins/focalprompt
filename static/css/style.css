@@ -3358,6 +3358,10 @@ circle.fp-series-7 { fill: #8a8a8a; }
 .section-model-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .section-model-panel { margin-top: 10px; max-width: 680px; }
 .section-model-panel[hidden] { display: none; }
+#lab-jev [hidden] { display: none !important; }
+#lab-jev button:disabled { opacity: 0.55; cursor: not-allowed; }
+#lab-jev details { margin: 10px 0; }
+#lab-jev pre { max-height: 480px; overflow: auto; padding: 12px; background: var(--bg-secondary, #f8fafc); }
 .section-model-panel label {
     display: block;
     margin-bottom: 6px;
