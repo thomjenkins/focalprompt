@@ -102,8 +102,13 @@ def get_models():
         
         # Organize models by provider for frontend
         models_by_provider = {}
+        evaluation_models = []
         for model in all_models:
             model_id = model.get('id', '')
+            if model.get('type') == 'evaluation':
+                evaluation_models.append({'id': model_id, 'name': model.get('name'),
+                                          'type': 'evaluation', 'pricing': model.get('pricing', {})})
+                continue
             if '/' in model_id:
                 provider_name, model_name = model_id.split('/', 1)
                 provider_name = provider_name.lower()
@@ -129,6 +134,7 @@ def get_models():
         
         return jsonify({
             'models': models_by_provider,
+            'evaluation_models': evaluation_models,
             'source': 'gateway',
             'total': len(all_models)
         })

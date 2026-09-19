@@ -20,7 +20,7 @@ let analysisModel = localStorage.getItem('focalprompt_analysis_model') || 'gpt-4
 const MODEL_SECTIONS = [
     'foci', 'output', 'reported', 'adjust', 'ablation', 'order', 'quality',
     'batch-foci', 'batch-analysis', 'agent-foci', 'agent-assess',
-    'agent-response', 'agent-batch', 'agent-report', 'optimization',
+    'agent-response', 'agent-batch', 'agent-report', 'optimization', 'jev-output',
 ];
 
 function normalizeSectionModels(value) {
@@ -8788,6 +8788,7 @@ function collectPromptAnalysisWorkspace() {
         foci: foci,
         assessment_payload: window.lastAssessmentApiPayload || null,
         focus_workflow: window.FocalPromptWorkflow?.collect() || null,
+        jev_experiment: window.FocalPromptJev?.collect() || null,
         focus_control: {
             weights: { ...focusWeights },
             assessment_foci: assessmentFoci.map(function (f) { return { ...f }; }),
@@ -9042,6 +9043,7 @@ function restorePromptAnalysisWorkspace(pa) {
         applyAblationExperimentConfig(pa.ablation_config, document.getElementById('prompt-analysis-tab'));
     }
     window.FocalPromptWorkflow?.restore(pa.focus_workflow || null);
+    window.FocalPromptJev?.restore(pa.jev_experiment || null);
     if (pa.single_ablation) {
         window.singleAblationResults = pa.single_ablation;
         const skipExperimentC = !!(pa.experiment_c && pa.experiment_c.comparison);

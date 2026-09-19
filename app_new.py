@@ -125,6 +125,12 @@ except Exception as e:
     print(f"Error registering optimization_bp: {e}", file=sys.stderr)
 
 try:
+    from routes.jev_focus_routes import jev_focus_bp
+    app.register_blueprint(jev_focus_bp)
+except Exception as e:
+    print(f"Error registering jev_focus_bp: {e}", file=sys.stderr)
+
+try:
     from routes.pricing_routes import pricing_bp
     app.register_blueprint(pricing_bp)
 except Exception as e:
@@ -503,5 +509,4 @@ if __name__ == '__main__':
     open_lab_in_chrome(host, port)
     # Use waitress with 10-minute timeout for long-running ablation analysis
     serve(app, host=host, port=port, threads=4, channel_timeout=600)
-
 
