@@ -129,6 +129,11 @@
         if (!valid) html += '<p class="info-text"><strong>Inputs changed.</strong> These results belong to the saved experiment. Start a new Jev experiment to use the current inputs.</p>';
         if (state.selection) {
             html += `<p><strong>${state.selection.selected_indices.length}/${c.foci.length} foci selected.</strong> These are inclusion probabilities, not focus shares. They do not sum to 100%.</p>`;
+            const decisions = [state.selection, ...state.order_decisions];
+            const costs = decisions.map(d => d.response?.providerMetadata?.gateway?.cost);
+            if (costs.every(c => c !== undefined && c !== null && Number.isFinite(Number(c)))) {
+                html += `<p class="info-text">Jev decisions: ${decisions.length} calls · Gateway-reported charge $${costs.reduce((sum, c) => sum + Number(c), 0).toFixed(6)}. Generation charges are separate.</p>`;
+            }
             const shared = state.selected_preview?.shared_text_retained_for_excluded || [];
             html += '<div class="workflow-table-wrap"><table class="workflow-table"><thead><tr><th>Focus</th><th>Include probability</th><th>Decision</th></tr></thead><tbody>'
                 + state.selection.decisions.map(d => `<tr><td>${d.focus_index + 1}. ${esc(d.focus)}</td><td>${(d.probability * 100).toFixed(1)}%</td><td>${d.included ? 'Include' : 'Exclude'}${shared.includes(d.focus_index) ? ' · shared text retained by another focus' : ''}</td></tr>`).join('') + '</tbody></table></div>';
