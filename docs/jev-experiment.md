@@ -50,6 +50,34 @@ FocalPrompt does not invent one. Failures never become uniform scores or forced
 selections. Transport failures retry up to twice, which may duplicate an upstream
 call whose response was lost; only successfully received outputs count as samples.
 
+## Repeat the full analysis on a composed prompt
+
+Each selected or reordered arm offers **Analyse this prompt**, opening a separate
+lab tab. The original analysis and Jev experiment remain in the source tab. This
+works immediately after preview, including for previously exported experiments;
+generating Jev comparison outputs is not required. **Download analysis workspace**
+provides the same starting point for import later or when pop-ups are blocked.
+
+The new workspace contains the exact composed scenario, retained messages and
+output contract, with selected focus spans remapped to their actual positions.
+Mapping follows copied source intervals, so duplicate wording, overlapping spans,
+multi-span foci and reordered text remain attributable. Original catalogue indices
+are saved for provenance. Excluded foci are omitted, even when part of their text
+survives an overlap. Unlabelled text remains unlabelled.
+
+The generation model, temperature and count come from the saved Jev experiment;
+the ablated sample count and task quality criteria/judge settings come from the
+current workspace. Baseline count is raised to the lab minimum of five when needed;
+zero temperature becomes 0.7 for stochastic ablation. Both adjustments are shown
+in the new workspace. With no selected foci, label remaining instructions first.
+
+Start at step 2 with a fresh prospective prediction and new baseline outputs.
+Previous outputs, allocations, diagnostics, ablations and quality scores are not
+carried across. Jev selection is held fixed; ablation now measures sensitivity
+conditional on the constructed prompt. Separate tab transfer uses a same-origin,
+per-tab message handshake; prompt content is not placed in URLs or browser storage.
+Workspace export/import preserves the derived analysis and its origin metadata.
+
 ## Gateway integration
 
 Jev has model type `evaluation`; `/api/models` returns evaluation models separately

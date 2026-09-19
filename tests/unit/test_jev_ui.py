@@ -19,6 +19,10 @@ let scenario = {version:1,messages:[{id:'rules',role:'developer',analysis_mode:'
 let foci = ['A','B','C'].map(focus=>({focus}));
 let model = {model:'generation-model',provider:'openai'};
 const main = window.singleAblationResults = {kept:'unchanged'};
+const originalWorkspace = {model_settings:{global:model,sections:{quality:{provider:'other',model:'judge'}}},
+ prompt_analysis:{ablation_config:{n_ablated:7},quality_eval:{criteria:'Correct arithmetic.',sample_pct:'75',second_judge_enabled:true,results:{old:true}},
+ single_ablation:main,focus_workflow:{samples:[{content:'Old output'}]}}};
+window.collectWorkspaceSession = () => structuredClone(originalWorkspace);
 const readMainScenario = () => scenario, getSectionModel = () => model;
 const getApiHeaders = () => ({}), getApiBody = (p,r,m) => ({...p,...m});
 const escapeHtml = s => s.replaceAll('<','&lt;');
@@ -33,7 +37,7 @@ window.FocalPromptQuality = {retryRequest: task=>task(), fetchJson:async(path,op
    if(b.prefix.length && !ordered) {ordered=true;throw new Error('connection failed');}
    return {focus_index:b.prefix.length?1:2};
  }
- if(path.endsWith('/compose')) return {scenario:structuredClone(scenario),shared_text_retained_for_excluded:[]};
+ if(path.endsWith('/compose')) return {scenario:structuredClone(b.scenario),foci:b.foci.map((f,i)=>({...f,source_focus_index:i})),orders:b.orders||{},shared_text_retained_for_excluded:[]};
  if(path.endsWith('/generate-agent-response')) {
    assert.equal(b.temperature,0);
    if(calls.filter(c=>c.path.endsWith('/generate-agent-response')).length===3 && fails){fails=false;throw new Error('interrupted');}
@@ -65,6 +69,30 @@ window.FocalPromptQuality = {retryRequest: task=>task(), fetchJson:async(path,op
  await assert.rejects(flow.generate,/Inputs or settings changed/);
  flow.render(); assert.match(read('jev-results').innerHTML,/Inputs changed/);
  assert.equal(read('jev-generate-btn').disabled,true);
+ // Fork from the saved prompt after changing the main editor; no prior results leak.
+ const generationCalls = calls.filter(c=>c.path.endsWith('/generate-agent-response')).length;
+ const derived = await flow.analysisWorkspace('ordered');
+ assert.deepEqual(derived.prompt_analysis.scenario, completed.state.arms.ordered.scenario);
+ assert.equal(derived.prompt_analysis.ablation_config.n_baseline,5);
+ assert.equal(derived.prompt_analysis.ablation_config.n_ablated,7);
+ assert.equal(derived.prompt_analysis.ablation_config.temperature,.7);
+ assert.equal(derived.prompt_analysis.analysis_origin.notes.length,2);
+ assert.deepEqual(derived.prompt_analysis.analysis_origin.source_focus_indices,[0,1,2]);
+ assert.equal(derived.prompt_analysis.quality_eval.criteria,'Correct arithmetic.');
+ assert.equal(derived.prompt_analysis.quality_eval.results,undefined);
+ assert.equal(derived.prompt_analysis.single_ablation,undefined);
+ assert.equal(derived.prompt_analysis.focus_workflow,undefined);
+ assert.equal(derived.prompt_analysis.jev_experiment,undefined);
+ assert.deepEqual(derived.model_settings.sections.output,completed.state.context.model);
+ assert.deepEqual(derived.model_settings.sections.ablation,completed.state.context.model);
+ assert.equal(derived.model_settings.sections.quality.model,'judge');
+ assert.deepEqual(window.singleAblationResults,main);
+ assert.equal(calls.filter(c=>c.path.endsWith('/generate-agent-response')).length,generationCalls);
+ assert.equal(originalWorkspace.prompt_analysis.quality_eval.results.old,true);
+ await assert.rejects(()=>flow.analysisWorkspace('full'),/preview first/);
+ const tampered=flow.collect();tampered.state.arms.selected.scenario.messages[0].content='Not the composed prompt';
+ flow.restore(tampered);
+ await assert.rejects(()=>flow.analysisWorkspace('selected'),/differs from this saved arm/);
  flow.restore(null); assert.equal(flow.collect().state,null);
  assert.equal(read('jev-count').value,10);
 })().catch(e=>{console.error(e);process.exit(1)});

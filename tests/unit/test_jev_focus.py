@@ -9,6 +9,7 @@ from core.gateway_evaluation import EvaluationError, GatewayEvaluation, EVALUATI
 from routes.jev_focus_routes import jev_focus_bp
 from services.jev_focus_service import compose, order_next, prepare, select
 from utils.hosted_mode import path_requires_live
+from utils.inference_scenario import ablate_scenario
 
 
 def fixture():
@@ -38,6 +39,11 @@ def test_exact_composition_reordering_roles_unlabelled_and_contract():
     assert [m['id'] for m in result['scenario']['messages']] == ['rules', 'chat']
     assert result['deleted_characters'] == 8
     assert scenario == original
+    assert [f['source_focus_index'] for f in result['foci']] == [0, 2]
+    assert [f['spans'][0]['char_start'] for f in result['foci']] == [13, 7]
+    for f in result['foci']:
+        ablated, _ = ablate_scenario(result['scenario'], f)
+        assert f['prompt_section'] not in ablated['messages'][0]['content']
 
 
 def test_no_selection_keeps_unlabelled_content_and_user():
@@ -46,6 +52,7 @@ def test_no_selection_keeps_unlabelled_content_and_user():
     assert result['scenario']['messages'][0]['content'] == 'Intro. \n\n End.'
     assert result['scenario']['messages'][1] == scenario['messages'][1]
     assert compose(scenario, foci, [0, 1, 2, 3])['scenario'] == scenario
+    assert result['foci'] == []
 
 
 def test_overlapping_exclusion_cannot_delete_selected_text_or_move():
@@ -57,6 +64,7 @@ def test_overlapping_exclusion_cannot_delete_selected_text_or_move():
     assert result['scenario']['messages'][0]['content'] == 'Intro. AAA.BBB.\nCCC. End.'
     assert result['shared_text_retained_for_excluded'] == [4]
     assert not result['order_groups']  # only CCC is independent
+    assert [f['spans'][0]['text_snapshot'] for f in result['foci']] == ['AAA.', 'BBB.', 'CCC.']
     with pytest.raises(ValueError, match='movable'):
         compose(scenario, foci, [0, 1, 2], {'rules': [2, 1, 0]})
 
@@ -67,6 +75,38 @@ def test_multispan_keeps_intervening_unlabelled_text_and_is_fixed():
     result = compose(scenario, foci, [0])
     assert result['scenario']['messages'][0]['content'] == 'Intro. AAA.\n\nCCC. End.'
     assert not result['order_groups']
+    assert len(result['foci'][0]['spans']) == 2
+    assert result['foci'][0]['spans'][1]['char_start'] == 13
+
+
+def test_remapping_uses_positions_with_duplicate_text_unicode_and_unequal_lengths():
+    scenario, _ = fixture()
+    content = 'Same 😀. / much longer instruction / Same 😀.'
+    scenario['messages'][0]['content'] = content
+    texts = ['Same 😀.', 'much longer instruction', 'Same 😀.']
+    starts = [0, content.index(texts[1]), content.rindex(texts[2])]
+    foci = [{'focus': 'duplicate label', 'spans': [{'message_id': 'rules', 'char_start': start,
+             'char_end': start + len(text), 'text_snapshot': text}]} for text, start in zip(texts, starts)]
+    result = compose(scenario, foci, [0, 1, 2], {'rules': [1, 2, 0]})
+    new_content = result['scenario']['messages'][0]['content']
+    assert new_content == 'much longer instruction / Same 😀. / Same 😀.'
+    assert [f['spans'][0]['char_start'] for f in result['foci']] == [new_content.rindex(texts[0]), 0, new_content.index(texts[2])]
+    for focus in result['foci']:
+        span = focus['spans'][0]
+        assert new_content[span['char_start']:span['char_end']] == span['text_snapshot']
+        assert focus['verified'] and focus['attributable']
+
+
+def test_remapping_preserves_selected_overlap_across_messages():
+    scenario, foci = fixture()
+    foci.append({'focus': 'multi-message', 'spans': foci[0]['spans'] + foci[3]['spans']})
+    result = compose(scenario, foci, [0, 4])
+    assert [f['source_focus_index'] for f in result['foci']] == [0, 4]
+    assert result['foci'][0]['spans'][0] in result['foci'][1]['spans']
+    assert result['foci'][1]['message_ids'] == ['extra', 'rules']
+    ablated, _ = ablate_scenario(result['scenario'], result['foci'][1])
+    assert [m['id'] for m in ablated['messages']] == ['rules', 'chat']
+    assert 'AAA.' not in ablated['messages'][0]['content']
 
 
 @pytest.mark.parametrize('selected,orders', [([0, 0], None), ([True], None), ([99], None),
