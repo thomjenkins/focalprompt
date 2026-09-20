@@ -133,7 +133,8 @@
     }
     function outputDetails(title, arm) {
         return `<details><summary>${esc(title)} · ${arm.outputs.length} outputs</summary>
-            <details><summary>Exact prompt messages</summary><pre style="white-space:pre-wrap">${esc(JSON.stringify(arm.scenario, null, 2))}</pre></details>`
+            <details><summary>Scenario messages</summary><p>Blank messages are omitted from model requests; all nonblank content is sent unchanged.</p>
+            <pre style="white-space:pre-wrap">${esc(JSON.stringify(arm.scenario, null, 2))}</pre></details>`
             + arm.outputs.map((text, i) => `<details><summary>Output ${i + 1}</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(text)}</pre></details>`).join('') + '</details>';
     }
     function render() {
@@ -157,6 +158,8 @@
         let html = valid ? '' : '<p class="info-text"><strong>Saved run uses different inputs.</strong> Start a new run to analyse the current scenario.</p>';
         const count = Object.values(state.samples).flat().filter(Boolean).length;
         html += `<p>${count}/${state.plan.planned_calls} unique samples available across ${state.plan.variants.length} conditions (${state.plan.pools.length} distinct prompts). Identical prompt conditions share sample pools.</p>`;
+        const omitted = [...new Set(state.plan.variants.flatMap(v => v.omitted_blank_message_ids || []))];
+        if (omitted.length) html += `<p class="info-text">Blank messages omitted from model requests where empty: ${omitted.map(esc).join(', ')}. The saved scenario is unchanged.</p>`;
         const r = state.result;
         if (!r) { el('singleton-results').innerHTML = html + '<p>Completed samples are saved in workspace exports. Resume to finish missing samples and scoring.</p>'; return; }
         html += `<p><strong>Full vs no-focus distance:</strong> ${num(r.full_no_focus_distance)} · <strong>Low behavioral contrast:</strong> ${r.low_behavioral_contrast ? 'Yes' : 'No'} · threshold ${num(r.contrast_threshold)}.</p>`;

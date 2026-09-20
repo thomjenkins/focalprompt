@@ -319,15 +319,33 @@ def openai_response_format(contract: Optional[Mapping[str, Any]]) -> Optional[Di
 def compile_scenario(scenario: Mapping[str, Any]) -> Dict[str, Any]:
     """Compile a scenario to the provider-neutral chat boundary."""
     normalized = validate_scenario(scenario)
+    messages = normalized['messages']
+    for message in messages:
+        if message.get('input_name') and not message['content'].strip():
+            raise ScenarioValidationError(
+                f"Named input '{message['input_name']}' in message '{message['id']}' "
+                'has no content. Fill it in or supply a nonblank input value before generation.'
+            )
+    # Editors/imports can contain unused rows, and removing foci can leave only
+    # whitespace. Preserve the source scenario for spans and exports, but never
+    # send blank messages to providers that reject them. Do not trim real text.
+    sent = [message for message in messages if message['content'].strip()]
+    if not any(message['role'] == 'user' for message in sent):
+        raise ScenarioValidationError(
+            'At least one nonblank user message is required for generation. '
+            'Fill in a retained user message before running the analysis.'
+        )
     return {
         'messages': [
             {'role': message['role'], 'content': message['content']}
-            for message in normalized['messages']
+            for message in sent
         ],
         'response_format': openai_response_format(normalized.get('output_contract')),
         'metadata': {
             'scenario_version': normalized['version'],
-            'message_ids': [message['id'] for message in normalized['messages']],
+            'message_ids': [message['id'] for message in sent],
+            'source_message_ids': [message['id'] for message in messages],
+            'omitted_blank_message_ids': [message['id'] for message in messages if not message['content'].strip()],
             'provider_translation': 'openai_chat',
             'role_merges': [],
         },

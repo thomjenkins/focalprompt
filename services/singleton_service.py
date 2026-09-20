@@ -8,7 +8,7 @@ import numpy as np
 
 from services.ablation_service import AblationService
 from utils.focus_variants import compose_scenario_foci, prepare_focus_variants
-from utils.inference_scenario import ablate_scenario, bind_scenario_inputs
+from utils.inference_scenario import ablate_scenario, bind_scenario_inputs, compile_scenario
 from utils.permutation_test import (
     benjamini_hochberg, cosine_distance_centroids, permutation_test,
     require_stochastic_temperature,
@@ -37,11 +37,15 @@ def build_plan(scenario, foci, *, n_baseline=10, n_ablated=5, temperature=0.7, i
     variants, pools = [], {}
 
     def add(variant_id, kind, arm, count, index=None, **metadata):
+        # Preflight every condition before scheduling paid requests. A retained
+        # blank row must not conceal removal of the only usable user message.
+        compiled = compile_scenario(arm)
         # All pools belong to this one model/temperature context. Only exact
         # requests share samples; no global cache suppresses stochastic draws.
         key = hashlib.sha256(json.dumps(arm, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         variant = {'id': variant_id, 'kind': kind, 'focus_index': index,
-                   'pool_id': key, 'n_samples': count, 'scenario': arm, **metadata}
+                   'pool_id': key, 'n_samples': count, 'scenario': arm,
+                   'omitted_blank_message_ids': compiled['metadata']['omitted_blank_message_ids'], **metadata}
         variants.append(variant)
         pool = pools.setdefault(key, {'id': key, 'scenario': arm, 'n_samples': count,
                                     'kind': kind, 'focus_index': index, 'variants': []})

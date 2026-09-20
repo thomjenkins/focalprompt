@@ -205,6 +205,48 @@ def test_compile_and_local_structured_response_validation():
         validate_structured_response('{}', raw['output_contract'], incomplete=True)
 
 
+def test_compile_omits_blank_rows_and_preserves_source_and_nonblank_whitespace():
+    raw = scenario(contract=True)
+    raw['messages'][0]['content'] = '  Keep this spacing.\n'
+    raw['messages'].insert(0, {'id': 'empty-instructions', 'role': 'developer',
+                             'analysis_mode': 'analyse', 'content': '\n\t '})
+    raw['messages'].extend([
+        {'id': 'ablated-user', 'role': 'user', 'analysis_mode': 'analyse', 'content': '\n\n'},
+        {'id': 'empty-history', 'role': 'assistant', 'analysis_mode': 'retain', 'content': ''},
+        {'id': 'unused-row', 'role': 'user', 'analysis_mode': 'retain', 'content': ''},
+    ])
+    original = deepcopy(raw)
+    provider = Mock()
+    provider.chat_completion.return_value = {'content': '{"answer":"ok"}'}
+    result = complete_scenario(provider, 'model', 'openai', raw)
+    sent = provider.chat_completion.call_args.kwargs['messages']
+    assert sent == [{'role': m['role'], 'content': m['content']}
+                    for m in raw['messages'] if m['content'].strip()]
+    assert sent[0]['content'] == '  Keep this spacing.\n'
+    assert raw == original
+    metadata = result['scenario_metadata']
+    assert metadata['source_message_ids'] == [m['id'] for m in raw['messages']]
+    assert metadata['message_ids'] == ['rules', 'history', 'question']
+    assert metadata['omitted_blank_message_ids'] == ['empty-instructions', 'ablated-user', 'empty-history', 'unused-row']
+    assert result['parsed_output'] == {'answer': 'ok'}
+
+
+def test_compile_rejects_blank_named_inputs_and_missing_nonblank_user_before_generation():
+    raw = scenario()
+    raw['messages'][-1]['content'] = ''
+    provider = Mock()
+    with pytest.raises(ScenarioValidationError, match="Named input 'customer_message'.*has no content"):
+        complete_scenario(provider, 'model', 'openai', raw)
+    assert not provider.chat_completion.called
+    bound, _ = bind_scenario_inputs(raw, {'customer_message': '  Actual user input.\n'})
+    assert compile_scenario(bound)['messages'][-1]['content'] == '  Actual user input.\n'
+    del raw['messages'][-1]['input_name']
+    with pytest.raises(ScenarioValidationError, match='nonblank user message'):
+        complete_scenario(provider, 'model', 'openai', raw)
+    assert not provider.chat_completion.called
+    assert validate_scenario(raw)['messages'][-1]['content'] == '', 'drafts remain exportable'
+
+
 def test_complete_scenario_passes_exact_roles_and_never_downgrades_contract():
     provider = Mock()
     provider.chat_completion.return_value = {
