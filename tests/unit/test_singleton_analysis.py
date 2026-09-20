@@ -10,7 +10,7 @@ import pytest
 from routes.singleton_routes import singleton_bp
 from services.ablation_service import AblationService
 from services.singleton_service import build_plan, score_samples
-from utils.inference_scenario import ablate_scenario
+from utils.inference_scenario import ablate_scenario, ScenarioValidationError
 from utils.json_safe import sanitize_non_finite
 from utils.hosted_mode import path_requires_live
 
@@ -99,6 +99,51 @@ def test_sampling_uses_existing_execution_path_same_model_temperature_and_contra
     assert svc._complete_scenario.call_count == 6
     bound = build_plan(scenario, foci, inputs={'question': 'What is 3 + 3?'})
     assert all(v['scenario']['messages'][-1]['content'] == 'What is 3 + 3?' for v in bound['variants'])
+
+
+def test_blank_imported_row_and_whitespace_only_ablated_user_are_never_sent():
+    scenario, foci = fixture()
+    extra = 'CCC.\n\nDDD.'
+    scenario['messages'].extend([
+        {'id': 'extra-rules', 'role': 'user', 'analysis_mode': 'analyse', 'content': extra},
+        {'id': 'unused-row', 'role': 'user', 'analysis_mode': 'retain', 'content': ''},
+    ])
+    for label, text in [('C', 'CCC.'), ('D', 'DDD.')]:
+        start = extra.index(text)
+        foci.append({'focus': label, 'spans': [{'message_id': 'extra-rules', 'char_start': start,
+                     'char_end': start + len(text), 'text_snapshot': text}]})
+    original = deepcopy(scenario)
+    svc = service()
+    svc.provider.chat_completion.return_value = {'content': '{"answer":"four"}'}
+    plan = build_plan(scenario, foci)
+    for arm in plan['variants']:
+        result = svc.sample_scenario_completion(scenario, foci, arm['kind'], .7, focus_index=arm['focus_index'])
+        sent = svc.provider.chat_completion.call_args.kwargs['messages']
+        assert all(m['content'].strip() for m in sent)
+        assert {'role': 'user', 'content': 'What is 2 + 2?'} in sent
+        assert sent == [{'role': m['role'], 'content': m['content']}
+                        for m in arm['scenario']['messages'] if m['content'].strip()]
+        assert result['scenario'] == arm['scenario']
+        assert result['scenario']['messages'][-1] == original['messages'][-1]
+        assert result['scenario_metadata']['omitted_blank_message_ids'] == arm['omitted_blank_message_ids']
+        assert 'unused-row' in arm['omitted_blank_message_ids']
+    empty = next(arm for arm in plan['variants'] if arm['id'] == 'no_focus')
+    assert 'extra-rules' in empty['omitted_blank_message_ids']
+    assert scenario == original
+
+
+def test_plan_preflights_all_variants_before_sampling():
+    scenario, foci = fixture()
+    # A blank retained row used to satisfy the user-role check even when the
+    # no-focus condition removed the only real user message.
+    scenario['messages'] = [
+        {'id': 'only-user', 'role': 'user', 'analysis_mode': 'analyse', 'content': 'AAA.'},
+        {'id': 'unused-row', 'role': 'user', 'analysis_mode': 'retain', 'content': ''},
+    ]
+    foci = [{'focus': 'A', 'spans': [{'message_id': 'only-user', 'char_start': 0,
+                                   'char_end': 4, 'text_snapshot': 'AAA.'}]}]
+    with pytest.raises(ScenarioValidationError, match='nonblank user message'):
+        build_plan(scenario, foci)
 
 
 def test_three_foci_have_independent_singleton_and_leave_one_out_variants():

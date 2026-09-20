@@ -26,6 +26,15 @@ removed Analyse message is omitted. A request that would have no user message
 fails validation before generation; no substitute prompt or fabricated output
 is inserted.
 
+Empty editor rows and messages containing only whitespace remain in the saved
+scenario, but the shared request compiler omits them from every model call.
+Nonblank messages keep their exact content, including leading/trailing whitespace.
+Plan variants and sample metadata record `omitted_blank_message_ids`; sample
+metadata also distinguishes source message IDs from IDs actually sent. Every
+condition is compiled during planning, before sampling starts. A missing named
+input or a condition without a nonblank user message fails with an actionable
+validation error rather than sending an invalid request to the provider.
+
 - **Full:** the original scenario.
 - **No-focus:** delete the union of every labelled focus span.
 - **Singleton i:** preserve the complete spans of focus i and all unlabelled text;
