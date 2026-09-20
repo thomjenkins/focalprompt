@@ -4,8 +4,12 @@ Step 9 adds a separate, resumable experiment:
 
 **No foci → each focus individually → all foci → each focus removed.**
 
-Label exact source spans in step 1, choose the generation model and sampling
-settings in steps 2–3/5, and select **Run analysis**. Prediction and retrospective
+Label exact source spans in step 1, choose the generation model in step 3, edit
+the sample counts and temperature directly in step 9, and select **Run analysis**.
+These controls share their settings with steps 3/5 (5–50 full/no-focus outputs,
+3–25 outputs per singleton/leave-one-out condition). After changing settings,
+select **New run**; a saved run always keeps its original settings.
+Prediction and retrospective
 assessment are optional for this mode. Existing full-prompt and ablation results
 remain unchanged. Each row's details show all four prompts and their outputs.
 Workspace export/import includes partial samples and completed results; completed
@@ -60,7 +64,12 @@ it in the main workflow first.
 
 Unique conditions are randomly interleaved by sampling round, with the schedule
 saved for resumption. Six workers use the existing sampling/retry path and settle
-in-flight calls before returning an error. Successful samples survive interruption,
+in-flight calls before returning an error. Temporary HTTP/connection failures use
+up to three browser attempts with backoff and bounded Retry-After waits, in
+addition to the Gateway adapter's own bounded retries. Authentication, invalid
+request and unsupported output-contract errors stop immediately at the browser.
+If retries are exhausted, **Resume analysis** retries only unfinished work.
+Successful samples survive interruption,
 export/import and scoring failures. Scoring does not resample. Lost responses or
 failed retries can still incur provider usage. Only received new-call usage is
 counted; reused samples are labelled. Embeddings are cached by exact output text

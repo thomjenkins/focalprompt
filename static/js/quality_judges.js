@@ -69,12 +69,19 @@
         let data;
         try { data = JSON.parse(text); } catch (_) {
             const timeout = [408, 504].includes(response.status) || /FUNCTION_INVOCATION_TIMEOUT/.test(text);
-            throw requestError(timeout ? 'The evaluation request timed out. Saved batches are retained.'
-                : 'The evaluation server returned a non-JSON response (HTTP ' + response.status + '). Saved batches are retained.',
+            throw requestError(timeout ? 'The request timed out. Completed work is retained.'
+                : 'The server returned a non-JSON response (HTTP ' + response.status + '). Completed work is retained.',
                 response, timeout ? 'timeout' : 'http');
         }
-        if (!data || typeof data !== 'object' || Array.isArray(data)) throw requestError('The evaluation server returned an invalid response. Saved batches are retained.', response);
-        if (!response.ok) throw requestError(data.error || 'Evaluation request failed (HTTP ' + response.status + ').', response);
+        if (!data || typeof data !== 'object' || Array.isArray(data)) throw requestError('The server returned an invalid response. Completed work is retained.', response);
+        if (!response.ok) {
+            const error = requestError(data.error || 'Request failed (HTTP ' + response.status + ').', response);
+            const seconds = Number(data.retry_after);
+            if (Number.isFinite(seconds) && seconds > 0) {
+                error.retryAfterMs = Math.max(error.retryAfterMs || 0, Math.min(seconds * 1000, 30000));
+            }
+            throw error;
+        }
         return data;
     }
 
@@ -84,7 +91,7 @@
         try { return await readResponse(await fetch(path, options)); }
         catch (error) {
             if (error instanceof TypeError || error.name === 'NetworkError') {
-                const failure = new Error('The browser could not receive a complete response from the evaluation service. Saved scores are retained.');
+                const failure = new Error('The browser could not receive a complete response from the server. Completed work is retained.');
                 failure.kind = 'network';
                 failure.retryable = true;
                 throw failure;

@@ -225,6 +225,23 @@ def test_complete_scenario_passes_exact_roles_and_never_downgrades_contract():
         complete_scenario(provider, 'model', 'provider', raw)
 
 
+@pytest.mark.parametrize('error', [
+    Exception('Service temporarily unavailable. Please try again in a moment.'),
+    RuntimeError('Model not found'),
+    RuntimeError('Invalid API key'),
+    RuntimeError('Unexpected internal error'),
+    TimeoutError('Timed out while generating json_schema output'),
+])
+def test_contract_does_not_turn_other_failures_into_capability_errors(error):
+    provider = Mock()
+    provider.chat_completion.side_effect = error
+    with pytest.raises(type(error)) as failure:
+        complete_scenario(provider, 'model', 'openai', scenario(contract=True))
+    assert failure.value is error
+    assert provider.chat_completion.call_count == 1
+    assert provider.chat_completion.call_args.kwargs['response_format']['type'] == 'json_schema'
+
+
 def test_end_to_end_fake_provider_changes_only_selected_analysed_span(monkeypatch):
     raw = scenario(contract=True)
     focus = {

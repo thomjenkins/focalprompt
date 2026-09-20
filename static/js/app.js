@@ -4100,10 +4100,9 @@ function sleepMs(ms) {
     return new Promise(function (resolve) { setTimeout(resolve, ms); });
 }
 
-async function fetchAblationSample(inference, fociList, kind, focusIndex, temperature, controller, inputs, modelSelection) {
-    const maxAttempts = 8;
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-        const response = await fetch('/api/ablation-sample', {
+async function fetchAblationSample(inference, fociList, kind, focusIndex, temperature, controller, inputs, modelSelection, retryOptions) {
+    return window.FocalPromptQuality.retryRequest(async () => {
+        const data = await window.FocalPromptQuality.fetchJson('/api/ablation-sample', {
             method: 'POST',
             headers: getApiHeaders(),
             body: JSON.stringify(getApiBody(Object.assign({
@@ -4115,24 +4114,11 @@ async function fetchAblationSample(inference, fociList, kind, focusIndex, temper
             }, typeof inference === 'string' ? { prompt: inference } : { scenario: inference }), 'mut', modelSelection)),
             signal: controller.signal
         });
-        const data = await response.json();
-        if (response.status === 429) {
-            const waitSec = Math.max(1, Number(data.retry_after) || 2);
-            showLoading('Gateway rate limit. Waiting ' + waitSec + 's, then retrying this sample…');
-            await sleepMs(waitSec * 1000);
-            continue;
-        }
-        if (!response.ok) {
-            throw new Error(data.error || 'Failed to generate a sample');
-        }
         if (!data.content) {
             throw new Error('Model returned an empty sample');
         }
         return data;
-    }
-    throw new Error(
-        'Rate limit persisted after several waits. Wait a minute and try again, or lower sample counts.'
-    );
+    }, retryOptions);
 }
 
 async function mapPool(items, limit, fn) {

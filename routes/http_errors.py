@@ -9,6 +9,8 @@ from typing import Any, Dict, Optional, Tuple
 
 from flask import jsonify
 
+from utils.provider_errors import error_chain
+
 
 _PUBLIC_PROVIDER_EXCEPTIONS = {
     'APIConnectionError',
@@ -40,7 +42,7 @@ def _redact_provider_message(message: str) -> str:
     return message[:600]
 
 
-def _provider_error_details(exc: BaseException) -> Optional[Dict[str, Any]]:
+def _single_provider_error_details(exc: BaseException) -> Optional[Dict[str, Any]]:
     """Extract a safe, structured error from supported provider SDK failures."""
     class_name = type(exc).__name__
     module_name = type(exc).__module__.split('.', 1)[0]
@@ -62,6 +64,9 @@ def _provider_error_details(exc: BaseException) -> Optional[Dict[str, Any]]:
     is_provider_error = (
         class_name in _PUBLIC_PROVIDER_EXCEPTIONS
         or module_name in {'openai', 'anthropic'}
+        or (module_name == 'requests' and (isinstance(status, int) or class_name in {
+            'ConnectionError', 'Timeout', 'ReadTimeout', 'ConnectTimeout',
+        }))
         or provider_type in {'invalid_request_error', 'authentication_error'}
     )
     if not is_provider_error:
@@ -78,9 +83,9 @@ def _provider_error_details(exc: BaseException) -> Optional[Dict[str, Any]]:
         http_status = 401
     elif class_name == 'PermissionDeniedError' or status == 403:
         http_status = 403
-    elif class_name in {'APIConnectionError'}:
+    elif class_name in {'APIConnectionError', 'ConnectionError'} or status == 503:
         http_status = 503
-    elif class_name in {'APITimeoutError'}:
+    elif class_name in {'APITimeoutError', 'Timeout', 'ReadTimeout', 'ConnectTimeout'} or status in {408, 504}:
         http_status = 504
     elif status in {400, 404, 409, 422} or class_name in {
         'ProviderCapabilityError', 'StructuredOutputError'
@@ -100,6 +105,16 @@ def _provider_error_details(exc: BaseException) -> Optional[Dict[str, Any]]:
         if value is not None
     }
     return {'message': message, 'metadata': metadata, 'status': http_status}
+
+
+def _provider_error_details(exc: BaseException) -> Optional[Dict[str, Any]]:
+    # Gateway adapters wrap upstream errors in friendly text. Retain the
+    # underlying status: a 503 can be retried, while a 401 or 400 cannot.
+    for cause in error_chain(exc):
+        details = _single_provider_error_details(cause)
+        if details is not None:
+            return details
+    return None
 
 
 def internal_error(
