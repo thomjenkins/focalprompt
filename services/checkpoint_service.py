@@ -23,6 +23,7 @@ ALLOWED_CHECKPOINT_TYPES = frozenset({
     'batch_analysis',
     'batch_agents',
     'single_ablation',
+    'singleton_analysis',
     'single_assessment',
 })
 
@@ -216,6 +217,7 @@ class CheckpointService:
                 'batch_analysis': 'batch_analysis_',
                 'batch_agents': 'batch_agents_',
                 'single_ablation': 'single_ablation_',
+                'singleton_analysis': 'singleton_analysis_',
                 'single_assessment': 'single_assessment_'
             }
             prefix = prefix_map[checkpoint_type]
@@ -248,8 +250,9 @@ class CheckpointService:
                             if checkpoint_type == 'single_assessment':
                                 checkpoint_info['num_foci'] = len(checkpoint.get('result_data', {}).get('foci', []))
                                 checkpoint_info['has_output'] = bool(checkpoint.get('result_data', {}).get('output'))
-                            elif checkpoint_type == 'single_ablation':
-                                checkpoint_info['num_foci'] = len(checkpoint.get('result_data', {}).get('influence_scores', []))
+                            elif checkpoint_type in ('single_ablation', 'singleton_analysis'):
+                                result = checkpoint.get('result_data', {})
+                                checkpoint_info['num_foci'] = len(result.get('focus_results') or result.get('influence_scores', []))
                                 checkpoint_info['model'] = checkpoint.get('result_data', {}).get('model', 'unknown')
                             elif checkpoint_type == 'batch_agents':
                                 checkpoint_info['completed'] = checkpoint.get('completed', 0)
