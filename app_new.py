@@ -79,6 +79,8 @@ except Exception as e:
 try:
     from routes.ablation_routes import ablation_bp
     app.register_blueprint(ablation_bp)
+    from routes.singleton_routes import singleton_bp
+    app.register_blueprint(singleton_bp)
 except Exception as e:
     print(f"Error registering ablation_bp: {e}", file=sys.stderr)
 

@@ -7124,6 +7124,10 @@ async function loadCheckpointData(sessionId, checkpointType = 'batch_analysis') 
             
             hideLoading();
             alert(`Assessment checkpoint loaded successfully!`);
+        } else if (checkpointType === 'singleton_analysis') {
+            window.FocalPromptSingleton.restoreResult(checkpoint.result_data);
+            hideLoading();
+            document.getElementById('lab-singleton')?.scrollIntoView({block: 'start'});
         } else if (checkpointType === 'single_ablation') {
             // Load single ablation analysis results
             const resultData = checkpoint.result_data || checkpoint;
@@ -7214,13 +7218,13 @@ window.loadCheckpointData = loadCheckpointData;
 
 async function displayCheckpointList(checkpointType = 'batch_analysis') {
     // Always show loading first
-    showLoading(`Loading ${checkpointType === 'batch_agents' ? 'agent' : checkpointType === 'single_ablation' ? 'ablation' : checkpointType === 'single_assessment' ? 'assessment' : 'batch analysis'} checkpoints...`);
+    showLoading(`Loading ${checkpointType === 'batch_agents' ? 'agent' : checkpointType === 'singleton_analysis' ? 'singleton analysis' : checkpointType === 'single_ablation' ? 'ablation' : checkpointType === 'single_assessment' ? 'assessment' : 'batch analysis'} checkpoints...`);
     
     const checkpoints = await listCheckpoints(checkpointType);
     hideLoading();
     
     if (checkpoints.length === 0) {
-        const typeLabel = checkpointType === 'batch_agents' ? 'agent building' : checkpointType === 'single_ablation' ? 'ablation analysis' : checkpointType === 'single_assessment' ? 'assessment' : 'batch analysis';
+        const typeLabel = checkpointType === 'batch_agents' ? 'agent building' : checkpointType === 'singleton_analysis' ? 'singleton analysis' : checkpointType === 'single_ablation' ? 'ablation analysis' : checkpointType === 'single_assessment' ? 'assessment' : 'batch analysis';
         showErrorModal(`No ${typeLabel} checkpoints found. Previous runs before checkpoint saving was implemented were not saved. Future runs will be automatically saved.`);
         return;
     }
@@ -7236,6 +7240,7 @@ async function displayCheckpointList(checkpointType = 'batch_analysis') {
         'batch_analysis': 'Batch Analysis',
         'batch_agents': 'Batch Agent Building',
         'single_ablation': 'Single Ablation Analysis',
+        'singleton_analysis': 'Baseline + Singleton Analysis',
         'single_assessment': 'Single Assessment'
     };
     const typeLabel = typeLabels[checkpointType] || 'Checkpoints';
@@ -7245,9 +7250,9 @@ async function displayCheckpointList(checkpointType = 'batch_analysis') {
     html += '<thead><tr style="background: #f8fafc; border-bottom: 2px solid var(--border-color);">';
     html += '<th style="padding: 8px; text-align: left;">Session ID</th>';
     html += '<th style="padding: 8px; text-align: left;">Date</th>';
-    if (checkpointType === 'single_ablation' || checkpointType === 'single_assessment') {
+    if (['single_ablation', 'single_assessment', 'singleton_analysis'].includes(checkpointType)) {
         html += '<th style="padding: 8px; text-align: right;">Foci</th>';
-        if (checkpointType === 'single_ablation') {
+        if (checkpointType !== 'single_assessment') {
             html += '<th style="padding: 8px; text-align: left;">Model</th>';
         } else {
             html += '<th style="padding: 8px; text-align: left;">Has Output</th>';
@@ -7266,9 +7271,9 @@ async function displayCheckpointList(checkpointType = 'batch_analysis') {
         html += `<td style="padding: 8px; font-family: monospace; font-size: 0.85em;">${escapeHtml(cp.session_id.substring(0, 20))}${cp.session_id.length > 20 ? '...' : ''}</td>`;
         html += `<td style="padding: 8px; font-size: 0.9em;">${escapeHtml(date)}</td>`;
         
-        if (checkpointType === 'single_ablation' || checkpointType === 'single_assessment') {
+        if (['single_ablation', 'single_assessment', 'singleton_analysis'].includes(checkpointType)) {
             html += `<td style="padding: 8px; text-align: right;">${cp.num_foci || '?'}</td>`;
-            if (checkpointType === 'single_ablation') {
+            if (checkpointType !== 'single_assessment') {
                 html += `<td style="padding: 8px;">${escapeHtml(cp.model || 'unknown')}</td>`;
             } else {
                 html += `<td style="padding: 8px;">${cp.has_output ? '✅' : '❌'}</td>`;
@@ -8791,6 +8796,7 @@ function collectPromptAnalysisWorkspace() {
         assessment_payload: window.lastAssessmentApiPayload || null,
         focus_workflow: window.FocalPromptWorkflow?.collect() || null,
         jev_experiment: window.FocalPromptJev?.collect() || null,
+        singleton_experiment: window.FocalPromptSingleton?.collect() || null,
         analysis_origin: window.analysisOrigin || null,
         focus_control: {
             weights: { ...focusWeights },
@@ -8869,6 +8875,10 @@ function validateWorkspaceSession(data) {
         return 'Invalid file: not a JSON object.';
     }
     if (data.focalprompt_workspace !== true) {
+        if (data.protocol === 'singleton-focus-v1' && data.context && data.plan && data.samples
+            && Array.isArray(data.focus_results)) {
+            return { singleton_analysis: true };
+        }
         if (data.baseline_outputs || data.influence_scores || data.ablation_results) {
             return { legacy_ablation: true };
         }
@@ -9049,6 +9059,7 @@ function restorePromptAnalysisWorkspace(pa) {
     }
     window.FocalPromptWorkflow?.restore(pa.focus_workflow || null);
     window.FocalPromptJev?.restore(pa.jev_experiment || null);
+    window.FocalPromptSingleton?.restore(pa.singleton_experiment || null);
     if (pa.single_ablation) {
         window.singleAblationResults = pa.single_ablation;
         const skipExperimentC = !!(pa.experiment_c && pa.experiment_c.comparison);
@@ -9248,6 +9259,12 @@ function importWorkspaceSessionFile(file) {
         const validation = validateWorkspaceSession(data);
         if (typeof validation === 'string') {
             showErrorModal(validation);
+            return;
+        }
+        if (validation && validation.singleton_analysis) {
+            if (!confirm('Import singleton analysis? This replaces the current prompt analysis.')) return;
+            try { window.FocalPromptSingleton.restoreResult(data); }
+            catch (error) { showErrorModal('Failed to restore singleton analysis: ' + error.message); }
             return;
         }
         if (validation && validation.legacy_ablation) {

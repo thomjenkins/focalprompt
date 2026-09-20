@@ -1,0 +1,112 @@
+{
+  "example_note": "Illustrative subset of a real score_samples result using invented outputs and hand-specified embeddings. No model was called. Not empirical performance evidence.",
+  "protocol": "singleton-focus-v1",
+  "context": {
+    "scenario": {
+      "version": 1,
+      "messages": [
+        {
+          "id": "rules",
+          "role": "developer",
+          "content": "Answer accurately. Be brief.",
+          "analysis_mode": "analyse"
+        },
+        {
+          "id": "chat",
+          "role": "user",
+          "content": "What is 2 + 2?",
+          "analysis_mode": "retain"
+        }
+      ]
+    },
+    "foci": [
+      {
+        "focus": "Accuracy",
+        "spans": [
+          {
+            "message_id": "rules",
+            "char_start": 0,
+            "char_end": 18,
+            "text_snapshot": "Answer accurately."
+          }
+        ]
+      },
+      {
+        "focus": "Brevity",
+        "spans": [
+          {
+            "message_id": "rules",
+            "char_start": 19,
+            "char_end": 28,
+            "text_snapshot": "Be brief."
+          }
+        ]
+      }
+    ],
+    "model": {
+      "model": "illustrative-no-model-called",
+      "provider": "openai"
+    },
+    "temperature": 0.7,
+    "n_baseline": 5,
+    "n_ablated": 5
+  },
+  "full_outputs": [
+    "4.",
+    "4.",
+    "4.",
+    "4.",
+    "4."
+  ],
+  "no_focus_outputs": [
+    "Please provide more details.",
+    "Please provide more details.",
+    "Please provide more details.",
+    "Please provide more details.",
+    "Please provide more details."
+  ],
+  "full_no_focus_distance": 1.0,
+  "low_behavioral_contrast": false,
+  "contrast_threshold": 0.5294117647058825,
+  "normalized_metrics_note": null,
+  "focus_results": [
+    {
+      "focus_index": 0,
+      "focus": "Accuracy",
+      "singleton_output": "The answer is four.",
+      "influence": 1.0,
+      "normalized_influence": 1.0,
+      "sufficiency": 1.0,
+      "singleton_full_distance": 0.0,
+      "necessity": 2.0,
+      "leave_one_out_outputs": [
+        "Unknown.",
+        "Unknown.",
+        "Unknown.",
+        "Unknown.",
+        "Unknown."
+      ]
+    },
+    {
+      "focus_index": 1,
+      "focus": "Brevity",
+      "singleton_output": "Unknown.",
+      "influence": 1.0,
+      "normalized_influence": 1.0,
+      "sufficiency": -1.0,
+      "singleton_full_distance": 2.0,
+      "necessity": 0.0,
+      "leave_one_out_outputs": [
+        "The answer is four.",
+        "The answer is four.",
+        "The answer is four.",
+        "The answer is four.",
+        "The answer is four."
+      ]
+    }
+  ],
+  "evaluator": {
+    "method": "cosine_distance_between_embedding_centroids",
+    "model": "illustrative-hand-specified-vectors"
+  }
+}

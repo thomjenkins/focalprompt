@@ -221,6 +221,7 @@
                 <a href="#lab-focus-order">Order</a>
                 <a href="#lab-quality">Quality</a>
                 <a href="#lab-jev">Jev experiment</a>
+                <a href="#lab-singleton">Singletons</a>
                 <button type="button" id="model-status-change-btn" class="lab-model-status" title="Change model" aria-live="polite">
                     <span class="status-dot" aria-hidden="true"></span>
                     <span class="model-status-label">Selected model</span>
@@ -688,6 +689,23 @@
                     <div id="jev-results"><p class="empty-state">Label foci in step 1, then select and preview here. Steps 2–7 are not required.</p></div>
                 </div>
             </section>
+            <section class="card" id="lab-singleton">
+                <div class="card-header"><h2>9. Baseline + singleton focus analysis</h2></div>
+                <div class="card-body">
+                    <p class="info-text">No foci → each focus individually → all foci → each focus removed. Separate influence, sufficiency and necessity using the same semantic comparisons as ablation.</p>
+                    <p class="info-text">All retained messages, the output contract and text outside labelled spans are preserved. Label foci in step 1; other steps are optional. Matching full-prompt and leave-one-out samples are reused automatically.</p>
+                    <p id="singleton-settings" class="info-text"></p>
+                    <div class="button-group" style="margin:16px 0">
+                        <button id="singleton-run-btn" class="btn btn-primary" type="button">Run analysis</button>
+                        <button id="singleton-stop-btn" class="btn btn-outline" type="button" hidden>Stop after current samples</button>
+                        <button id="singleton-new-btn" class="btn btn-outline" type="button" hidden>New run</button>
+                        <button id="singleton-export-btn" class="btn btn-outline" type="button" disabled>Download results</button>
+                        <button id="singleton-checkpoint-btn" class="btn btn-outline" type="button">Load checkpoint</button>
+                    </div>
+                    <p id="singleton-status" class="info-text" aria-live="polite"></p>
+                    <div id="singleton-results"></div>
+                </div>
+            </section>
             </div>
             <!-- End Prompt Analysis Tab -->
 
@@ -1098,5 +1116,6 @@
     <script src="{{ url_for('static', filename='js/focus_workflow.js') }}"></script>
     <script src="{{ url_for('static', filename='js/jev_experiment.js') }}"></script>
     <script src="{{ url_for('static', filename='js/workspace_transfer.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/singleton_experiment.js') }}"></script>
 </body>
 </html>

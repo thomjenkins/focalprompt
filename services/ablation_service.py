@@ -37,6 +37,7 @@ from utils.ablation_stability import (
     compute_ablation_stability,
 )
 from utils.reported_focus_dynamics import build_reported_focus_dynamics
+from utils.focus_variants import compose_scenario_foci
 from services.behavioral_difference_service import enrich_influence_item_for_review
 from utils.inference_scenario import (
     ablate_scenario,
@@ -153,7 +154,7 @@ class AblationService:
         focus_index: Optional[int] = None,
         inputs: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """One baseline/ablated completion without flattening the scenario."""
+        """One full, no-focus, singleton or ablated completion through one compiler."""
         require_stochastic_temperature(temperature)
         bound, binding = bind_scenario_inputs(scenario, inputs)
         classified = normalize_scenario_foci(bound, foci_list)
@@ -175,8 +176,17 @@ class AblationService:
                 'spans': focus.get('spans') or [],
                 **deletion,
             }
+        elif kind in ('no_focus', 'singleton'):
+            if kind == 'singleton' and (type(focus_index) is not int or not 0 <= focus_index < len(classified)):
+                raise ValueError('A valid focus_index is required for singleton samples')
+            selected = [] if kind == 'no_focus' else [focus_index]
+            composition = compose_scenario_foci(bound, classified, selected, preserve_whitespace=True)
+            request_scenario = composition['scenario']
+            ablation_meta = {'ablation_mode': kind, 'focus_index': focus_index,
+                             'selected_indices': selected,
+                             'shared_text_retained_for_excluded': composition['shared_text_retained_for_excluded']}
         elif kind != 'baseline':
-            raise ValueError("kind must be 'baseline' or 'ablated'")
+            raise ValueError("kind must be 'baseline', 'no_focus', 'singleton' or 'ablated'")
         response = dict(self._complete_scenario(request_scenario, temperature))
         response['scenario'] = request_scenario
         response['input_binding'] = binding

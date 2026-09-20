@@ -152,7 +152,7 @@ def ablation_sample():
         return _analysis_json(result)
     except (ProviderCapabilityError, StructuredOutputError) as e:
         return jsonify({'error': str(e), 'code': 'inference_contract_error'}), 422
-    except ScenarioValidationError as e:
+    except ValueError as e:
         return jsonify({'error': str(e)}), 400
     except RateLimitError as e:
         return _rate_limit_response(e)
