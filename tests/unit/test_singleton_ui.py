@@ -65,6 +65,12 @@ async function fetchAblationSample(s,fs,kind,index,temp,controller,inputs,m){
  assert.equal(requests.filter(r=>r.path.endsWith('-plan')).length,1);
  assert.equal(JSON.stringify(window.singleAblationResults),original);
  const saved=flow.collect();
+ for(const [key,value] of [['n_baseline',7],['n_ablated',4],['temperature',.8]]) {
+  const before=controls[key];controls[key]=value;
+  await assert.rejects(flow.runAnalysis,/Inputs or sampling settings changed/);
+  assert.deepEqual(flow.collect(),saved,'editing settings must not modify saved samples');
+  controls[key]=before;
+ }
  scenario=clone(scenario);scenario.messages[1].content='Changed retained input';
  await assert.rejects(flow.runAnalysis,/Inputs or sampling settings changed/);
  flow.restore(null);scenario=fixture.scenario;

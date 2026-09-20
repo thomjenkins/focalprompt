@@ -695,6 +695,21 @@
                     <p class="info-text">No foci → each focus individually → all foci → each focus removed. Separate influence, sufficiency and necessity using the same semantic comparisons as ablation.</p>
                     <p class="info-text">All retained messages, the output contract and text outside labelled spans are preserved. Label foci in step 1; other steps are optional. Matching full-prompt and leave-one-out samples are reused automatically.</p>
                     <p id="singleton-settings" class="info-text"></p>
+                    <div class="experiment-config" data-foci-source="ablation">
+                        <div class="experiment-field experiment-sample-inputs">
+                            <label>Outputs per full / no-focus condition
+                                <input id="singleton-n-baseline" class="exp-n-baseline" type="number" min="5" max="50" step="1" value="10">
+                            </label>
+                            <label>Outputs per singleton / leave-one-out condition
+                                <input id="singleton-n-ablated" class="exp-n-ablated" type="number" min="3" max="25" step="1" value="5">
+                            </label>
+                            <label>Temperature
+                                <input id="singleton-temperature" class="exp-temperature" type="number" min="0.1" max="2" step="0.1" value="0.7">
+                            </label>
+                        </div>
+                        <p class="exp-temperature-error hidden" role="alert"></p>
+                        <p class="exp-power-line hidden"></p>
+                    </div>
                     <div class="button-group" style="margin:16px 0">
                         <button id="singleton-run-btn" class="btn btn-primary" type="button">Run analysis</button>
                         <button id="singleton-stop-btn" class="btn btn-outline" type="button" hidden>Stop after current samples</button>

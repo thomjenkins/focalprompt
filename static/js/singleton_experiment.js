@@ -105,8 +105,11 @@
                 const job = jobs[next++], pool = active.plan.pools.find(p => p.id === job.pool_id);
                 try {
                     check(active);
-                    const sample = await global.FocalPromptQuality.retryRequest(() => fetchAblationSample(
-                        c.scenario, c.foci, pool.kind, pool.focus_index, c.temperature, controller, null, c.model));
+                    const sample = await fetchAblationSample(
+                        c.scenario, c.foci, pool.kind, pool.focus_index, c.temperature, controller, null, c.model, {
+                            onAttempt: () => check(active),
+                            onRetry: r => status(`Temporary sampling failure. Retrying this sample (${r.attempt}/${r.max_attempts}); completed samples are retained.`),
+                        });
                     // Keep completed work even when Stop was clicked mid-request.
                     if (state !== active) throw new Error('Workspace changed during sampling.');
                     if (typeof sample.content !== 'string' || !sample.content.trim() || !same(sample.scenario, pool.scenario)) {
@@ -143,9 +146,12 @@
         el('singleton-new-btn').hidden = !state;
         el('singleton-new-btn').disabled = busy;
         el('singleton-export-btn').disabled = !state?.result;
+        for (const id of ['singleton-n-baseline', 'singleton-n-ablated', 'singleton-temperature']) {
+            if (el(id)) el(id).disabled = busy;
+        }
         try {
             const c = context();
-            el('singleton-settings').textContent = `${c.model.provider}/${c.model.model} · temperature ${c.temperature} · ${c.n_baseline} full/no-focus outputs · ${c.n_ablated} per singleton/leave-one-out condition. Uses the model and sampling settings from steps 2–3/5.`;
+            el('singleton-settings').textContent = `Model: ${c.model.provider}/${c.model.model}. Sample counts and temperature are shared with steps 3 and 5. Changing settings requires a new run; saved samples retain their original settings.`;
         } catch (error) { el('singleton-settings').textContent = error.message; }
         if (!state) { el('singleton-results').innerHTML = ''; return; }
         let html = valid ? '' : '<p class="info-text"><strong>Saved run uses different inputs.</strong> Start a new run to analyse the current scenario.</p>';

@@ -13,6 +13,8 @@ import json
 import re
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
+from utils.provider_errors import rejects_output_contract
+
 
 SCENARIO_VERSION = 1
 MESSAGE_ROLES = frozenset({'system', 'developer', 'user', 'assistant'})
@@ -410,19 +412,7 @@ def complete_scenario(
     except (ProviderCapabilityError, StructuredOutputError):
         raise
     except Exception as exc:
-        # Preserve transient/service failures so existing retry and rate-limit
-        # handling remains effective. A deterministic adapter/request rejection
-        # means the required contract cannot be expressed and must never be
-        # silently retried without it.
-        error_text = str(exc).lower()
-        transient = (
-            exc.__class__.__name__ in {'RateLimitError', 'Timeout', 'APITimeoutError'}
-            or any(marker in error_text for marker in (
-                'rate limit', 'too many requests', '429', 'timed out',
-                'timeout', 'connection error', 'service unavailable', '503',
-            ))
-        )
-        if normalized.get('output_contract') and not transient:
+        if normalized.get('output_contract') and rejects_output_contract(exc):
             raise ProviderCapabilityError(
                 f"Provider '{provider_name}' rejected the required structured output contract: {exc}"
             ) from exc
