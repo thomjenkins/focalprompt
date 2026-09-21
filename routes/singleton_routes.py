@@ -7,7 +7,7 @@ from flask import Blueprint, jsonify, request
 from routes.ablation_routes import _ablation_service
 from routes.http_errors import internal_error
 from services.checkpoint_service import CheckpointService
-from services.singleton_service import build_plan, score_samples
+from services.singleton_service import build_plan, score_samples, score_pairwise
 from utils.inference_scenario import scenario_from_request
 from utils.json_safe import sanitize_non_finite
 
@@ -25,9 +25,12 @@ def singleton(action):
                   [('n_baseline', 10), ('n_ablated', 5), ('temperature', 0.7)]}
         if action == 'plan':
             result = build_plan(scenario, data.get('foci'), inputs=data.get('inputs'), **kwargs)
-        elif action == 'score':
+        elif action in ('score', 'pairwise'):
             if data.get('inputs') is not None:
                 raise ValueError('Score the bound scenario returned by the plan; do not rebind inputs.')
+            if action == 'pairwise':
+                return jsonify(sanitize_non_finite(score_pairwise(
+                    _ablation_service(data), scenario, data.get('foci'), data.get('samples'), **kwargs)))
             result = score_samples(_ablation_service(data), scenario, data.get('foci'), data.get('samples'),
                                    **kwargs, **{key: data[key] for key in ['n_permutations', 'alpha', 'permutation_seed'] if key in data})
             result = sanitize_non_finite(result)

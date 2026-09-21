@@ -4,6 +4,7 @@
     let state = null, busy = false, stopped = false;
     // Display order is independent of the experiment and its saved focus indices.
     let resultOrder = 'necessity';
+    let pairwiseView = 'full', pairwiseSelection = null, pairwiseBusy = false;
     const resultOrders = {
         necessity: 'Effect when removed — largest first',
         influence: 'Effect when added alone — largest first',
@@ -139,6 +140,19 @@
         active.result = result;
         status('Analysis complete. Export workspace preserves prompts, samples, provenance and results.');
     }
+    async function buildPairwise() {
+        if (busy || !state?.result) return;
+        const active = state, c = active.context;
+        busy = true; pairwiseBusy = true; render();
+        status('Comparing saved outputs with singleton references; no new outputs are being generated…');
+        try {
+            const result = await post('/api/singleton-pairwise', {...c, model: undefined, samples: active.samples}, c.model);
+            if (state !== active) throw new Error('Workspace changed while building the grid.');
+            active.result.pairwise_resemblance = result;
+            status('Pairwise grid complete. Export workspace or download results to keep it.');
+        } catch (error) { status(error.message + ' Saved outputs and results are retained.'); }
+        finally { busy = false; pairwiseBusy = false; render(); }
+    }
     function outputDetails(title, arm) {
         return `<details><summary>${esc(title)} · ${arm.outputs.length} outputs</summary>
             <details><summary>Scenario messages</summary><p>Blank messages are omitted from model requests; all nonblank content is sent unchanged.</p>
@@ -160,7 +174,7 @@
         try { if (state) current(); } catch (_) { valid = false; }
         el('singleton-run-btn').disabled = busy || !valid || !!state?.result;
         el('singleton-run-btn').textContent = state?.result ? 'Analysis complete' : state ? 'Resume analysis' : 'Run analysis';
-        el('singleton-stop-btn').hidden = !busy;
+        el('singleton-stop-btn').hidden = !busy || pairwiseBusy;
         el('singleton-new-btn').hidden = !state;
         el('singleton-new-btn').disabled = busy;
         el('singleton-export-btn').disabled = !state?.result;
@@ -190,6 +204,7 @@
         html += `<div class="workflow-table-wrap singleton-table-wrap" role="region" aria-label="Singleton focus results" tabindex="0"><table class="workflow-table singleton-results-table"><thead><tr><th scope="col"${sortAttribute('focus_index')}>Focus</th><th scope="col"${sortAttribute('influence')}>Influence<br>singleton ↔ no-focus</th><th scope="col">Normalized influence<br>ratio</th><th scope="col"${sortAttribute('sufficiency')}>Sufficiency</th><th scope="col">Singleton ↔ full<br>distance</th><th scope="col"${sortAttribute('necessity')}>Necessity<br>leave-one-out ↔ full</th></tr></thead><tbody>`
             + rows.map(f => `<tr><th scope="row">${f.focus_index + 1}. ${esc(f.focus)}</th><td>${num(f.influence)}<br>q ${num(f.influence_comparison.q_value)}</td><td>${num(f.normalized_influence)}</td><td>${num(f.sufficiency)}</td><td>${num(f.singleton_full_distance)}</td><td>${num(f.necessity)}<br>q ${num(f.necessity_comparison.q_value)}</td></tr>`).join('') + '</tbody></table></div>';
         html += '<p class="info-text">Influence and necessity use separate permutation/BH test families. Sufficiency is descriptive. High sufficiency with low necessity can suggest redundancy; low sufficiency with strong necessity can suggest context dependence. These runs do not uniquely identify interaction effects.</p>';
+        if (global.FocalPromptPairwise) html += global.FocalPromptPairwise.render(r, rows, pairwiseView, pairwiseSelection, busy);
         for (const f of rows) {
             html += `<details><summary>${f.focus_index + 1}. ${esc(f.focus)} — inspect all four conditions</summary>`;
             if (f.shared_text_retained_for_excluded.length) html += '<p class="info-text">Some excluded foci share text with this focus; their shared text remains in the singleton. Leave-one-out retains the existing behavior of deleting all target spans.</p>';
@@ -208,7 +223,7 @@
     }
     global.FocalPromptSingleton = {
         collect: () => state ? clone(state) : null,
-        restore: data => { state = data ? clone(data) : null; status(state ? 'Restored saved singleton analysis.' : ''); render(); },
+        restore: data => { state = data ? clone(data) : null; pairwiseSelection = null; status(state ? 'Restored saved singleton analysis.' : ''); render(); },
         restoreResult: result => {
             const c = result.context;
             global.restoreWorkspaceSession({focalprompt_workspace:true,version:2,active_tab:'prompt-analysis',
@@ -217,28 +232,49 @@
             state = {protocol:result.protocol, context:context(),plan:clone(result.plan),samples:clone(result.samples),result:clone(result)};
             render();
         },
-        prepare, runAnalysis, render, context,
+        prepare, runAnalysis, render, context, buildPairwise,
     };
     el('singleton-run-btn')?.addEventListener('click', run);
     el('singleton-stop-btn')?.addEventListener('click', () => { stopped = true; status('Stopping after in-flight samples finish…'); });
     el('singleton-new-btn')?.addEventListener('click', () => {
         if (!busy && confirm('Start a new singleton analysis? Export workspace first to keep the current run.')) {
-            state = null; status('Ready for a new run.'); render();
+            state = null; pairwiseSelection = null; status('Ready for a new run.'); render();
         }
     });
     el('singleton-export-btn')?.addEventListener('click', () => {
         if (state?.result) global.FocalPromptWorkspaceTransfer.download(state.result, 'focalprompt-singleton-analysis.json');
     });
     el('singleton-checkpoint-btn')?.addEventListener('click', () => displayCheckpointList('singleton_analysis').catch(e => status(e.message)));
+    function renderKeepingScroll(focusId) {
+        const positions = ['.singleton-table-wrap', '.pairwise-grid-wrap'].map(selector => {
+            const element = document.querySelector(selector);
+            return {selector, top: element?.scrollTop || 0, left: element?.scrollLeft || 0};
+        });
+        render();
+        for (const position of positions) {
+            const element = document.querySelector(position.selector);
+            if (element) { element.scrollTop = position.top; element.scrollLeft = position.left; }
+        }
+        el(focusId)?.focus({preventScroll: true});
+    }
+    el('singleton-results')?.addEventListener('click', event => {
+        const cell = event.target.closest('[data-pairwise-row]');
+        if (cell) {
+            pairwiseSelection = [Number(cell.dataset.pairwiseRow), Number(cell.dataset.pairwiseColumn)];
+            renderKeepingScroll(cell.id);
+        } else if (event.target.id === 'singleton-pairwise-btn') buildPairwise();
+    });
     document.addEventListener('change', event => {
         if (event.target.id === 'singleton-result-order') {
             if (Object.hasOwn(resultOrders, event.target.value)) resultOrder = event.target.value;
-            render();
-            el('singleton-result-order')?.focus({preventScroll: true});
+            renderKeepingScroll('singleton-result-order');
+        } else if (event.target.id === 'pairwise-view') {
+            if (['full', 'ablations', 'combined'].includes(event.target.value)) pairwiseView = event.target.value;
+            renderKeepingScroll('pairwise-view');
         } else if (!busy) render();
     });
     document.addEventListener('input', event => {
-        if (!busy && state && event.target.id !== 'singleton-result-order') render();
+        if (!busy && state && !['singleton-result-order', 'pairwise-view'].includes(event.target.id)) render();
     });
     render();
 })(window);
