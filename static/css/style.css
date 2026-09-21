@@ -3417,6 +3417,16 @@ circle.fp-series-7 { fill: #8a8a8a; }
 .workflow-table th, .workflow-table td { padding: 12px; text-align: left; vertical-align: top; border-bottom: 1px solid #e2e8f0; }
 .workflow-table thead { background: #f8fafc; color: #475569; }
 .workflow-table th[scope="row"] { min-width: 150px; }
+.singleton-result-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 16px; }
+.singleton-result-controls label { font-weight: 600; }
+.singleton-result-controls select { max-width: 100%; padding: 8px 12px; font: inherit; color: var(--text-primary); background: white; border: 1px solid var(--border-color); border-radius: 8px; }
+.singleton-table-wrap { max-height: min(65vh, 40rem); overflow: auto; border: 1px solid #e2e8f0; border-radius: 8px; }
+.singleton-table-wrap:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
+.singleton-results-table { min-width: 800px; border-collapse: separate; border-spacing: 0; }
+.singleton-results-table thead th { position: sticky; top: 0; z-index: 2; background: #f8fafc; }
+.singleton-results-table th:first-child { position: sticky; left: 0; box-shadow: 1px 0 #e2e8f0; }
+.singleton-results-table tbody th { z-index: 1; background: white; max-width: 220px; overflow-wrap: anywhere; }
+.singleton-results-table thead th:first-child { z-index: 3; }
 .workflow-budget { height: 5px; min-width: 80px; background: #e2e8f0; border-radius: 4px; margin-top: 8px; }
 .workflow-budget span { display: block; height: 100%; background: #4f46e5; border-radius: inherit; }
 .workflow-output, .workflow-manual-output { margin-top: 12px; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; }
