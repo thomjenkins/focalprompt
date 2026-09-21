@@ -5,6 +5,7 @@
     // Display order is independent of the experiment and its saved focus indices.
     let resultOrder = 'necessity';
     let pairwiseView = 'full', pairwiseSelection = null, pairwiseBusy = false;
+    const chartOptions = {influence: true, necessity: true, selected: null};
     const resultOrders = {
         necessity: 'Effect when removed — largest first',
         influence: 'Effect when added alone — largest first',
@@ -201,12 +202,13 @@
         html += `<div class="singleton-result-controls"><label for="singleton-result-order">Order results by</label>
             <select id="singleton-result-order" aria-describedby="singleton-order-note">${Object.entries(resultOrders).map(([key, label]) => `<option value="${key}"${resultOrder === key ? ' selected' : ''}>${esc(label)}</option>`).join('')}</select></div>
             <p id="singleton-order-note" class="info-text">Effect rankings use observed magnitudes, not statistical significance or task quality. Focus numbers retain their original order. Unavailable values appear last.</p>`;
+        if (global.FocalPromptSingletonCharts) html += global.FocalPromptSingletonCharts.render(r, rows, chartOptions);
         html += `<div class="workflow-table-wrap singleton-table-wrap" role="region" aria-label="Singleton focus results" tabindex="0"><table class="workflow-table singleton-results-table"><thead><tr><th scope="col"${sortAttribute('focus_index')}>Focus</th><th scope="col"${sortAttribute('influence')}>Influence<br>singleton ↔ no-focus</th><th scope="col">Normalized influence<br>ratio</th><th scope="col"${sortAttribute('sufficiency')}>Sufficiency</th><th scope="col">Singleton ↔ full<br>distance</th><th scope="col"${sortAttribute('necessity')}>Necessity<br>leave-one-out ↔ full</th></tr></thead><tbody>`
             + rows.map(f => `<tr><th scope="row">${f.focus_index + 1}. ${esc(f.focus)}</th><td>${num(f.influence)}<br>q ${num(f.influence_comparison.q_value)}</td><td>${num(f.normalized_influence)}</td><td>${num(f.sufficiency)}</td><td>${num(f.singleton_full_distance)}</td><td>${num(f.necessity)}<br>q ${num(f.necessity_comparison.q_value)}</td></tr>`).join('') + '</tbody></table></div>';
         html += '<p class="info-text">Influence and necessity use separate permutation/BH test families. Sufficiency is descriptive. High sufficiency with low necessity can suggest redundancy; low sufficiency with strong necessity can suggest context dependence. These runs do not uniquely identify interaction effects.</p>';
         if (global.FocalPromptPairwise) html += global.FocalPromptPairwise.render(r, rows, pairwiseView, pairwiseSelection, busy);
         for (const f of rows) {
-            html += `<details><summary>${f.focus_index + 1}. ${esc(f.focus)} — inspect all four conditions</summary>`;
+            html += `<details id="singleton-focus-details-${Number(f.focus_index)}"><summary>${f.focus_index + 1}. ${esc(f.focus)} — inspect all four conditions</summary>`;
             if (f.shared_text_retained_for_excluded.length) html += '<p class="info-text">Some excluded foci share text with this focus; their shared text remains in the singleton. Leave-one-out retains the existing behavior of deleting all target spans.</p>';
             html += outputDetails('No-focus', r.arms.no_focus) + outputDetails('Singleton', r.arms['singleton_' + f.focus_index])
                 + outputDetails('Full prompt', r.arms.full) + outputDetails('Leave-one-out', r.arms['leave_one_out_' + f.focus_index]) + '</details>';
@@ -223,7 +225,7 @@
     }
     global.FocalPromptSingleton = {
         collect: () => state ? clone(state) : null,
-        restore: data => { state = data ? clone(data) : null; pairwiseSelection = null; status(state ? 'Restored saved singleton analysis.' : ''); render(); },
+        restore: data => { state = data ? clone(data) : null; pairwiseSelection = null; chartOptions.selected = null; status(state ? 'Restored saved singleton analysis.' : ''); render(); },
         restoreResult: result => {
             const c = result.context;
             global.restoreWorkspaceSession({focalprompt_workspace:true,version:2,active_tab:'prompt-analysis',
@@ -238,7 +240,7 @@
     el('singleton-stop-btn')?.addEventListener('click', () => { stopped = true; status('Stopping after in-flight samples finish…'); });
     el('singleton-new-btn')?.addEventListener('click', () => {
         if (!busy && confirm('Start a new singleton analysis? Export workspace first to keep the current run.')) {
-            state = null; pairwiseSelection = null; status('Ready for a new run.'); render();
+            state = null; pairwiseSelection = null; chartOptions.selected = null; status('Ready for a new run.'); render();
         }
     });
     el('singleton-export-btn')?.addEventListener('click', () => {
@@ -258,6 +260,29 @@
         el(focusId)?.focus({preventScroll: true});
     }
     el('singleton-results')?.addEventListener('click', event => {
+        const toggle = event.target.closest('[data-singleton-chart-toggle]');
+        if (toggle) {
+            const key = toggle.dataset.singletonChartToggle;
+            if (['influence', 'necessity'].includes(key)) chartOptions[key] = !chartOptions[key];
+            renderKeepingScroll(toggle.id);
+            return;
+        }
+        const focus = event.target.closest('[data-singleton-chart-focus]');
+        if (focus) {
+            chartOptions.selected = Number(focus.dataset.singletonChartFocus);
+            renderKeepingScroll(focus.id);
+            return;
+        }
+        const inspect = event.target.closest('[data-singleton-inspect]');
+        if (inspect) {
+            const details = el('singleton-focus-details-' + Number(inspect.dataset.singletonInspect));
+            if (details) {
+                details.open = true;
+                details.scrollIntoView({block: 'start'});
+                details.querySelector('summary')?.focus({preventScroll: true});
+            }
+            return;
+        }
         const cell = event.target.closest('[data-pairwise-row]');
         if (cell) {
             pairwiseSelection = [Number(cell.dataset.pairwiseRow), Number(cell.dataset.pairwiseColumn)];

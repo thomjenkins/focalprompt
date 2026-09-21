@@ -133,6 +133,27 @@ None of these metrics measures internal attention or task quality.
 
 ### Reading the results table
 
+Two charts appear above the table for every completed result, including imported
+older runs. They render saved metrics locally and require no model calls,
+embeddings or rescoring:
+
+- **How much does the output change?** Paired points compare added-alone
+  influence with removal necessity on one cosine-distance scale. Blue circles
+  are added-alone effects; orange diamonds are removal effects. Filled points
+  have q below the run's alpha, outlined points are at or above alpha, and dashed
+  points have no saved q-value. Legend buttons toggle either series without
+  changing the scale.
+- **How close does one focus get to the full prompt?** Diverging bars show
+  sufficiency × 100 as the full-prompt distance gap closed. Negative values are
+  retained and extend left of zero; 100% means no measured centroid gap. Missing
+  or low-contrast normalized metrics are labelled unavailable, never plotted as
+  zero. This is a descriptive ratio, not a focus budget or quality score.
+
+Select a label or plotted value to highlight that focus in both charts, read its
+exact scores/q-values, and open its four output conditions. Both charts, the
+table and the pairwise grid follow the same selected order. Charts stack on
+smaller screens. The detailed table retains its original raw values.
+
 Results default to the largest observed **removal effect (necessity)** first.
 Use **Order results by** to switch to the effect of adding a focus alone
 (influence), highest sufficiency, or original focus order. The four-condition
