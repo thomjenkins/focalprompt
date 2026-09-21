@@ -14,6 +14,7 @@ from utils.permutation_test import (
     require_stochastic_temperature,
 )
 from utils.ablation_stability import NEAR_ZERO_BASELINE_DISPERSION
+from utils.pairwise_resemblance import pairwise_resemblance
 
 PROTOCOL = 'singleton-focus-v1'
 
@@ -92,14 +93,7 @@ class CachedEmbeddings:
         return np.asarray([self.vectors[text] for text in texts], dtype=float)
 
 
-def score_samples(service, scenario, foci, samples, *, n_baseline=10, n_ablated=5,
-                  temperature=0.7, n_permutations=10000, alpha=0.05, permutation_seed=None):
-    plan = build_plan(scenario, foci, n_baseline=n_baseline, n_ablated=n_ablated, temperature=temperature)
-    integer(n_permutations, 'n_permutations', 1, 10000)
-    if type(alpha) not in (int, float) or not math.isfinite(alpha) or not 0 < alpha < 1:
-        raise ValueError('alpha must be between 0 and 1.')
-    if permutation_seed is not None:
-        integer(permutation_seed, 'permutation_seed', 0, 2**32 - 1)
+def _validated_samples(plan, samples):
     if not isinstance(samples, dict) or set(samples) != {p['id'] for p in plan['pools']}:
         raise ValueError('Supply exactly the sample pools returned by the experiment plan.')
     all_texts, input_tokens, output_tokens, reused = [], 0, 0, 0
@@ -119,9 +113,37 @@ def score_samples(service, scenario, foci, samples, *, n_baseline=10, n_ablated=
                 usage = sample.get('usage') or {}
                 input_tokens += max(0, int(usage.get('prompt_tokens') or 0))
                 output_tokens += max(0, int(usage.get('completion_tokens') or 0))
-    cache = CachedEmbeddings(service.embedding_service, all_texts)
-    arms = {v['id']: {**v, 'outputs': [s['content'] for s in samples[v['pool_id']]][:v['n_samples']]}
+    return all_texts, input_tokens, output_tokens, reused
+
+
+def _sample_arms(plan, samples):
+    return {v['id']: {**v, 'outputs': [s['content'] for s in samples[v['pool_id']]][:v['n_samples']]}
             for v in plan['variants']}
+
+
+def score_pairwise(service, scenario, foci, samples, *, n_baseline=10, n_ablated=5, temperature=0.7):
+    """Upgrade completed saved runs using embeddings only, without resampling."""
+    plan = build_plan(scenario, foci, n_baseline=n_baseline, n_ablated=n_ablated, temperature=temperature)
+    texts, _, _, _ = _validated_samples(plan, samples)
+    cache = CachedEmbeddings(service.embedding_service, texts)
+    result = pairwise_resemblance(plan, _sample_arms(plan, samples), cache)
+    result.update(embedding_tokens=cache.tokens,
+                  evaluator_model=getattr(service.embedding_service, 'model', None),
+                  cost_breakdown=service.cost_calculator.calculate_cost(0, 0, cache.tokens, service.model, service.provider_name))
+    return result
+
+
+def score_samples(service, scenario, foci, samples, *, n_baseline=10, n_ablated=5,
+                  temperature=0.7, n_permutations=10000, alpha=0.05, permutation_seed=None):
+    plan = build_plan(scenario, foci, n_baseline=n_baseline, n_ablated=n_ablated, temperature=temperature)
+    integer(n_permutations, 'n_permutations', 1, 10000)
+    if type(alpha) not in (int, float) or not math.isfinite(alpha) or not 0 < alpha < 1:
+        raise ValueError('alpha must be between 0 and 1.')
+    if permutation_seed is not None:
+        integer(permutation_seed, 'permutation_seed', 0, 2**32 - 1)
+    all_texts, input_tokens, output_tokens, reused = _validated_samples(plan, samples)
+    cache = CachedEmbeddings(service.embedding_service, all_texts)
+    arms = _sample_arms(plan, samples)
     full, empty = arms['full']['outputs'], arms['no_focus']['outputs']
     # The original necessity engine, including its BH family and diagnostics,
     # sees exactly the same full/LOO samples and random seed as before.
@@ -161,6 +183,8 @@ def score_samples(service, scenario, foci, samples, *, n_baseline=10, n_ablated=
                 'model': {'model': service.model, 'provider': service.provider_name},
                 'temperature': temperature, 'n_baseline': n_baseline, 'n_ablated': n_ablated},
             'plan': plan, 'samples': deepcopy(samples), 'arms': arms, 'focus_results': rows,
+            'pairwise_resemblance': pairwise_resemblance(plan, arms, cache) | {
+                'evaluator_model': getattr(service.embedding_service, 'model', None)},
             'full_output': full[0], 'full_outputs': full, 'no_focus_output': empty[0], 'no_focus_outputs': empty,
             'full_no_focus_distance': distance, 'full_no_focus_comparison': contrast,
             'low_behavioral_contrast': low, 'contrast_threshold': tolerance,

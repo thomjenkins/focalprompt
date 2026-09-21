@@ -161,6 +161,7 @@ def check_live_allowed(client_ip: str = 'unknown') -> Tuple[bool, Optional[Dict[
 # Analytical paths that consume inference (not pricing/health/checkpoints list).
 LIVE_INFERENCE_PREFIXES = (
     '/api/singleton-score',
+    '/api/singleton-pairwise',
     '/api/jev-focus/select',
     '/api/jev-focus/order-next',
     '/api/detect-foci',

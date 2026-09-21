@@ -177,6 +177,7 @@ def test_influence_sufficiency_negative_values_and_necessity_unchanged():
     assert a['singleton_outputs'] == ['a'] * 5
     assert result['full_outputs'] == ['full'] * 5 and result['no_focus_outputs'] == ['empty'] * 5
     assert svc.embedding_service.batch_embeddings_with_usage.call_count == 1
+    assert result['pairwise_resemblance']['pairs'][0]['views']['full']['row_share'] == 1
     assert set(svc.embedding_service.batch_embeddings_with_usage.call_args.args[0]) == {'full', 'empty', 'a', 'b'}
     prior = svc.score_scenario_from_samples(scenario, foci, result['full_outputs'],
                 {i: r['leave_one_out_outputs'] for i, r in enumerate(result['focus_results'])},
@@ -258,5 +259,11 @@ def test_api_fields_checkpoint_and_hosted_guard(monkeypatch, tmp_path):
     listing = checkpoints.list_checkpoints('singleton_analysis')
     assert listing[0]['num_foci'] == 2 and listing[0]['model'] == 'test-model'
     assert path_requires_live('/api/singleton-score') and not path_requires_live('/api/singleton-plan')
+    assert path_requires_live('/api/singleton-pairwise')
+    pairwise = client.post('/api/singleton-pairwise', json={**body, 'samples': samples_for(plan_response.json)})
+    assert pairwise.status_code == 200
+    assert pairwise.json['protocol'] == 'pairwise-singleton-resemblance-v1'
+    assert pairwise.json['pairs'][0]['views']['ablations'] is None
+    assert client.post('/api/singleton-pairwise', json={**body, 'samples': {}}).status_code == 400
     assert client.post('/api/singleton-score', json={**body, 'samples': {}}).status_code == 400
     assert client.post('/api/singleton-plan', json=['bad']).status_code == 400

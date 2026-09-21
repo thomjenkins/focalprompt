@@ -144,6 +144,54 @@ export order. It does not rank by q-value or imply a task-quality ranking.
 Column headings stay visible when scrolling inside the results table, and focus
 names remain visible when scrolling horizontally on smaller screens.
 
+### Pairwise behavioral resemblance
+
+The pairwise grid asks: **when both foci are present, which singleton pattern do
+the sampled outputs more closely resemble?** It is a descriptive comparison,
+not a causal dominance or interaction test, a focus allocation, or task quality.
+New analyses include the grid automatically. Completed older runs offer **Build
+grid from saved outputs**: this computes embeddings without generating any new
+outputs or changing prior statistics. Save the upgraded grid with workspace
+export or Download results; an existing checkpoint is not overwritten.
+
+Use **Full prompt**, **Eligible ablations**, or **Full + eligible ablations**.
+For pair i/j, only the full prompt and leave-one-out conditions retaining every
+labelled source span of both foci qualify. Removing either focus is excluded, as
+is removing a third focus whose spans overlap either member. Pairs sharing
+labelled source text are unavailable because their singleton references are not
+isolated. This is a source-span criterion, not a claim about semantic independence.
+
+For each output x, compute cosine distances to the mean embedding of each
+singleton's complete sample set. Let `gap = d(x, singleton_j) - d(x, singleton_i)`.
+A positive gap favors the row (i); negative favors the column (j). Gaps within
+`1e-6` of zero are numerical ties. A cell shows the fraction closer to the row,
+assigning half credit to ties, and the mean signed gap. Switching row and column
+complements the share and negates the gap. The diagonal is not compared.
+
+Average within each distinct prompt condition, then average conditions with
+equal weight. Equivalent conditions sharing a sample pool count once, using the
+longest available sample prefix. A full condition with 10 outputs therefore does
+not receive twice the weight of an ablation condition with 5. Combined views can
+include many more ablation contexts than full contexts; inspect the separate
+views to see context dependence.
+
+Undefined singleton centroids and pairs with centroid cosine distance <= `1e-6`
+are unavailable. This is a numerical guard, not a statistical equivalence test.
+Centroids and shares are estimated from finite samples; the grid has no
+confidence intervals, significance labels, or claim of generalization. A 100%
+share can coexist with a very small mean gap. Singleton centroids can also
+obscure multiple output modes, and being closer to one singleton does not mean
+being close to either in absolute terms.
+
+Select a cell to inspect singleton separation/dispersion, the mean distances,
+row/column/tie counts for each eligible condition, excluded contexts, singleton
+reference outputs, and each compared output's distances. Grid headings and focus
+names stay fixed during scrolling; both axes follow the result sort order.
+`pairwise_resemblance` exports evaluator identity, protocol, tolerance, weighting,
+per-output distances, intact-focus indices, eligibility and all three summaries.
+New-run scoring reuses its embedding cache. Upgrades record their additional
+embedding usage/cost separately inside the pairwise result.
+
 ## API and result structure
 
 1. `POST /api/singleton-plan`: `scenario`, `foci`, `n_baseline`, `n_ablated`,
@@ -158,6 +206,10 @@ names remain visible when scrolling horizontally on smaller screens.
    and may include `scenario`, `usage` and `reused_from`. All pools must be complete;
    supplied scenario metadata must match. Optional `n_permutations`, `alpha` and
    `permutation_seed` use the existing scoring conventions.
+4. `POST /api/singleton-pairwise`: bound scenario, original foci, sampling settings
+   and complete saved sample pools, as above. Returns only the pairwise result
+   with embedding usage/cost. It validates all pools before embedding, requires
+   the live-inference gate, and does not generate outputs or recompute prior tests.
 
 The `singleton-focus-v1` result includes `context`, `plan`, `samples`, all four
 `arms`, `full_outputs`, `no_focus_outputs`, `full_no_focus_distance`,
