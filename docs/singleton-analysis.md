@@ -131,6 +131,19 @@ singleton and leave-one-out arms do not uniquely identify all pairwise or
 higher-order interactions; that requires additional factorial interventions.
 None of these metrics measures internal attention or task quality.
 
+### Reading the results table
+
+Results default to the largest observed **removal effect (necessity)** first.
+Use **Order results by** to switch to the effect of adding a focus alone
+(influence), highest sufficiency, or original focus order. The four-condition
+output details follow the same order. Negative sufficiency values remain signed;
+unavailable metrics appear last, and ties use the original focus order.
+
+Sorting changes only the display, preserving focus numbers, saved results and
+export order. It does not rank by q-value or imply a task-quality ranking.
+Column headings stay visible when scrolling inside the results table, and focus
+names remain visible when scrolling horizontally on smaller screens.
+
 ## API and result structure
 
 1. `POST /api/singleton-plan`: `scenario`, `foci`, `n_baseline`, `n_ablated`,

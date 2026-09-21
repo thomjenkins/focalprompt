@@ -2,6 +2,14 @@
 (function (global) {
     'use strict';
     let state = null, busy = false, stopped = false;
+    // Display order is independent of the experiment and its saved focus indices.
+    let resultOrder = 'necessity';
+    const resultOrders = {
+        necessity: 'Effect when removed — largest first',
+        influence: 'Effect when added alone — largest first',
+        sufficiency: 'Sufficiency — highest first',
+        focus_index: 'Original focus order',
+    };
     const el = id => document.getElementById(id);
     const clone = value => structuredClone(value);
     const same = (a, b) => global.FocalPromptWorkflow.matches(a, b);
@@ -137,6 +145,15 @@
             <pre style="white-space:pre-wrap">${esc(JSON.stringify(arm.scenario, null, 2))}</pre></details>`
             + arm.outputs.map((text, i) => `<details><summary>Output ${i + 1}</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(text)}</pre></details>`).join('') + '</details>';
     }
+    function orderedResults(rows) {
+        return [...rows].sort((a, b) => {
+            if (resultOrder === 'focus_index') return a.focus_index - b.focus_index;
+            const av = a[resultOrder], bv = b[resultOrder];
+            const aValid = Number.isFinite(av), bValid = Number.isFinite(bv);
+            if (aValid !== bValid) return aValid ? -1 : 1;
+            return (aValid ? bv - av : 0) || a.focus_index - b.focus_index;
+        });
+    }
     function render() {
         if (!el('singleton-results')) return;
         let valid = true;
@@ -165,10 +182,15 @@
         html += `<p><strong>Full vs no-focus distance:</strong> ${num(r.full_no_focus_distance)} · <strong>Low behavioral contrast:</strong> ${r.low_behavioral_contrast ? 'Yes' : 'No'} · threshold ${num(r.contrast_threshold)}.</p>`;
         if (r.low_behavioral_contrast) html += `<p class="info-text" role="status">${esc(r.normalized_metrics_note)}</p>`;
         html += '<p>Influence adds one focus to the no-focus prompt. Sufficiency measures progress toward full-prompt behavior; it can be negative. Necessity removes one focus from the full prompt. Ratios are not focus-budget percentages.</p>';
-        html += '<div class="workflow-table-wrap"><table class="workflow-table"><thead><tr><th>Focus</th><th>Influence<br>singleton ↔ no-focus</th><th>Normalized influence<br>ratio</th><th>Sufficiency</th><th>Singleton ↔ full<br>distance</th><th>Necessity<br>leave-one-out ↔ full</th></tr></thead><tbody>'
-            + r.focus_results.map(f => `<tr><th>${f.focus_index + 1}. ${esc(f.focus)}</th><td>${num(f.influence)}<br>q ${num(f.influence_comparison.q_value)}</td><td>${num(f.normalized_influence)}</td><td>${num(f.sufficiency)}</td><td>${num(f.singleton_full_distance)}</td><td>${num(f.necessity)}<br>q ${num(f.necessity_comparison.q_value)}</td></tr>`).join('') + '</tbody></table></div>';
+        const rows = orderedResults(r.focus_results);
+        const sortAttribute = key => resultOrder === key ? ` aria-sort="${key === 'focus_index' ? 'ascending' : 'descending'}"` : '';
+        html += `<div class="singleton-result-controls"><label for="singleton-result-order">Order results by</label>
+            <select id="singleton-result-order" aria-describedby="singleton-order-note">${Object.entries(resultOrders).map(([key, label]) => `<option value="${key}"${resultOrder === key ? ' selected' : ''}>${esc(label)}</option>`).join('')}</select></div>
+            <p id="singleton-order-note" class="info-text">Effect rankings use observed magnitudes, not statistical significance or task quality. Focus numbers retain their original order. Unavailable values appear last.</p>`;
+        html += `<div class="workflow-table-wrap singleton-table-wrap" role="region" aria-label="Singleton focus results" tabindex="0"><table class="workflow-table singleton-results-table"><thead><tr><th scope="col"${sortAttribute('focus_index')}>Focus</th><th scope="col"${sortAttribute('influence')}>Influence<br>singleton ↔ no-focus</th><th scope="col">Normalized influence<br>ratio</th><th scope="col"${sortAttribute('sufficiency')}>Sufficiency</th><th scope="col">Singleton ↔ full<br>distance</th><th scope="col"${sortAttribute('necessity')}>Necessity<br>leave-one-out ↔ full</th></tr></thead><tbody>`
+            + rows.map(f => `<tr><th scope="row">${f.focus_index + 1}. ${esc(f.focus)}</th><td>${num(f.influence)}<br>q ${num(f.influence_comparison.q_value)}</td><td>${num(f.normalized_influence)}</td><td>${num(f.sufficiency)}</td><td>${num(f.singleton_full_distance)}</td><td>${num(f.necessity)}<br>q ${num(f.necessity_comparison.q_value)}</td></tr>`).join('') + '</tbody></table></div>';
         html += '<p class="info-text">Influence and necessity use separate permutation/BH test families. Sufficiency is descriptive. High sufficiency with low necessity can suggest redundancy; low sufficiency with strong necessity can suggest context dependence. These runs do not uniquely identify interaction effects.</p>';
-        for (const f of r.focus_results) {
+        for (const f of rows) {
             html += `<details><summary>${f.focus_index + 1}. ${esc(f.focus)} — inspect all four conditions</summary>`;
             if (f.shared_text_retained_for_excluded.length) html += '<p class="info-text">Some excluded foci share text with this focus; their shared text remains in the singleton. Leave-one-out retains the existing behavior of deleting all target spans.</p>';
             html += outputDetails('No-focus', r.arms.no_focus) + outputDetails('Singleton', r.arms['singleton_' + f.focus_index])
@@ -208,7 +230,15 @@
         if (state?.result) global.FocalPromptWorkspaceTransfer.download(state.result, 'focalprompt-singleton-analysis.json');
     });
     el('singleton-checkpoint-btn')?.addEventListener('click', () => displayCheckpointList('singleton_analysis').catch(e => status(e.message)));
-    document.addEventListener('change', () => { if (!busy) render(); });
-    document.addEventListener('input', () => { if (!busy && state) render(); });
+    document.addEventListener('change', event => {
+        if (event.target.id === 'singleton-result-order') {
+            if (Object.hasOwn(resultOrders, event.target.value)) resultOrder = event.target.value;
+            render();
+            el('singleton-result-order')?.focus({preventScroll: true});
+        } else if (!busy) render();
+    });
+    document.addEventListener('input', event => {
+        if (!busy && state && event.target.id !== 'singleton-result-order') render();
+    });
     render();
 })(window);
