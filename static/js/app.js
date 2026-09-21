@@ -761,7 +761,8 @@ function adjustFociForPromptEdit(fociList, previousText, nextText) {
         }
         const nextSpans = spans.map(function (span) {
             if (span.message_id && span.message_id !== activeScenarioMessageId) {
-                return { span: span, changed: false, needsReview: false };
+                // Only the active message's character offsets changed.
+                return span;
             }
             const result = promptEdit.adjustSpanForPromptEdit(span, edit);
             changed = changed || result.changed;
@@ -786,6 +787,9 @@ function adjustFociForPromptEdit(fociList, previousText, nextText) {
             delete nextFocus.char_start;
             delete nextFocus.char_end;
             nextFocus.prompt_section = '';
+            nextFocus.verified = false;
+            nextFocus.attributable = false;
+            nextFocus.reason = 'unverified';
             focusNeedsReview = true;
             needsReview = true;
         }
@@ -2598,6 +2602,7 @@ function repairFocusSpan(index) {
     focus.dynamic_type = null;
     focus.attributable = true;
     focus.reason = null;
+    focus.needs_span_review = false;
     renderFoci();
 }
 
@@ -2642,7 +2647,7 @@ function renderFoci() {
                 <button class="focus-item-remove" onclick="removeFocus(${index})">×</button>
             </div>
             <div class="focus-item-section">
-                ${focus.verified === false ? `
+                ${focus.verified === false || !nf.spans.length ? `
                 <div style="margin-bottom:8px;padding:8px;background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;font-size:0.9em;">
                     <strong>Not grounded for ablation</strong>
                     <div style="margin-top:4px;">Could not uniquely map this focus to an exact span of the original prompt${focus.grounding_failure ? ` (${escapeHtml(focus.grounding_failure)})` : ''}.</div>
