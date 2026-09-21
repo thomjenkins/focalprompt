@@ -1048,6 +1048,11 @@ function setMainScenario(scenario) {
     const container = document.getElementById('scenario-messages');
     if (!container) return;
     container.innerHTML = normalized.messages.map(scenarioMessageCardHtml).join('');
+    // HTML parsing drops the first newline inside a textarea. Restore values
+    // directly so imports preserve message text, focus offsets and sample reuse.
+    container.querySelectorAll('.scenario-content').forEach(function (input, index) {
+        input.value = normalized.messages[index].content || '';
+    });
     const enabled = document.getElementById('scenario-contract-enabled');
     const fields = document.getElementById('scenario-contract-fields');
     const name = document.getElementById('scenario-contract-name');
