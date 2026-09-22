@@ -1,4 +1,4 @@
-/* Pure, read-only adapters from exported workspaces to presentation views. */
+/* Pure, read-only adapters from exported workspaces to the guided lab walkthrough. */
 (function (global) {
     'use strict';
     const format = global.FocalPromptWorkspaceFormat || (typeof require === 'function' ? require('./workspace_format.js') : null);
@@ -111,6 +111,7 @@
             if (step.id === 'baseline' && !data.series.baseline) return;
             if (step.id === 'ablation' && (!data.series.removeCat || !data.series.removeBooking)) return;
             if (step.id === 'singleton' && (!data.series.noFocus || !data.series.bookingOnly || !data.series.catOnly)) return;
+            if (step.id === 'dominance' && !data.singleton?.pairwise_resemblance?.pairs?.length) return;
             if (step.id === 'order') {
                 if (!data.positions.length) return;
                 list.push({...step, phase: 'original'});

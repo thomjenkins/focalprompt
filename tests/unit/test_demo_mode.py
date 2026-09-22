@@ -70,16 +70,22 @@ def test_navigation_is_deterministic_bounded_reversible_and_resettable():
     node("""
 const data = adapter.prepare(workspace,definition), frames = adapter.frames(data,definition);
 const nav = adapter.navigator(frames), firstRun = [];
-assert.equal(frames.length,15); assert.equal(nav.frame.id,'problem');
+assert.equal(frames.length,16); assert.equal(nav.frame.id,'problem');
+assert.deepEqual([...new Set(frames.map(f=>f.id))],
+ ['problem','baseline','foci','singleton','dominance','ablation','order','jev','end']);
 nav.previous(); assert.equal(nav.index,0);
 for(let i=0;i<frames.length;i++) {firstRun.push(JSON.stringify(nav.frame));nav.next();}
 assert.equal(nav.index,frames.length-1);
 for(let i=frames.length-1;i>=0;i--) {assert.equal(JSON.stringify(nav.frame),firstRun[i]);nav.previous();}
-nav.go(12);assert.equal(nav.frame.phase,'ordered');nav.reset();assert.equal(nav.index,0);
+nav.go(frames.findIndex(f=>f.id==='jev' && f.phase==='ordered'));assert.equal(nav.frame.phase,'ordered');nav.reset();assert.equal(nav.index,0);
 for(let i=0;i<frames.length;i++) {assert.equal(JSON.stringify(nav.frame),firstRun[i]);nav.next();}
 assert.equal(frames.some(f=>f.id==='comparison'),false);
 const withComparison = adapter.frames(data,definition,[data]);
 assert.equal(withComparison.at(-2).id,'comparison');
+delete workspace.prompt_analysis.singleton_experiment.result.pairwise_resemblance;
+const withoutGrid = adapter.frames(adapter.prepare(workspace,definition),definition);
+assert.equal(withoutGrid.some(f=>f.id==='dominance'),false);
+assert.equal(withoutGrid.some(f=>f.id==='singleton'),true);
 """)
 
 

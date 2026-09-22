@@ -26,7 +26,7 @@ body .app-header-top .brand-logo { height:34px; }
 body .app-header-copy .subtitle { font-size:14px; }
 body .tab-navigation { margin-bottom:0; }
 body .lab-jump-nav { top:var(--demo-top); z-index:40; }
-body .card,body #prompt-visualization { scroll-margin-top:calc(var(--demo-top) + 58px); }
+body .card,body #prompt-visualization,body .pairwise-results { scroll-margin-top:calc(var(--demo-top) + 58px); }
 body .card-header h2 { font-size:23px; }
 body .card-header { padding:16px 22px; }
 body .card-body { padding:20px 22px; }
@@ -82,6 +82,25 @@ body .recorded-sample-buttons button { min-width:36px; }
 .replay-spotlight[data-demo-step=singleton] .singleton-arm { flex:1; min-width:0; }
 .replay-spotlight[data-demo-step=singleton] .singleton-arm>.recorded-samples { margin:8px 0; }
 .replay-spotlight[data-demo-step=singleton] .singleton-arm>details { font-size:13px; }
+/* The next stop is the same singleton component's interactive, recorded pairwise grid. */
+.replay-spotlight[data-demo-step=dominance] #singleton-results>:not(.pairwise-results) { display:none; }
+.replay-spotlight[data-demo-step=dominance] .pairwise-results { margin:0; padding:0; border:0; }
+.replay-spotlight[data-demo-step=dominance] .pairwise-results>h3 { margin:0 0 8px; }
+.replay-spotlight[data-demo-step=dominance] .pairwise-results>p { margin:8px 0; font-size:14px; }
+.replay-spotlight[data-demo-step=dominance] .pairwise-results>.singleton-result-controls { margin:8px 0; }
+.replay-spotlight[data-demo-step=dominance] .pairwise-grid-wrap { max-height:clamp(180px,calc(100dvh - var(--demo-bottom) - 400px),610px); margin:8px 0; }
+.replay-spotlight[data-demo-step=dominance] .pairwise-grid tr:has([aria-pressed=true])>th { box-shadow:inset 3px 0 var(--primary-color); }
+@media(min-width:1000px) {
+ .replay-spotlight[data-demo-step=dominance] .pairwise-results { display:grid; grid-template-columns:minmax(0,1fr) auto; column-gap:16px; }
+ .replay-spotlight[data-demo-step=dominance] .pairwise-results>* { grid-column:1/-1; min-width:0; }
+ .replay-spotlight[data-demo-step=dominance] .pairwise-results>h3 { grid-column:1; grid-row:1; align-self:center; margin:0; }
+ .replay-spotlight[data-demo-step=dominance] .pairwise-results>.singleton-result-controls { grid-column:2; grid-row:1; margin:0; }
+ .replay-spotlight[data-demo-step=dominance] .pairwise-results>.pairwise-legend { grid-row:2; font-size:12px; gap:6px; margin:6px 0 0; }
+ .replay-spotlight[data-demo-step=dominance] .pairwise-cell { min-height:32px; }
+ .replay-spotlight[data-demo-step=dominance] .pairwise-cell small { display:none; } /* Distances remain in cell tooltips and the native inspector. */
+ /* The guide note explains the grid; the full methodology stays in context and disclosures. */
+ .replay-spotlight[data-demo-step=dominance] .pairwise-results>p:not(.pairwise-legend) { display:none; }
+}
 .replay-spotlight[data-demo-step=order] .focus-order-panel>:not(.focus-order-position) { display:none; }
 .replay-spotlight[data-demo-step=order] .focus-order-position:not([open]) { display:inline-block; margin:0 8px 12px 0; }
 .replay-spotlight[data-demo-step=order] .focus-order-position[open] { margin-top:0; }

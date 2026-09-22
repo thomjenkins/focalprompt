@@ -14,8 +14,9 @@
             {id: 'problem', title: 'Inference scenario', label: 'Scenario'},
             {id: 'baseline', title: 'Baseline outputs', label: 'Baseline'},
             {id: 'foci', title: 'Prompt coverage', label: 'Foci'},
-            {id: 'ablation', title: 'Leave-one-out ablation', label: 'Ablation'},
             {id: 'singleton', title: 'Singleton focus analysis', label: 'Isolation'},
+            {id: 'dominance', title: 'Focus vs focus', label: 'Pairwise'},
+            {id: 'ablation', title: 'Leave-one-out ablation', label: 'Ablation'},
             {id: 'order', title: 'Focus order experiment', label: 'Order'},
             {id: 'jev', title: 'Dynamic prompt composition', label: 'Compose'},
             {id: 'end', title: 'Explore the results', label: 'What next'}
