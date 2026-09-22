@@ -8,7 +8,7 @@ from utils.experiment_config import EXPERIMENT_COPY
 from utils.results_copy import COPY
 
 demo_bp = Blueprint('demo', __name__)
-FIXTURES = {'lisbon': {'gpt4omini': 'lisbon/pup4ominiFull.json'}}
+FIXTURES = {'lisbon': {'gpt4omini': 'lisbon/pup4ominiFull.json', 'astra': 'lisbon/Astrapup.json'}}
 FIXTURE_ROOT = Path(__file__).resolve().parents[1] / 'examples' / 'demos'
 
 
@@ -21,8 +21,8 @@ def presentation(demo_id):
 
 @lru_cache(maxsize=8)
 def _compressed_fixture(relative_path):
-    # The original export stays byte-for-byte intact. Compression keeps this 7MB
-    # workspace under serverless response limits (and makes initial loading quick).
+    # Original exports stay byte-for-byte intact. Compression keeps the recordings
+    # under serverless response limits and makes initial loading quick.
     return gzip.compress((FIXTURE_ROOT / relative_path).read_bytes(), mtime=0)
 
 

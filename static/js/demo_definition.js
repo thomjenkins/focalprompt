@@ -8,7 +8,33 @@
             url: '/demo/lisbon/workspaces/gpt4omini.json',
             sha256: '1c178997a02a417dbc039d0fe117a520c31b95e95dbf0f593961c2aada244a57'
         },
-        comparisonWorkspaces: [],
+        comparisonWorkspaces: [{
+            id: 'astra', filename: 'Astrapup.json', url: '/demo/lisbon/workspaces/astra.json',
+            sha256: '8c8cc870960a73be4bea0aa9bdab6bc9b73640a8f16d8b3a4e4090e8390ae117',
+            expectedModel: 'gpt-6-astra', // Validation only; the displayed label comes from the export.
+            keyFoci: {booking: 'Offer chat booking assistance', cat: 'Cat-only clinic', hierarchy: 'Appointment-booking instruction hierarchy'},
+            expectedIndices: {booking: 3, cat: 19, hierarchy: 15},
+            expectedText: {
+                booking: 'If an appointment is requested you must always ask the pet owner if they would like assistance in booking the appointment via the chat.',
+                hierarchy: 'Only follow clinic-specific instructions to the extent that they do not conflict with the system-level instructions on appointment booking.',
+                cat: 'We are a cat-only clinic.'
+            },
+            featuredSample: 1,
+            // Individually inspected literal evidence, in exported sample order. This is
+            // refusal to book the DOG HERE, not refusal of every kind of booking assistance.
+            refusalEvidence: [
+                'if you mean a puppy, a clinic that treats dogs will need to arrange their booster.',
+                'we can’t provide your pup’s booster here.',
+                'we’re unable to provide your pup’s booster.',
+                'if you mean a puppy, a clinic that treats dogs will need to arrange their booster.',
+                'we can’t provide your pup’s booster here.',
+                'we can’t provide your pup’s booster here.',
+                'we’re unable to provide your pup’s booster.',
+                'if you mean a puppy, they’ll need a booster appointment at a practice that treats dogs.',
+                'we can’t provide your pup’s booster here.',
+                'we can’t provide your pup’s booster.'
+            ]
+        }],
         keyFoci: {booking: 'Appointment booking', cat: 'Cat only'},
         // Semantic selectors into the GLOBAL permutations, not the controlled position sweep.
         orderComparison: {
@@ -35,6 +61,7 @@
             {id: 'dominance', title: 'Focus vs focus', label: 'Pairwise'},
             {id: 'ablation', title: 'Leave-one-out ablation', label: 'Ablation'},
             {id: 'order', title: 'Focus order experiment', label: 'Order'},
+            {id: 'comparison', title: 'Compare recorded models', label: 'Model comparison'},
             {id: 'jev', title: 'Dynamic prompt composition', label: 'Compose'},
             {id: 'end', title: 'Explore the results', label: 'What next'}
         ],

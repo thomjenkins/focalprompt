@@ -3,6 +3,8 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const assert=require('node:assert/strict'),fs=require('node:fs'),crypto=require('node:crypto');
 const base=process.env.FOCALPROMPT_TEST_URL || 'http://127.0.0.1:5014';
 const fixture=fs.readFileSync(require('node:path').join(__dirname,'../../examples/demos/lisbon/pup4ominiFull.json'));
+const astraFixture=fs.readFileSync(require('node:path').join(__dirname,'../../examples/demos/lisbon/Astrapup.json'));
+const astra=JSON.parse(astraFixture).prompt_analysis;
 const sha=value=>crypto.createHash('sha256').update(value).digest('hex');
 (async()=>{
  const browser=await chromium.launch({channel:'chrome',headless:true});
@@ -27,7 +29,7 @@ const sha=value=>crypto.createHash('sha256').update(value).digest('hex');
    await replay.evaluate(()=>{window.nativeScenarioNode=document.getElementById('scenario-messages');window.nativeBaselineNode=document.getElementById('baseline-results');});
    await context.setOffline(true);const offlineRequests=[];replay.on('request',r=>offlineRequests.push(r.url()));
    const states=[],length=await replay.evaluate(()=>FocalPromptDemo.length);
-   assert.equal(length,13);
+   assert.equal(length,16);
    for(let i=0;i<length;i++) {
     assert.equal(await replay.evaluate(()=>FocalPromptDemo.index),i);
     const snapshot=await replay.evaluate(()=>({frame:FocalPromptDemo.frame,section:document.querySelector('.demo-section')?.id,
@@ -87,14 +89,63 @@ const sha=value=>crypto.createHash('sha256').update(value).digest('hex');
      assert.equal(await replay.locator('.focus-order-full').getAttribute('open'),null);
      assert.equal(await replay.locator('.focus-order-position[data-order-focus="Cat only"]').count(),4,'full position sweep retained');
     }
+    if(id==='comparison') {
+     assert.equal(await replay.locator('#demo-workspace').inputValue(),'astra');
+     assert.match(await replay.locator('#demo-ready').textContent(),new RegExp(astra.focus_workflow.context.model.model));
+     assert.equal(await replay.evaluate(()=>FocalPromptDemo.data.modelLabel),'gpt-6-astra');
+     if(phase==='prompt') {
+      const texts=await replay.locator('.coverage-message>div:last-child').allTextContents();
+      assert.deepEqual(texts,astra.scenario.messages.filter(m=>m.analysis_mode==='analyse').map(m=>m.content));
+      for(const index of [3,15,19])assert.equal(await replay.locator(`#prompt-highlighted [data-focus-indices="${index}"]`).textContent(),astra.foci[index].prompt_section);
+      assert.equal(await replay.locator('.demo-must-always').textContent(),'must always');
+      assert.equal(await replay.locator('.demo-must-always').evaluate(el=>getComputedStyle(el).textTransform),'uppercase');
+      assert.match(await replay.locator('#demo-guide-note').textContent(),/not a model-only controlled comparison/);
+      if(width>=1000)assert.equal(await replay.evaluate(()=>[3,15,19].every(index=>{
+       const mark=document.querySelector(`#prompt-highlighted [data-focus-indices="${index}"]`),pane=mark.closest('.coverage-message');
+       const box=mark.getBoundingClientRect(),outer=pane.getBoundingClientRect(),header=pane.querySelector('.coverage-message-label').getBoundingClientRect();
+       return box.top>=header.bottom-1 && box.bottom<=outer.bottom+1;
+      })),true,'both human-intent spans and Cat-only must be visible together');
+     }
+     if(phase==='baseline') {
+      assert.equal(await replay.locator('#baseline-results [data-recorded-sample]').count(),10);
+      assert.match(await replay.locator('#baseline-results .recorded-sample-toolbar strong').textContent(),/10 \/ 10 refuse to book the dog at this clinic/);
+      assert.deepEqual(await replay.locator('#baseline-results .recorded-raw pre').allTextContents(),astra.focus_workflow.samples.map(s=>s.content));
+      for(let sample=0;sample<10;sample++){
+       await replay.locator(`#baseline-results [data-recorded-sample="${sample}"]`).click();
+       assert.equal(await replay.locator(`#baseline-results [data-recorded-panel="${sample}"] .recorded-output`).textContent(),JSON.parse(astra.focus_workflow.samples[sample].content).suggestedMessage);
+      }
+      const exported=replay.waitForEvent('download');await replay.locator('#export-workspace-btn').click();
+      assert.equal(sha(fs.readFileSync(await (await exported).path())),sha(astraFixture));
+     }
+     if(phase==='dominance') {
+      assert.equal(await replay.locator('#pairwise-cell-3-19').getAttribute('aria-pressed'),'true');
+      assert.equal(await replay.locator('#pairwise-view').inputValue(),'combined');
+      assert.match(await replay.locator('#pairwise-cell-3-19').getAttribute('title'),/0.0% closer to row/);
+      assert.match(await replay.locator('#pairwise-detail').textContent(),/20 distinct prompt condition\(s\), 105 unique sampled outputs/);
+      assert.deepEqual(await replay.evaluate(()=>FocalPromptSingleton.collect().result.pairwise_resemblance),astra.singleton_experiment.result.pairwise_resemblance);
+      assert.match(await replay.locator('#demo-next').textContent(),/Back to GPT-4o mini: Jev/);
+      if(width>=1000)assert.equal(await replay.locator('#pairwise-cell-3-19').evaluate(el=>{
+       const r=el.getBoundingClientRect();return document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.closest('.pairwise-cell')===el;
+      }),true,'selected pair must not be hidden by sticky matrix headings');
+     }
+    }
+    if(id==='jev') {
+     assert.equal(await replay.locator('#demo-workspace').inputValue(),'gpt4omini');
+     assert.equal(await replay.evaluate(()=>FocalPromptDemo.data.modelLabel),'GPT-4o mini');
+     assert.deepEqual(await replay.evaluate(()=>FocalPromptJev.collect().state),JSON.parse(fixture).prompt_analysis.jev_experiment.state);
+    }
     if(id==='jev' && phase==='selected')assert.equal(await replay.locator('.jev-decisions [data-included="false"]').count(),6);
     if(id==='jev' && phase==='outputs')assert.equal(snapshot.outputs.length,3);
     states.push(snapshot.frame);
     if(i<length-1)await replay.locator('#demo-next').click();
    }
    assert.equal(await replay.locator('#demo-next').isDisabled(),true);
-   assert.deepEqual([...new Set(states.map(f=>f.id))],['problem','baseline','foci','singleton','dominance','ablation','order','jev','end']);
+   assert.deepEqual([...new Set(states.map(f=>f.id))],['problem','baseline','foci','singleton','dominance','ablation','order','comparison','jev','end']);
    for(let i=length-2;i>=0;i--){await replay.locator('#demo-previous').click();assert.deepEqual(await replay.evaluate(()=>FocalPromptDemo.frame),states[i]);}
+   await replay.locator('#demo-workspace').selectOption('astra');
+   assert.equal(await replay.evaluate(()=>FocalPromptDemo.frame.phase),'prompt');
+   await replay.locator('#demo-workspace').selectOption('gpt4omini');
+   assert.equal(await replay.evaluate(()=>FocalPromptDemo.frame.id),'jev');
    await replay.locator('#demo-location').selectOption('dominance');
    assert.equal(await replay.locator('#pairwise-view').inputValue(),'combined');
    assert.equal(await replay.locator('#pairwise-cell-4-15').getAttribute('aria-pressed'),'true');
