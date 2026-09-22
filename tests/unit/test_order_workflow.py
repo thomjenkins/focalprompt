@@ -173,6 +173,42 @@ def test_provider_timeout_remains_a_specific_retryable_http_error(monkeypatch):
     assert 'Astra request timed out' in response.get_json()['error']
 
 
+@pytest.mark.parametrize('headers', [
+    {'Referer': 'http://localhost/'},
+    {'Referer': 'http://localhost/lab?imported=1'},
+    {'Referer': 'http://localhost/app'},
+    {'Sec-Fetch-Site': 'same-origin', 'Sec-Fetch-Dest': 'empty'},
+])
+def test_old_browser_handler_gets_json_recovery_before_any_model_calls(monkeypatch, headers):
+    from app_new import app
+    monkeypatch.setenv('FOCALPROMPT_HOSTED_MODE', '0')
+    getter = Mock(side_effect=AssertionError('An old tab must never start the long-running request'))
+    monkeypatch.setattr('routes.order_sensitivity_routes.get_assessor', getter)
+    response = app.test_client().post('/api/focus-order-sensitivity', json=context(), headers=headers)
+    assert response.status_code == 409
+    assert response.is_json
+    assert response.get_json()['code'] == 'order_client_upgrade_required'
+    assert 'Export your workspace first' in response.get_json()['error']
+    getter.assert_not_called()
+    # Those same browser headers are valid on the current workflow.
+    plan = app.test_client().post('/api/focus-order-sensitivity/plan', json=context(), headers=headers)
+    assert plan.status_code == 200
+    assert plan.get_json()['protocol'] == 'focus-order-v1'
+    getter.assert_not_called()
+
+
+def test_direct_legacy_api_remains_available(monkeypatch):
+    from app_new import app
+    monkeypatch.setenv('FOCALPROMPT_HOSTED_MODE', '0')
+    getter = Mock(return_value=Mock(provider=Mock(), provider_name='openai'))
+    monkeypatch.setattr('routes.order_sensitivity_routes.get_assessor', getter)
+    run = Mock(return_value={'ok': True, 'experiment_type': 'focus_order_sensitivity'})
+    monkeypatch.setattr(OrderSensitivityService, 'run_scenario_order_experiment', run)
+    response = app.test_client().post('/api/focus-order-sensitivity', json=context())
+    assert response.status_code == 200
+    run.assert_called_once()
+
+
 def test_browser_resumes_after_sampling_judging_and_scoring_failures_without_resampling():
     script = r"""
 const assert=require('node:assert/strict'),fs=require('node:fs');globalThis.window=globalThis;
