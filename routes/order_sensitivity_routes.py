@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from urllib.parse import urlsplit
+
 from flask import Blueprint, jsonify, request
 
 from services.assessor_factory import get_assessor
@@ -139,6 +141,28 @@ def run_focus_order_sensitivity():
 
     Reuses Experiment B baseline outputs. Not mechanistic attention analysis.
     """
+    # A tab loaded before the resumable workflow still posts the entire run here.
+    # Stop before paid work, so even its old response.json() error handler can
+    # explain recovery instead of parsing a serverless timeout page minutes later.
+    # Direct API/CLI clients retain the legacy contract.
+    try:
+        referrer = urlsplit(request.referrer or '')
+        lab_referrer = referrer.netloc == request.host and referrer.path.rstrip('/') in ('', '/lab', '/app')
+    except ValueError:
+        lab_referrer = False
+    same_origin_fetch = (request.headers.get('Sec-Fetch-Site') == 'same-origin'
+                         and request.headers.get('Sec-Fetch-Dest') == 'empty')
+    if lab_referrer or same_origin_fetch:
+        return jsonify({
+            'error': (
+                'This tab is using the older focus-order workflow. '
+                'Export your workspace first, then reload the lab and import that export. '
+                'The updated workflow saves each output and supports Resume after a failure. '
+                'This request was stopped before any model calls.'
+            ),
+            'code': 'order_client_upgrade_required',
+            'workflow_protocol': 'focus-order-v1',
+        }), 409
     try:
         data = request.json or {}
         scenario, is_legacy = scenario_from_request(data)

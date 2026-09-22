@@ -21,6 +21,7 @@ from utils.hosted_mode import (
     resolve_client_ip,
 )
 from utils.results_copy import COPY
+from utils.static_assets import register_asset_versions
 
 # Load environment variables from .env file (for local development)
 # Note: python-dotenv is optional - not needed for Vercel
@@ -39,6 +40,7 @@ except Exception as e:
 
 # Initialize Flask app first
 app = Flask(__name__)
+register_asset_versions(app)
 
 # Import CORS and enable it
 try:
