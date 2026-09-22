@@ -35,6 +35,7 @@
             {id: 'dominance', title: 'Focus vs focus', label: 'Pairwise'},
             {id: 'ablation', title: 'Leave-one-out ablation', label: 'Ablation'},
             {id: 'order', title: 'Focus order experiment', label: 'Order'},
+            {id: 'comparison', title: 'Compare recorded models', label: 'Model comparison'},
             {id: 'jev', title: 'Dynamic prompt composition', label: 'Compose'},
             {id: 'end', title: 'Explore the results', label: 'What next'}
         ],

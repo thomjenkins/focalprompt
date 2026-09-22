@@ -126,6 +126,42 @@
             selfReport: pa.focus_workflow?.summary?.comparison || [],
             ablations, singleton});
     }
+    function prepareComparison(input, recording) {
+        // A separate definition prevents the first model's labels or order experiment
+        // from being accidentally applied to another recording.
+        const data = prepare(input, {primaryWorkspace: {}, keyFoci: recording.keyFoci,
+            annotations: {baseline: recording.refusalEvidence?.map(() => 'refusal')},
+            featured: {baseline: recording.featuredSample || 0}});
+        const fail = message => { throw new Error(`Invalid model-comparison recording: ${message}`); };
+        if (data.model?.model !== recording.expectedModel) fail('unexpected baseline model');
+        const hierarchy = data.foci.filter(f => f.name === recording.keyFoci.hierarchy);
+        if (hierarchy.length !== 1 || !hierarchy[0].spans.length) fail('missing grounded hierarchy focus');
+        for (const [key, focus] of [['booking', data.booking], ['cat', data.cat], ['hierarchy', hierarchy[0]]]) {
+            if (recording.expectedIndices[key] != null && focus.index !== recording.expectedIndices[key]) fail(`unexpected ${key} focus index`);
+            if (!focus.spans.some(span => span.text === recording.expectedText[key])) fail(`changed ${key} instruction text`);
+        }
+        if (data.booking.spans[0].role !== 'system' || !data.booking.spans[0].text.includes('must always')) fail('missing strengthened system booking instruction');
+        if (hierarchy[0].spans[0].message_id !== data.cat.spans[0].message_id
+            || hierarchy[0].spans[0].message_id === data.booking.spans[0].message_id) fail('hierarchy must be a separate focus in the clinic-specific message');
+        const samples = data.series.baseline?.samples;
+        if (samples?.length !== 10 || recording.refusalEvidence?.length !== 10) fail('expected ten reviewed baseline outputs');
+        samples.forEach((sample, index) => {
+            // Literal, individually reviewed evidence, bound to the fixture checksum.
+            // This is an editorial output audit, not a new classifier or judge score.
+            const phrase = recording.refusalEvidence[index];
+            if (!phrase || !sample.text.includes(phrase)) fail(`refusal evidence changed for sample ${index + 1}`);
+        });
+        const pair = data.singleton?.pairwise_resemblance?.pairs?.find(p =>
+            p.row_index === Math.min(data.booking.index, data.cat.index)
+            && p.column_index === Math.max(data.booking.index, data.cat.index));
+        const score = pair?.views?.combined;
+        if (!score || !Number.isFinite(score.row_share) || score.row_share < 0 || score.row_share > 1) fail('missing booking/cat-only matrix pair');
+        const bookingShare = data.booking.index < data.cat.index ? score.row_share : 1 - score.row_share;
+        if (bookingShare >= .5) fail('the recorded matrix does not favor Cat-only');
+        const singletonModel = data.workspace.prompt_analysis.singleton_experiment.context?.model;
+        if (singletonModel?.model !== data.model.model) fail('baseline and pairwise experiment models differ');
+        return deepFreeze({...data, hierarchy: hierarchy[0], pair, bookingShare});
+    }
     function frames(data, definition, comparisons = []) {
         const list = [];
         definition.steps.forEach(step => {
@@ -136,11 +172,15 @@
             if (step.id === 'order') {
                 if (!data.matchedOrders.length) return;
                 list.push({...step, phase: 'condition-a'}, {...step, phase: 'condition-b'});
+            } else if (step.id === 'comparison') {
+                comparisons.forEach((comparison, comparisonIndex) => {
+                    ['prompt', 'baseline', 'dominance'].forEach(phase => list.push({...step, phase, comparisonIndex,
+                        workspaceId: definition.comparisonWorkspaces[comparisonIndex].id}));
+                });
             } else if (step.id === 'jev') {
                 if (!data.jev) return;
                 ['catalog', 'selected', ...(data.jev.hasOrder ? ['ordered'] : []), 'outputs'].forEach(phase => list.push({...step, phase}));
             } else {
-                if (step.id === 'end') comparisons.forEach((_, comparisonIndex) => list.push({id:'comparison', title:'The same question, across models.', label:'Compare', comparisonIndex}));
                 list.push({...step});
             }
         });
@@ -153,7 +193,7 @@
             previous() { index = Math.max(0, index - 1); return this.frame; }, reset() { index = 0; return this.frame; },
             go(next) { if (Number.isInteger(next)) index = Math.max(0, Math.min(list.length - 1, next)); return this.frame; }};
     }
-    const api = {prepare, frames, navigator, outputText, deepFreeze};
+    const api = {prepare, prepareComparison, frames, navigator, outputText, deepFreeze};
     global.FocalPromptDemoData = api;
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

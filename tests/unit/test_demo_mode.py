@@ -81,8 +81,14 @@ for(let i=frames.length-1;i>=0;i--) {assert.equal(JSON.stringify(nav.frame),firs
 nav.go(frames.findIndex(f=>f.id==='jev' && f.phase==='ordered'));assert.equal(nav.frame.phase,'ordered');nav.reset();assert.equal(nav.index,0);
 for(let i=0;i<frames.length;i++) {assert.equal(JSON.stringify(nav.frame),firstRun[i]);nav.next();}
 assert.equal(frames.some(f=>f.id==='comparison'),false);
-const withComparison = adapter.frames(data,definition,[data]);
-assert.equal(withComparison.at(-2).id,'comparison');
+const withComparison = adapter.frames(data,{...definition,comparisonWorkspaces:[{id:'second'}]},[data]);
+assert.equal(withComparison.length,16);
+const comparisonFrames=withComparison.filter(f=>f.id==='comparison');
+assert.deepEqual(comparisonFrames.map(f=>f.phase),['prompt','baseline','dominance']);
+assert.ok(comparisonFrames.every(f=>f.workspaceId==='second'));
+const firstComparison=withComparison.findIndex(f=>f.id==='comparison');
+assert.equal(withComparison[firstComparison-1].id,'order');
+assert.equal(withComparison[firstComparison+3].id,'jev');
 delete workspace.prompt_analysis.singleton_experiment.result.pairwise_resemblance;
 const withoutGrid = adapter.frames(adapter.prepare(workspace,definition),definition);
 assert.equal(withoutGrid.some(f=>f.id==='dominance'),false);
