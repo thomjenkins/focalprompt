@@ -154,8 +154,10 @@
         } catch (error) { status(error.message + ' Saved outputs and results are retained.'); }
         finally { busy = false; pairwiseBusy = false; render(); }
     }
-    function outputDetails(title, arm) {
-        return `<details class="singleton-arm" data-singleton-arm="${esc(title)}"><summary>${esc(title)} · ${arm.outputs.length} outputs</summary>`
+    function outputDetails(title, arm, focus = null) {
+        const label = focus ? `${focus.focus_index + 1}. ${focus.focus}` : title === 'No-focus' ? 'No focus' : title;
+        const description = `${focus ? 'Singleton · ' : ''}${arm.outputs.length} outputs`;
+        return `<details class="singleton-arm" data-singleton-arm="${esc(title)}"><summary><span class="singleton-arm-label">${esc(label)}</span><span class="singleton-arm-separator"> · </span><span class="singleton-arm-description">${esc(description)}</span></summary>`
             + global.FocalPromptSamples.render(arm.outputs, {title})
             + `<details><summary>Scenario messages</summary><p>Blank messages are omitted from model requests; all nonblank content is sent unchanged.</p>
             <pre style="white-space:pre-wrap">${esc(JSON.stringify(arm.scenario, null, 2))}</pre></details></details>`;
@@ -210,7 +212,7 @@
         for (const f of rows) {
             html += `<details id="singleton-focus-details-${Number(f.focus_index)}"><summary>${f.focus_index + 1}. ${esc(f.focus)} — inspect all four conditions</summary>`;
             if (f.shared_text_retained_for_excluded.length) html += '<p class="info-text">Some excluded foci share text with this focus; their shared text remains in the singleton. Leave-one-out retains the existing behavior of deleting all target spans.</p>';
-            html += '<div class="singleton-arms">' + outputDetails('No-focus', r.arms.no_focus) + outputDetails('Singleton', r.arms['singleton_' + f.focus_index])
+            html += '<div class="singleton-arms">' + outputDetails('No-focus', r.arms.no_focus) + outputDetails('Singleton', r.arms['singleton_' + f.focus_index], f)
                 + outputDetails('Full prompt', r.arms.full) + outputDetails('Leave-one-out', r.arms['leave_one_out_' + f.focus_index]) + '</div></details>';
         }
         html += `<details><summary>Method, normalization and execution details</summary><p>${r.notes.map(esc).join('</p><p>')}</p><p>Contrast rule: ${esc(r.contrast_threshold_method)}</p><p>${r.reused_samples} existing samples reused; ${r.new_samples} new received samples. Failed requests may have incurred usage.</p><pre style="white-space:pre-wrap">${esc(JSON.stringify({evaluator:r.evaluator,full_no_focus_comparison:r.full_no_focus_comparison},null,2))}</pre></details>`;
