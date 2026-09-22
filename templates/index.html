@@ -560,6 +560,8 @@
                         <button id="run-focus-order-btn" class="btn btn-primary" type="button" disabled>
                             🔀 Run order sensitivity
                         </button>
+                        <button id="stop-focus-order-btn" class="btn btn-outline" type="button" hidden>Stop after current requests</button>
+                        <button id="new-focus-order-btn" class="btn btn-outline" type="button" hidden>New run</button>
                     </div>
                 </div>
                 <div class="card-body">
@@ -599,6 +601,7 @@
                             Run ablation (step 5) first to reuse baseline samples.
                         </p>
                     </div>
+                    <p id="focus-order-progress" class="info-text" aria-live="polite"></p>
                     <div id="focus-order-results" class="focus-order-results">
                         <p class="empty-state">Complete Experiment B, then run order sensitivity here.</p>
                     </div>
@@ -1134,6 +1137,7 @@
     <script src="{{ url_for('static', filename='js/results_report.js') }}"></script>
     <script src="{{ url_for('static', filename='js/prompt_edit.js') }}"></script>
     <script src="{{ url_for('static', filename='js/quality_judges.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/order_workflow.js') }}"></script>
     <script src="{{ url_for('static', filename='js/workspace_format.js') }}"></script>
     <script src="{{ url_for('static', filename='js/app.js') }}"></script>
     <script src="{{ url_for('static', filename='js/focus_workflow.js') }}"></script>

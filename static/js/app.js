@@ -5583,6 +5583,7 @@ function refreshFocusOrderControls(abData) {
         ? ab.baseline_outputs
         : (ab && ab.baseline_output ? [ab.baseline_output] : []);
     runFocusOrderBtn.disabled = !baselines.length;
+    const selectedSweep = focusOrderSweepFocus.value;
     focusOrderSweepFocus.innerHTML = '';
     if (!ab || !baselines.length) {
         focusOrderSweepFocus.disabled = true;
@@ -5604,6 +5605,8 @@ function refreshFocusOrderControls(abData) {
         focusOrderSweepFocus.innerHTML += '<option value="' + String(idx) + '">' +
             escapeHtml(name) + '</option>';
     });
+    if ([...focusOrderSweepFocus.options].some(option => option.value === selectedSweep)) focusOrderSweepFocus.value = selectedSweep;
+    renderFocusOrderProgress();
     updateFocusOrderCostEstimate();
 }
 
@@ -5648,6 +5651,50 @@ if (focusOrderMSel) focusOrderMSel.addEventListener('change', updateFocusOrderCo
 if (focusOrderRunSweep) focusOrderRunSweep.addEventListener('change', updateFocusOrderCostEstimate);
 if (focusOrderRunJudge) focusOrderRunJudge.addEventListener('change', updateFocusOrderCostEstimate);
 
+let focusOrderBusy = false, focusOrderStopped = false, focusOrderActiveRun = null;
+function focusOrderContext() {
+    const ab = window.singleAblationResults;
+    return structuredClone(getApiBody({
+        scenario: readMainScenario(), foci,
+        baseline_outputs: ab?.baseline_outputs?.length ? ab.baseline_outputs : ab?.baseline_output ? [ab.baseline_output] : [],
+        k_permutations: Number(focusOrderKSel?.value || 5), m_samples: Number(focusOrderMSel?.value || 3),
+        temperature: ab?.temperature ?? .7, order_seed: 7, statistical_seed: 42,
+        run_position_sweep: !!focusOrderRunSweep?.checked,
+        focus_index_for_sweep: focusOrderRunSweep?.checked ? Number(focusOrderSweepFocus.value) : null,
+        run_behavioral_judge: !!focusOrderRunJudge?.checked,
+        behavioral_criterion: focusOrderCriterion?.value.trim() || evalCriteriaInput?.value.trim() || '',
+    }, 'mut', 'order'));
+}
+function renderFocusOrderProgress() {
+    const state = window.focusOrderRunState, label = document.getElementById('focus-order-progress');
+    if (label) {
+        const p = window.FocalPromptOrder.progress(state);
+        label.textContent = state ? `${p.samples}/${p.total} order samples saved`
+            + (p.judgeTotal ? ` · ${p.judged}/${p.judgeTotal} judgments saved` : '')
+            + (state.phase === 'complete' ? '. Analysis complete.' : state.phase === 'scoring' ? '. Comparing saved outputs…'
+                : state.error ? `. ${state.error} Completed work is retained; resume to finish.` : '. Completed work is retained in workspace exports.')
+            + (focusOrderBusy && state.phase === 'sampling' ? ' Generating outputs…' : focusOrderBusy && state.phase === 'judging' ? ' Judging saved outputs…' : '')
+            + (state.retry ? ` Retrying this request (${state.retry.attempt}/${state.retry.max_attempts}).` : '') : '';
+    }
+    if (runFocusOrderBtn) {
+        runFocusOrderBtn.textContent = focusOrderBusy ? 'Running order analysis…' : state?.result ? 'Analysis complete' : state ? 'Resume order analysis' : 'Run order sensitivity';
+        const ab = window.singleAblationResults;
+        runFocusOrderBtn.disabled = focusOrderBusy || !!state?.result || !(ab?.baseline_outputs?.length || ab?.baseline_output);
+    }
+    const stop = document.getElementById('stop-focus-order-btn'), fresh = document.getElementById('new-focus-order-btn');
+    if (stop) stop.hidden = !focusOrderBusy;
+    if (fresh) {fresh.hidden = !state; fresh.disabled = focusOrderBusy;}
+}
+document.getElementById('stop-focus-order-btn')?.addEventListener('click', () => {
+    focusOrderStopped = true;
+    document.getElementById('focus-order-progress').textContent = 'Stopping after current requests. Received samples will be retained.';
+});
+document.getElementById('new-focus-order-btn')?.addEventListener('click', () => {
+    if (focusOrderBusy) return;
+    window.focusOrderRunState = null;
+    renderFocusOrderProgress();
+});
+
 if (runFocusOrderBtn) {
     runFocusOrderBtn.addEventListener('click', async function () {
         const ab = window.singleAblationResults;
@@ -5680,29 +5727,29 @@ if (runFocusOrderBtn) {
             showErrorModal('Enter a behavioural criterion for the judge.');
             return;
         }
-        showLoading('Running focus order sensitivity…');
-        runFocusOrderBtn.disabled = true;
+        const context = focusOrderContext(), token = {};
+        focusOrderActiveRun = token; focusOrderBusy = true; focusOrderStopped = false;
+        renderFocusOrderProgress();
+        document.getElementById('focus-order-progress').textContent = 'Preparing order conditions…';
         try {
-            const response = await fetch('/api/focus-order-sensitivity', {
-                method: 'POST',
-                headers: getApiHeaders(),
-                body: JSON.stringify(getApiBody({
-                    scenario: scenario,
-                    foci: foci,
-                    baseline_outputs: baselines,
-                    k_permutations: k,
-                    m_samples: m,
-                    temperature: ab.temperature || 0.7,
-                    run_position_sweep: runSweep,
-                    focus_index_for_sweep: runSweep ? parseInt(sweepFocus, 10) : null,
-                    run_behavioral_judge: runJudge,
-                    behavioral_criterion: criterion,
-                }, 'mut', 'order')),
+            const state = await window.FocalPromptOrder.execute({
+                context, previous: window.focusOrderRunState,
+                request: (action, body) => window.FocalPromptQuality.fetchJson('/api/focus-order-sensitivity/' + action, {
+                    method: 'POST', headers: getApiHeaders(), body: JSON.stringify(body),
+                }),
+                check: () => {
+                    if (focusOrderActiveRun !== token) throw new Error('Workspace changed during this run.');
+                    if (focusOrderStopped) throw new Error('Stopped.');
+                    if (!window.FocalPromptOrder.compatible({protocol:'focus-order-v1', context}, focusOrderContext())) {
+                        throw new Error('Inputs, baseline, model or settings changed. Start a new order run.');
+                    }
+                },
+                onUpdate: state => {
+                    if (focusOrderActiveRun !== token) return;
+                    window.focusOrderRunState = state; renderFocusOrderProgress();
+                },
             });
-            const data = await response.json();
-            if (!response.ok) {
-                throw new Error(data.error || data.reason || 'Order sensitivity failed');
-            }
+            const data = state.result;
             window.focusOrderSensitivityResults = data;
             if (ab) {
                 ab.focus_order_sensitivity = data;
@@ -5716,10 +5763,9 @@ if (runFocusOrderBtn) {
                 window.FocalPromptReport.refresh();
             }
         } catch (err) {
-            showError('Focus order sensitivity: ' + err.message);
+            if (focusOrderActiveRun === token && !focusOrderStopped) showError('Focus order sensitivity: ' + err.message + ' Received outputs are retained; resume to finish.');
         } finally {
-            hideLoading();
-            runFocusOrderBtn.disabled = false;
+            if (focusOrderActiveRun === token) {focusOrderBusy = false; renderFocusOrderProgress();}
         }
     });
 }
@@ -8836,6 +8882,7 @@ function collectPromptAnalysisWorkspace() {
         },
         focus_order: {
             results: focusOrder,
+            run_state: window.focusOrderRunState || null,
             k: focusOrderKSel ? focusOrderKSel.value : '5',
             m: focusOrderMSel ? focusOrderMSel.value : '3',
             sweep_focus: focusOrderSweepFocus ? focusOrderSweepFocus.value : '',
@@ -9077,6 +9124,8 @@ function restorePromptAnalysisWorkspace(pa) {
         if (qualityEvalResults) qualityEvalResults.innerHTML = '';
         window.lastQualityEvalResults = null;
     }
+    focusOrderActiveRun = null; focusOrderBusy = false;
+    window.focusOrderRunState = pa.focus_order?.run_state || null;
     if (pa.focus_order) {
         restoreFocusOrderControls(pa.focus_order);
         if (pa.focus_order.results) {
@@ -9092,7 +9141,11 @@ function restorePromptAnalysisWorkspace(pa) {
             focusOrderResults.innerHTML = '';
             window.focusOrderSensitivityResults = null;
         }
+    } else {
+        window.focusOrderSensitivityResults = null;
+        if (focusOrderResults) focusOrderResults.innerHTML = '';
     }
+    renderFocusOrderProgress();
 }
 
 function restoreBatchAnalysisWorkspace(ba, preserveMainScenario) {

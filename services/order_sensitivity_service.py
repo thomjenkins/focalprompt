@@ -62,7 +62,8 @@ class OrderSensitivityService:
         self.judge_model = judge_model or model
         self.judge_provider_name = judge_provider_name or self.provider_name
         self.api_key = api_key
-        self.embedding_service = embedding_service or EmbeddingService()
+        # Planning and single-output requests do not need embedding credentials.
+        self.embedding_service = embedding_service
         self.cost_calculator = cost_calculator or CostCalculator()
 
     def estimate_cost(
@@ -118,6 +119,8 @@ class OrderSensitivityService:
         return outputs, in_tok, out_tok
 
     def _embed(self, texts: Sequence[str]) -> tuple[np.ndarray, int]:
+        if self.embedding_service is None:
+            self.embedding_service = EmbeddingService()
         embeddings, tokens = self.embedding_service.batch_embeddings_with_usage(list(texts))
         return np.asarray(embeddings, dtype=float), int(tokens)
 
@@ -161,6 +164,9 @@ class OrderSensitivityService:
         run_behavioral_judge: bool = False,
         assessment_service=None,
         run_reported_focus: bool = False,
+        plan_only: bool = False,
+        recorded_samples: Optional[Mapping[str, Any]] = None,
+        recorded_judgments: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Full focus order sensitivity payload for export.
@@ -169,6 +175,8 @@ class OrderSensitivityService:
         sampling, single-focus position sweep, behavioural judge, reported focus.
         """
         require_stochastic_temperature(temperature)
+        if not 1 <= int(k_permutations) <= 20 or not 1 <= int(m_samples) <= 10:
+            raise ValueError('Use 1–20 permutations and 1–10 samples per permutation.')
         baseline_outputs = [str(t) for t in baseline_outputs if str(t).strip()]
         if len(baseline_outputs) < 2:
             raise ValueError('Need at least 2 baseline outputs from Experiment B')
@@ -187,32 +195,102 @@ class OrderSensitivityService:
         policies = prep['ordering_policy']
         n_slots = int(prep['n_movable_slots'])
 
+        assignments = sample_random_assignments(
+            n_slots, int(k_permutations), seed=order_seed, include_identity=True,
+        )
+        conditions = []
+        for perm_id, assignment in assignments:
+            text, _ = build_reordered_prompt(prompt, classified, assignment, inputs=inputs, policies=policies)
+            conditions.append({'id': f'permutation_{perm_id}', 'kind': 'permutation',
+                               'permutation_id': perm_id, 'assignment': assignment,
+                               'reordered_prompt': text, 'n_samples': int(m_samples)})
+        if run_position_sweep:
+            movable = list(template.get('movable_focus_indices') or [])
+            if focus_index_for_sweep is None or int(focus_index_for_sweep) not in movable:
+                raise ValueError('Select a movable attributable focus for the position sweep.')
+            for slot in position_sweep_slot_indices(n_slots):
+                assignment = assignment_for_focus_at_slot(n_slots, movable.index(int(focus_index_for_sweep)), slot)
+                text, _ = build_reordered_prompt(prompt, classified, assignment, inputs=inputs, policies=policies)
+                conditions.append({'id': f'position_{slot}', 'kind': 'position', 'slot_index': slot,
+                                   'assignment': assignment, 'reordered_prompt': text, 'n_samples': int(m_samples)})
+        if run_behavioral_judge and not (behavioral_criterion or '').strip():
+            raise ValueError('Enter a behavioural criterion for the judge.')
+        if plan_only:
+            return {'ok': True, 'protocol': 'focus-order-v1', 'conditions': conditions,
+                    'planned_samples': sum(c['n_samples'] for c in conditions),
+                    'n_movable_slots': n_slots, 'baseline_outputs': baseline_outputs}
+
+        # The resumable API scores already received samples. It must never launch
+        # generation or judging again, even if imported work is incomplete.
+        saved_embeddings = None
+        if recorded_samples is not None:
+            expected = {c['id']: c['n_samples'] for c in conditions}
+            if set(recorded_samples) != set(expected):
+                raise ValueError('Saved sample conditions do not match the order experiment.')
+            for key, count in expected.items():
+                rows = recorded_samples[key]
+                if not isinstance(rows, list) or len(rows) != count or any(
+                    not isinstance(s, dict) or not isinstance(s.get('content'), str) or not s['content'].strip() for s in rows
+                ):
+                    raise ValueError(f'Complete every sample for {key} before scoring.')
+            if run_reported_focus:
+                raise ValueError('Reported-focus assessment is not part of resumable order scoring.')
+            if run_behavioral_judge:
+                counts = {'baseline': len(baseline_outputs), **expected}
+                if not isinstance(recorded_judgments, dict) or set(recorded_judgments) != set(counts):
+                    raise ValueError('Complete all behavioural judgments before scoring.')
+                for key, count in counts.items():
+                    rows = recorded_judgments[key]
+                    if not isinstance(rows, list) or len(rows) != count or any(
+                        not isinstance(j, dict) or j.get('sample_index') != i
+                        or j.get('classification') not in ('COMPLIES', 'AMBIGUOUS', 'VIOLATES')
+                        or not isinstance(j.get('score'), (int, float)) or not 0 <= j['score'] <= 100
+                        for i, j in enumerate(rows)
+                    ):
+                        raise ValueError(f'Invalid or incomplete behavioural judgments for {key}.')
+            all_texts = baseline_outputs + [s['content'] for c in conditions for s in recorded_samples[c['id']]]
+            all_embeddings, saved_embedding_tokens = self._embed(all_texts)
+            baseline_embeddings = all_embeddings[:len(baseline_outputs)]
+            saved_embeddings, offset = {}, len(baseline_outputs)
+            for c in conditions:
+                saved_embeddings[c['id']] = all_embeddings[offset:offset+c['n_samples']]
+                offset += c['n_samples']
+
+        def sample_condition(key, text):
+            if recorded_samples is None:
+                return self._sample_outputs(text, int(m_samples), temperature)
+            rows = recorded_samples[key]
+            return ([s['content'] for s in rows],
+                    sum(int((s.get('usage') or {}).get('prompt_tokens') or 0) for s in rows),
+                    sum(int((s.get('usage') or {}).get('completion_tokens') or 0) for s in rows))
+
+        def judge_condition(key, texts):
+            if recorded_samples is not None:
+                return recorded_judgments[key] if run_behavioral_judge else None
+            return self._maybe_judge(judge, behavioral_criterion, texts, task_context, temperature)
+
+        def embed_condition(key, texts):
+            return (saved_embeddings[key], 0) if saved_embeddings is not None else self._embed(texts)
+
         if baseline_embeddings is not None:
             base_emb = np.asarray(baseline_embeddings, dtype=float)
             emb_tokens = 0
         else:
             base_emb, emb_tokens = self._embed(baseline_outputs)
+        if saved_embeddings is not None:
+            emb_tokens = saved_embedding_tokens
 
         baseline_stability = compute_baseline_stability(base_emb)
         total_in = 0
         total_out = 0
 
         judge = None
-        if run_behavioral_judge and behavioral_criterion:
+        if recorded_samples is None and run_behavioral_judge and behavioral_criterion:
             judge = BehavioralCriterionJudge(
                 self.judge_provider, self.judge_model, self.judge_provider_name
             )
 
-        baseline_judgments = self._maybe_judge(
-            judge, behavioral_criterion, baseline_outputs, task_context, temperature
-        )
-
-        assignments = sample_random_assignments(
-            n_slots,
-            int(k_permutations),
-            seed=order_seed,
-            include_identity=True,
-        )
+        baseline_judgments = judge_condition('baseline', baseline_outputs)
         permutations: List[Dict[str, Any]] = []
         position_rows_for_assoc: List[Dict[str, Any]] = []
 
@@ -224,10 +302,11 @@ class OrderSensitivityService:
                 inputs=inputs,
                 policies=policies,
             )
-            texts, tin, tout = self._sample_outputs(reordered_prompt, int(m_samples), temperature)
+            condition_id = f'permutation_{perm_id}'
+            texts, tin, tout = sample_condition(condition_id, reordered_prompt)
             total_in += tin
             total_out += tout
-            cond_emb, et = self._embed(texts)
+            cond_emb, et = embed_condition(condition_id, texts)
             emb_tokens += et
             stats = compare_condition_to_baseline(
                 base_emb,
@@ -251,9 +330,7 @@ class OrderSensitivityService:
                 'temperature': temperature,
                 **stats,
             }
-            judgments = self._maybe_judge(
-                judge, behavioral_criterion, texts, task_context, temperature
-            )
+            judgments = judge_condition(condition_id, texts)
             if judgments is not None:
                 row['behavioral_judgments'] = judgments
                 if baseline_judgments is not None:
@@ -285,12 +362,11 @@ class OrderSensitivityService:
                     inputs=inputs,
                     policies=policies,
                 )
-                texts, tin, tout = self._sample_outputs(
-                    reordered_prompt, int(m_samples), temperature
-                )
+                condition_id = f'position_{slot}'
+                texts, tin, tout = sample_condition(condition_id, reordered_prompt)
                 total_in += tin
                 total_out += tout
-                cond_emb, et = self._embed(texts)
+                cond_emb, et = embed_condition(condition_id, texts)
                 emb_tokens += et
                 stats = compare_condition_to_baseline(
                     base_emb,
@@ -309,9 +385,7 @@ class OrderSensitivityService:
                     'outputs': texts,
                     **stats,
                 }
-                judgments = self._maybe_judge(
-                    judge, behavioral_criterion, texts, task_context, temperature
-                )
+                judgments = judge_condition(condition_id, texts)
                 if judgments is not None:
                     sweep_row['behavioral_judgments'] = judgments
                 sweep_results.append(sweep_row)
@@ -507,6 +581,9 @@ class OrderSensitivityService:
             focus_index_for_sweep=local_sweep,
             **kwargs,
         )
+        if kwargs.get('recorded_samples') is not None:
+            translations = [dict(sample.get('scenario_metadata') or {})
+                            for samples in kwargs['recorded_samples'].values() for sample in samples]
         result['scenario'] = bound
         result['scenario_metadata'] = {
             'input_binding': binding,
@@ -522,4 +599,9 @@ class OrderSensitivityService:
         result['cross_message_foci_fixed'] = [
             index for index in range(len(classified)) if index not in global_indices
         ]
+        if kwargs.get('plan_only'):
+            for condition in result.get('conditions', []):
+                arm = deepcopy(bound)
+                next(m for m in arm['messages'] if m['id'] == message_id)['content'] = condition['reordered_prompt']
+                condition['scenario'] = arm
         return result
