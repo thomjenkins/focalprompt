@@ -27,7 +27,7 @@ const sha=value=>crypto.createHash('sha256').update(value).digest('hex');
    await replay.evaluate(()=>{window.nativeScenarioNode=document.getElementById('scenario-messages');window.nativeBaselineNode=document.getElementById('baseline-results');});
    await context.setOffline(true);const offlineRequests=[];replay.on('request',r=>offlineRequests.push(r.url()));
    const states=[],length=await replay.evaluate(()=>FocalPromptDemo.length);
-   assert.equal(length,16);
+   assert.equal(length,13);
    for(let i=0;i<length;i++) {
     assert.equal(await replay.evaluate(()=>FocalPromptDemo.index),i);
     const snapshot=await replay.evaluate(()=>({frame:FocalPromptDemo.frame,section:document.querySelector('.demo-section')?.id,
@@ -72,7 +72,21 @@ const sha=value=>crypto.createHash('sha256').update(value).digest('hex');
      await replay.locator('#pairwise-view').selectOption('ablations');
      assert.match(await replay.locator('#pairwise-detail').textContent(),/15 distinct prompt condition\(s\), 75 unique sampled outputs/);
     }
-    if(id==='order' && phase==='position' && position===0){assert.equal(await replay.locator('.focus-order-position[open] .focus-order-sequence li').first().textContent(),'Cat only');assert.equal(snapshot.outputs.length,1);}
+    if(id==='order') {
+     const condition=phase==='condition-a' ? 0 : 1;
+     assert.equal(snapshot.outputs.length,3,'all three actual outputs must be visible');
+     const orders=[['Address','Cat only','Relevance','Opening hours'],['Relevance','Cat only','Opening hours','Address']];
+     const source=JSON.parse(fixture).prompt_analysis.focus_order.results;
+     const permutation=source.global_order_experiment.permutations.find(p=>JSON.stringify(p.ordered_focus_names)===JSON.stringify(orders[condition]));
+     assert.deepEqual(snapshot.outputs.map(o=>o.raw),permutation.outputs);
+     assert.equal(await replay.locator('.order-anchor-position').textContent(),'Cat only · position 2 in both');
+     assert.match(await replay.locator(`[data-order-count="${condition}"]`).textContent(),condition ? /1 \/ 3 comply/ : /0 \/ 3 comply/);
+     const active=replay.locator(`[data-order-outputs="${condition}"]`);
+     assert.deepEqual(await active.locator('.recorded-verdict').allTextContents(),permutation.behavioral_judgments.map(j=>j.classification));
+     assert.ok(await active.locator('mark').count()>=3);
+     assert.equal(await replay.locator('.focus-order-full').getAttribute('open'),null);
+     assert.equal(await replay.locator('.focus-order-position[data-order-focus="Cat only"]').count(),4,'full position sweep retained');
+    }
     if(id==='jev' && phase==='selected')assert.equal(await replay.locator('.jev-decisions [data-included="false"]').count(),6);
     if(id==='jev' && phase==='outputs')assert.equal(snapshot.outputs.length,3);
     states.push(snapshot.frame);

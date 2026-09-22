@@ -2,6 +2,7 @@
 (function (global) {
     'use strict';
     const format = global.FocalPromptWorkspaceFormat || (typeof require === 'function' ? require('./workspace_format.js') : null);
+    const orderComparison = global.FocalPromptOrderComparison || (typeof require === 'function' ? require('./order_comparison.js') : null);
     function deepFreeze(value) {
         if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
         Object.values(value).forEach(deepFreeze);
@@ -82,6 +83,26 @@
         }).sort((a, b) => a.slot_index - b.slot_index);
         const orderMessage = messages.get(order?.scenario_metadata?.ordering_message_id);
         const originalOrder = orderMessage ? foci.filter(f => f.spans.some(s => s.message_id === orderMessage.id)).map(f => f.index) : [];
+        let matchedOrders = [];
+        if (order && definition.orderComparison) {
+            matchedOrders = definition.orderComparison.orders.map(names => orderComparison.findPermutationByOrder(order.global_order_experiment?.permutations, names));
+            if (matchedOrders[0] === matchedOrders[1] || !judgeMatches) throw new Error('The matched order comparison needs distinct global permutations and the recorded behavioral criterion.');
+            matchedOrders.forEach((p, i) => {
+                if (p.focus_positions[cat.name] !== 1 || p.model !== order.model || p.provider !== order.provider || p.temperature !== order.temperature
+                    || orderMessage?.role !== cat.spans[0].role || order.scenario_metadata.ordering_role !== orderMessage.role) {
+                    throw new Error('Matched global orders must keep Cat only second, with the same model, sampling settings and message role.');
+                }
+                const template = p.reconstruction?.template;
+                if (!template || JSON.stringify(template) !== JSON.stringify(matchedOrders[0].reconstruction?.template)
+                    || template.focus_texts?.[String(p.assignment[1])] !== cat.spans[0].text) throw new Error('Matched global orders have inconsistent source text.');
+                const classifications = p.outputs.map((_, index) => p.behavioral_judgments?.find(j => j.sample_index === index)?.classification);
+                if (JSON.stringify(classifications) !== JSON.stringify(definition.orderComparison.expectedClassifications[i])) throw new Error('The recorded matched-order judgments differ from the Lisbon comparison.');
+                const texts = p.outputs.map(outputText);
+                for (const phrase of definition.orderComparison.highlights[i]) {
+                    if (!texts.some(text => text.includes(phrase))) throw new Error(`Missing recorded order highlight: ${phrase}`);
+                }
+            });
+        }
         const jev = pa.jev_experiment?.state;
         add('jevFull', jev?.arms?.full?.samples?.map(s => s.output), null, 'prompt_analysis.jev_experiment.state.arms.full');
         add('jevSelected', jev?.arms?.selected?.samples?.map(s => s.output), null, 'prompt_analysis.jev_experiment.state.arms.selected');
@@ -98,7 +119,7 @@
             return {...group, original, ordered: validOrder ? ordered : null};
         }) : [];
         const model = pa.focus_workflow?.context?.model || workspace.model;
-        return deepFreeze({workspace, scenario, foci, booking, cat, series, positions, orderMessage, originalOrder,
+        return deepFreeze({workspace, scenario, foci, booking, cat, series, positions, matchedOrders, orderMessage, originalOrder,
             model, modelLabel: definition.primaryWorkspace.modelLabel || model?.model,
             temperature: pa.focus_workflow?.context?.temperature,
             jev: hasJev ? {source: jev, selected, groups, hasOrder: groups.length > 0 && groups.every(g => g.ordered)} : null,
@@ -113,9 +134,8 @@
             if (step.id === 'singleton' && (!data.series.noFocus || !data.series.bookingOnly || !data.series.catOnly)) return;
             if (step.id === 'dominance' && !data.singleton?.pairwise_resemblance?.pairs?.length) return;
             if (step.id === 'order') {
-                if (!data.positions.length) return;
-                list.push({...step, phase: 'original'});
-                data.positions.forEach(position => list.push({...step, phase: 'position', position: position.slot_index}));
+                if (!data.matchedOrders.length) return;
+                list.push({...step, phase: 'condition-a'}, {...step, phase: 'condition-b'});
             } else if (step.id === 'jev') {
                 if (!data.jev) return;
                 ['catalog', 'selected', ...(data.jev.hasOrder ? ['ordered'] : []), 'outputs'].forEach(phase => list.push({...step, phase}));
