@@ -136,11 +136,17 @@
         $('demo-explore').textContent = exploring ? 'Resume guide' : 'Explore workspace';
     }
     function go(index) {
-        clearSpotlight();nav.go(index);exploring=false;
+        const stayingInOrder = !exploring && nav.index !== index && nav.frame.id === 'order' && timeline[index]?.id === 'order'
+            && $('lab-focus-order').classList.contains('demo-section');
+        if (!stayingInOrder) clearSpotlight();
+        nav.go(index);exploring=false;
         document.body.dataset.demoStep = nav.frame.id;
         document.body.dataset.demoPhase = nav.frame.phase || '';
         applyLayout();
-        const target = prepareView(nav.frame);
+        // A/B is a change inside the existing experiment. Keep its DOM, disclosures and
+        // viewport in place instead of removing/reapplying the whole workspace spotlight.
+        const target = stayingInOrder ? $('focus-order-results') : prepareView(nav.frame);
+        if (stayingInOrder) window.FocalPromptOrderComparison.show(target.querySelector('.order-comparison'),nav.frame.phase === 'condition-a' ? 0 : 1);
         $('demo-location').value = nav.frame.id;
         $('demo-step-label').textContent = nav.frame.id === 'order' ? (nav.frame.phase === 'condition-a' ? 'Condition A' : 'Condition B')
             : nav.frame.id === 'jev' ? ({catalog:'All decisions',selected:'Selection',ordered:'Ordering',outputs:'Outputs'}[nav.frame.phase]) : '';
@@ -148,8 +154,9 @@
         $('demo-previous').disabled = nav.index === 0;
         $('demo-next').disabled = nav.index === nav.length-1;
         $('demo-next').textContent = nav.index === nav.length-1 ? 'Guide complete' : `Next: ${names[timeline[nav.index+1].id]} →`;
-        lockRecording();
+        if (!stayingInOrder) lockRecording();
         requestAnimationFrame(()=>{
+            if (stayingInOrder) return;
             if (document.body.classList.contains('replay-spotlight') && innerWidth >= 1000) { window.scrollTo(0,0); document.querySelector('.demo-section').scrollTop=0; }
             else target?.scrollIntoView({block:'start',behavior:'instant'});
             // Position both key source spans within their existing coverage message windows.
