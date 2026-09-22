@@ -56,10 +56,9 @@ def test_report_css_present():
     assert '.fp-inspector' in CSS
 
 
-def test_experiment_index_shows_findings():
-    assert 'exp-card-finding' in EXP_HTML
-    assert 'principal_finding' in EXP_HTML
-    assert 'exp-card-signals' in EXP_HTML
+def test_experiment_index_offers_real_guided_demo():
+    assert "include '_demo_card.html'" in EXP_HTML
+    assert 'Create or import an experiment' in EXP_HTML
 
 
 def test_order_tab_conditionally_hidden_in_js():

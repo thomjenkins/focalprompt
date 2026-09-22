@@ -8867,55 +8867,11 @@ function collectWorkspaceSession() {
 }
 
 function validateWorkspaceSession(data) {
-    if (!data || typeof data !== 'object') {
-        return 'Invalid file: not a JSON object.';
-    }
-    if (data.focalprompt_workspace !== true) {
-        if (data.protocol === 'singleton-focus-v1' && data.context && data.plan && data.samples
-            && Array.isArray(data.focus_results)) {
-            return { singleton_analysis: true };
-        }
-        if (data.baseline_outputs || data.influence_scores || data.ablation_results) {
-            return { legacy_ablation: true };
-        }
-        return 'Unrecognized file: expected a FocalPrompt workspace export.';
-    }
-    if (data.version != null && data.version !== 1 && data.version !== WORKSPACE_SESSION_VERSION) {
-        return 'Unsupported workspace version ' + data.version +
-            ' (expected ' + WORKSPACE_SESSION_VERSION + ').';
-    }
-    return null;
+    return window.FocalPromptWorkspaceFormat.validate(data);
 }
 
 function migrateWorkspaceV1(data) {
-    if (!data || data.version !== 1) return data;
-    const migrated = JSON.parse(JSON.stringify(data));
-    function assignLegacyMessage(focusList) {
-        return (focusList || []).map(function (focus) {
-            const next = Object.assign({}, focus, {
-                message_id: 'legacy-prompt',
-                is_dynamic: false,
-                dynamic_type: null,
-            });
-            if (Array.isArray(next.spans)) {
-                next.spans = next.spans.map(function (span) {
-                    return Object.assign({}, span, { message_id: 'legacy-prompt' });
-                });
-            }
-            return next;
-        });
-    }
-    if (migrated.prompt_analysis) {
-        migrated.prompt_analysis.scenario = legacyPromptScenario(migrated.prompt_analysis.prompt || ' ');
-        migrated.prompt_analysis.foci = assignLegacyMessage(migrated.prompt_analysis.foci);
-    }
-    if (migrated.batch_analysis) {
-        migrated.batch_analysis.scenario = legacyPromptScenario(migrated.batch_analysis.prompt || ' ');
-        migrated.batch_analysis.foci = assignLegacyMessage(migrated.batch_analysis.foci);
-    }
-    migrated.version = WORKSPACE_SESSION_VERSION;
-    migrated.migrated_from_version = 1;
-    return migrated;
+    return window.FocalPromptWorkspaceFormat.migrate(data);
 }
 
 function restoreFocusControlState(fc) {
