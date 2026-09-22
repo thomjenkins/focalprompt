@@ -29,10 +29,12 @@
             and run the same experiment across models.
         </p>
         <div class="cta-row">
-            <a class="btn btn-primary" href="{{ url_for('list_experiments') }}">View precomputed experiment</a>
+            <a class="btn btn-primary" href="{{ url_for('demo.presentation', demo_id='lisbon') }}" target="_blank" rel="noopener">Launch LisbonAI demo ↗</a>
             <a class="btn btn-outline" href="{{ url_for('lab') }}">Open analysis lab</a>
             <a class="btn btn-outline" href="https://github.com/thomjenkins/focalprompt">GitHub</a>
         </div>
+
+        {% include '_demo_card.html' %}
 
         <div class="panel">
             <h2>Experiment A — Reported focus</h2>

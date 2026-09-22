@@ -48,33 +48,10 @@
         </div>
 
         {% if not experiment %}
-        <h1>Precomputed experiments</h1>
-        <p>Browse published runs without spending inference credits. Reproduce locally with your own credentials.</p>
-        <div class="exp-index">
-            {% for item in experiments %}
-            <article class="exp-card">
-                <h2><a href="{{ url_for('show_experiment', experiment_id=item.id) }}">{{ item.title }}</a></h2>
-                <p class="exp-card-desc">{{ item.description }}</p>
-                {% if item.principal_finding %}
-                <p class="exp-card-finding"><strong>Finding:</strong> {{ item.principal_finding }}</p>
-                {% endif %}
-                <div class="exp-card-meta">
-                    {% if item.model %}<span>{{ item.model }}</span>{% endif %}
-                    {% if item.focus_count %}<span>{{ item.focus_count }} foci</span>{% endif %}
-                    {% if item.n_baseline %}<span>{{ item.n_baseline }} samples</span>{% endif %}
-                </div>
-                {% if item.signals %}
-                <div class="exp-card-signals">
-                    {% for sig in item.signals %}
-                    <span class="exp-signal exp-signal-{{ sig.level|lower }}">{{ sig.label }}: {{ sig.level }}</span>
-                    {% endfor %}
-                </div>
-                {% endif %}
-            </article>
-            {% else %}
-            <p>No experiments found under <code>examples/canonical/</code>.</p>
-            {% endfor %}
-        </div>
+        <h1>Explore a real experiment</h1>
+        <p>Follow a recorded run from competing instructions to dynamic prompt composition. No model calls or API key required.</p>
+        {% include '_demo_card.html' %}
+        <p>Have your own question? <a href="{{ url_for('lab') }}">Create or import an experiment in the analysis lab.</a></p>
         {% else %}
         <h1>{{ experiment.title }}</h1>
         <p>{{ experiment.description }}</p>

@@ -174,6 +174,9 @@ def _page_copy():
 
 _EXAMPLES_DIR = Path(__file__).resolve().parent / 'examples' / 'canonical'
 
+from routes.demo_routes import demo_bp
+app.register_blueprint(demo_bp)
+
 
 def _list_canonical_experiments():
     """List precomputed experiments with optional insight-derived cards."""
@@ -511,4 +514,3 @@ if __name__ == '__main__':
     open_lab_in_chrome(host, port)
     # Use waitress with 10-minute timeout for long-running ablation analysis
     serve(app, host=host, port=port, threads=4, channel_timeout=600)
-

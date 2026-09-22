@@ -3514,3 +3514,13 @@ circle.fp-series-7 { fill: #8a8a8a; }
 .workflow-metrics strong { display: block; font-size: 1.5rem; color: #312e81; margin-top: 8px; }
 .workflow-scatter { width: 100%; max-height: 320px; border: 1px solid #e2e8f0; background: #f8fafc; border-radius: 8px; margin: 12px 0; }
 .workflow-scatter text { font-size: 12px; fill: #334155; }
+
+/* Recorded LisbonAI experiment entry; opens away from unsaved lab work. */
+.lisbon-demo-card{display:flex;flex-direction:column;gap:20px;text-decoration:none!important;color:#fff!important;background:#1e3a5f;border:1px solid #102841;border-radius:18px;padding:36px;margin:28px 0;box-shadow:0 12px 30px #1e3a5f14;transition:transform .2s,box-shadow .2s}
+.lisbon-demo-card:hover{transform:translateY(-2px);box-shadow:0 16px 36px #1e3a5f28}
+.lisbon-demo-kicker{display:flex;justify-content:space-between;align-items:center;text-transform:uppercase;letter-spacing:.12em;font-size:14px;color:#d0dfec;font-weight:650}
+.lisbon-demo-kicker>span{font-size:14px;letter-spacing:0;text-transform:none;border:1px solid #8eabc5;border-radius:99px;padding:4px 12px}
+.lisbon-demo-card>strong{font-size:clamp(32px,4vw,52px);line-height:1.06;letter-spacing:-.04em;font-weight:650}
+.lisbon-demo-description{font-size:20px;color:#dce5ed}
+.lisbon-demo-launch{font-size:18px;font-weight:650;border-top:1px solid #66829d;padding-top:20px;display:flex;justify-content:space-between}
+@media(prefers-reduced-motion:reduce){.lisbon-demo-card{transition:none}}
