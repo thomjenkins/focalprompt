@@ -99,6 +99,10 @@
             window.FocalPromptCoverage.select(data.booking.index);
             target = $('prompt-visualization');
             if (frame.id === 'comparison') {
+                for (const focus of [data.booking,data.hierarchy,data.cat]) {
+                    const label = target.querySelector(`[data-coverage-focus="${focus.index}"] .legend-item-name`);
+                    if (label) label.textContent = `${focus.index+1}. ${focus.name}`;
+                }
                 // Emphasize literal words in the production source view without changing its text.
                 for (const mark of target.querySelectorAll('[data-focus-indices]')) {
                     const indices = mark.dataset.focusIndices.split(',').map(Number);
@@ -206,14 +210,16 @@
             if (nav.frame.id === 'foci' || (nav.frame.id === 'comparison' && nav.frame.phase === 'prompt')) for (const focus of [data.booking,data.cat]) {
                 const mark = [...document.querySelectorAll('#prompt-highlighted [data-focus-indices]')].find(el=>el.dataset.focusIndices.split(',').includes(String(focus.index)));
                 const pane = mark?.closest('.coverage-message');
-                if (pane) pane.scrollTop = mark.offsetTop - pane.offsetTop - pane.clientHeight / 3;
+                if (pane) pane.scrollTop = nav.frame.id === 'comparison' && focus === data.cat ? 0
+                    : mark.offsetTop - pane.offsetTop - pane.clientHeight / 3;
             }
             if (nav.frame.id === 'dominance' || (nav.frame.id === 'comparison' && nav.frame.phase === 'dominance')) {
                 const grid = document.querySelector('.pairwise-grid-wrap');
                 const cell = grid?.querySelector('[aria-pressed="true"]');
                 if (cell) {
                     const box = grid.getBoundingClientRect(), selected = cell.getBoundingClientRect();
-                    grid.scrollTop += selected.top - box.top - grid.clientHeight / 2;
+                    const headerHeight = grid.querySelector('thead').getBoundingClientRect().height;
+                    grid.scrollTop += selected.top - box.top - headerHeight - (grid.clientHeight-headerHeight-selected.height)/2;
                     grid.scrollLeft += selected.left - box.left - grid.clientWidth / 2;
                 }
             }
@@ -265,6 +271,9 @@
             new ResizeObserver(()=>{
                 document.body.style.setProperty('--demo-bottom', ($('demo-guide-controls').getBoundingClientRect().height + 14) + 'px');
             }).observe($('demo-guide-controls'));
+            new ResizeObserver(()=>{
+                document.body.style.setProperty('--demo-top', document.querySelector('.demo-guide-top').getBoundingClientRect().height + 'px');
+            }).observe(document.querySelector('.demo-guide-top'));
             // Re-rendered product controls retain their normal browsing behavior but cannot launch a run.
             new MutationObserver(records=>{
                 // Text/judgment updates add no controls. Avoid rescanning the entire workspace

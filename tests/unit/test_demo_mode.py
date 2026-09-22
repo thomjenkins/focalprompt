@@ -10,6 +10,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / 'examples/demos/lisbon/pup4ominiFull.json'
 SHA256 = '1c178997a02a417dbc039d0fe117a520c31b95e95dbf0f593961c2aada244a57'
+ASTRA_FIXTURE = ROOT / 'examples/demos/lisbon/Astrapup.json'
+ASTRA_SHA256 = '8c8cc870960a73be4bea0aa9bdab6bc9b73640a8f16d8b3a4e4090e8390ae117'
 
 
 def node(script):
@@ -31,6 +33,58 @@ def test_fixture_is_the_exact_supplied_workspace():
     assert data['focalprompt_workspace'] is True
     assert data['version'] == 2
     assert data['prompt_analysis']['scenario']['messages'][0]['role'] == 'system'
+
+
+def test_astra_recording_is_exact_and_comparison_is_grounded_in_actual_data():
+    assert hashlib.sha256(ASTRA_FIXTURE.read_bytes()).hexdigest() == ASTRA_SHA256
+    node("""
+const astra=JSON.parse(fs.readFileSync('examples/demos/lisbon/Astrapup.json','utf8'));
+const before=JSON.stringify(astra), recording=definition.comparisonWorkspaces[0];
+const data=adapter.prepareComparison(astra,recording);
+assert.equal(data.modelLabel,astra.prompt_analysis.focus_workflow.context.model.model);
+assert.equal(data.modelLabel,'gpt-6-astra');
+assert.equal(data.booking.index,3);assert.equal(data.cat.index,19);assert.equal(data.hierarchy.index,15);
+for(const key of ['booking','cat','hierarchy'])assert.equal(data[key].spans[0].text,recording.expectedText[key]);
+assert.equal(data.booking.spans[0].role,'system');assert.equal(data.hierarchy.spans[0].role,'user');
+assert.equal(data.series.baseline.n,10);assert.equal(data.series.baseline.counts.refusal,10);
+assert.match(data.series.baseline.evidence,/Editorial reading/);
+assert.deepEqual(data.series.baseline.samples.map(s=>s.raw),astra.prompt_analysis.focus_workflow.samples.map(s=>s.content));
+assert.equal(data.bookingShare,0);
+assert.equal(data.pair.views.combined.output_count,105);
+assert.equal(data.pair.views.combined.condition_count,20);
+assert.equal(data.pair.views.full.row_share,0);
+assert.deepEqual(data.pair,astra.prompt_analysis.singleton_experiment.result.pairwise_resemblance.pairs.find(p=>p.row_index===3 && p.column_index===19));
+assert.equal(JSON.stringify(astra),before);assert.equal(JSON.stringify(data.workspace),before);
+const primary=adapter.prepare(workspace,definition);
+assert.equal(primary.singleton.pairwise_resemblance.pairs.find(p=>p.row_index===4 && p.column_index===15).views.combined.row_share,1);
+const frames=adapter.frames(primary,definition,[data]);
+assert.equal(frames.length,16);
+const first=frames.findIndex(f=>f.id==='comparison');
+assert.equal(frames[first-1].id,'order');
+assert.deepEqual(frames.slice(first,first+3).map(f=>[f.id,f.phase,f.workspaceId]),[
+ ['comparison','prompt','astra'],['comparison','baseline','astra'],['comparison','dominance','astra']]);
+assert.equal(frames[first+3].id,'jev');assert.equal(frames[first+3].workspaceId,undefined);
+""")
+
+
+def test_astra_comparison_fails_loudly_on_inconsistent_recordings():
+    node(r"""
+const original=JSON.parse(fs.readFileSync('examples/demos/lisbon/Astrapup.json','utf8'));
+const recording=definition.comparisonWorkspaces[0];
+function rejects(change,pattern){const input=structuredClone(original);change(input.prompt_analysis);assert.throws(()=>adapter.prepareComparison(input,recording),pattern);}
+rejects(pa=>pa.focus_workflow.context.model.model='wrong-model',/unexpected baseline model/);
+rejects(pa=>pa.foci[3].focus='Missing booking',/grounded focus/);
+rejects(pa=>pa.foci[15].focus='Missing hierarchy',/hierarchy/);
+rejects(pa=>pa.foci[19].focus='Missing cat',/grounded focus/);
+rejects(pa=>[pa.foci[3],pa.foci[4]]=[pa.foci[4],pa.foci[3]],/booking focus index/);
+rejects(pa=>pa.foci[3].prompt_section='Altered text',/Source text mismatch/);
+rejects(pa=>pa.scenario.messages[0].content=pa.scenario.messages[0].content.replace('must always','might often'),/Source text mismatch/);
+rejects(pa=>pa.focus_workflow.samples.pop(),/ten reviewed baseline outputs/);
+rejects(pa=>pa.focus_workflow.samples[0].content='I will book the dog here.',/refusal evidence/);
+rejects(pa=>pa.singleton_experiment.result.pairwise_resemblance.pairs=[],/missing booking\/cat-only matrix pair/);
+rejects(pa=>pa.singleton_experiment.result.pairwise_resemblance.pairs.find(p=>p.row_index===3 && p.column_index===19).views.combined.row_share=.8,/does not favor Cat-only/);
+rejects(pa=>pa.singleton_experiment.context.model.model='wrong-model',/models differ/);
+""")
 
 
 def test_replay_uses_actual_spans_outputs_orders_and_judgments_without_mutation():
@@ -197,6 +251,10 @@ def test_replay_routes_are_read_only_and_available_without_live_inference(monkey
         assert fixture.headers['Content-Encoding'] == 'gzip'
         assert len(fixture.data) < 4_000_000
         assert gzip.decompress(fixture.data) == FIXTURE.read_bytes()
+        astra = client.get('/demo/lisbon/workspaces/astra.json')
+        assert astra.status_code == 200
+        assert len(astra.data) < 4_000_000
+        assert gzip.decompress(astra.data) == ASTRA_FIXTURE.read_bytes()
         for path in ['/experiments', '/about', '/lab']:
             assert b'/demo/lisbon' in client.get(path).data
         assert client.get('/demo/unknown').status_code == 404

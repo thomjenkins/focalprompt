@@ -24,7 +24,12 @@
         if (!pa?.scenario?.messages?.length || !Array.isArray(pa.foci)) throw new Error('The workspace has no scenario or focus catalog.');
         const scenario = pa.scenario, messages = new Map(scenario.messages.map(m => [m.id, m]));
         const foci = pa.foci.map((focus, index) => {
-            const spans = (focus.spans || []).map(span => {
+            // The production importer also supports the older, message-relative
+            // single-span fields. Read them without rewriting the supplied export.
+            const sourceSpans = focus.spans?.length ? focus.spans :
+                Number.isInteger(focus.char_start) && Number.isInteger(focus.char_end)
+                    ? [{message_id:focus.message_id,char_start:focus.char_start,char_end:focus.char_end,text_snapshot:focus.prompt_section}] : [];
+            const spans = sourceSpans.map(span => {
                 const message = messages.get(span.message_id || focus.message_id);
                 if (!message || !Number.isInteger(span.char_start) || !Number.isInteger(span.char_end)
                     || span.char_start < 0 || span.char_end <= span.char_start || span.char_end > message.content.length) {
