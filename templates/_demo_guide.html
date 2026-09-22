@@ -1,0 +1,17 @@
+<aside id="demo-guide" aria-label="LisbonAI recorded walkthrough">
+    <div class="demo-guide-top">
+        <div><strong>LisbonAI <span>· The pup at the cat-only clinic</span></strong><small id="demo-ready" role="status">Loading the recorded workspace…</small></div>
+        <div class="demo-guide-tools">
+            <button id="demo-explore" type="button" disabled>Explore workspace</button>
+            <button id="demo-reset" type="button" disabled>Reset</button>
+            <button id="demo-fullscreen" type="button" aria-label="Enter fullscreen">⛶</button>
+            <a href="/lab" target="_blank" rel="noopener">Open lab ↗</a>
+        </div>
+    </div>
+    <div id="demo-guide-controls" hidden>
+        <div class="demo-guide-location"><label for="demo-location">Guide</label><select id="demo-location" aria-label="Choose a walkthrough section"></select><span id="demo-step-label"></span></div>
+        <p id="demo-guide-note" aria-live="polite"></p>
+        <div class="demo-guide-navigation"><span>← → / Space to follow · Esc to explore</span><label>View <select id="demo-layout"><option value="spotlight">Spotlight</option><option value="context">In context</option></select></label><button id="demo-previous" type="button">← Back</button><button id="demo-next" type="button">Continue →</button></div>
+    </div>
+</aside>
+<div id="demo-load-error" role="alert" hidden></div>

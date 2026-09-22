@@ -1,0 +1,20 @@
+.recorded-samples { border:1px solid var(--border-color,#dce1e6); border-radius:10px; background:#fff; padding:18px; margin:14px 0; min-width:0; }
+.recorded-sample-toolbar { display:flex; justify-content:space-between; gap:12px; align-items:center; margin-bottom:12px; }
+.recorded-sample-toolbar>span { color:var(--text-secondary,#627180); font-size:.9em; }
+.recorded-sample-buttons { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px; }
+.recorded-sample-buttons button { border:1px solid #c3ceda; background:#f4f6f9; color:#1e3a5f; border-radius:6px; min-width:34px; padding:5px 8px; font:inherit; cursor:pointer; }
+.recorded-sample-buttons button[aria-pressed=true] { background:#1e3a5f; color:white; border-color:#1e3a5f; }
+.recorded-sample-buttons button:focus-visible { outline:3px solid #887bea; outline-offset:3px; }
+.recorded-sample-panel[hidden] { display:none!important; }
+.recorded-output { margin:10px 0 16px; padding:0; border:0; font-size:1.15em; line-height:1.5; white-space:pre-wrap; overflow-wrap:anywhere; color:var(--text-primary,#243343); }
+.recorded-raw pre { white-space:pre-wrap; overflow-wrap:anywhere; }
+.recorded-raw summary { cursor:pointer; color:var(--text-secondary,#627180); font-size:.9em; }
+.recorded-judgment { padding:10px; background:#f3f6f8; font-size:.9em; }
+.recorded-judgment small { display:block; margin-top:6px; color:#627180; }
+.focus-order-sequence { display:flex; gap:8px; flex-wrap:wrap; list-style:none; padding:0; margin:16px 0; }
+.focus-order-sequence li { background:#eef2f7; border:1px solid #d4dce6; border-radius:6px; padding:6px 10px; }
+.focus-order-sequence li[data-swept-focus=true] { background:#fff0d9; border-color:#dba257; }
+.focus-order-position { padding:12px; margin:10px 0; border:1px solid var(--border-color,#dce1e6); border-radius:8px; }
+.focus-order-position>summary { cursor:pointer; font-weight:600; }
+.legend-item[data-coverage-focus] { font:inherit; color:inherit; text-align:left; border:1px solid transparent; cursor:pointer; }
+.legend-item[data-coverage-focus][aria-pressed=true] { border-color:#5345bd; box-shadow:0 0 0 1px #5345bd; }

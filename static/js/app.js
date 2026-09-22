@@ -10,11 +10,12 @@ window.getAblationFoci = function () { return foci; };
 window.getBatchFoci = function () { return batchFoci; };
 
 // Settings management
-let userProvider = localStorage.getItem('focalprompt_mut_provider') || localStorage.getItem('focalprompt_provider') || 'openai';
-let userApiKey = localStorage.getItem('focalprompt_api_key') || '';
-let userModel = localStorage.getItem('focalprompt_mut_model') || localStorage.getItem('focalprompt_model') || 'gpt-4o-mini';
-let analysisProvider = localStorage.getItem('focalprompt_analysis_provider') || 'openai';
-let analysisModel = localStorage.getItem('focalprompt_analysis_model') || 'gpt-4o';
+const appStorage = window.FocalPromptReplayStorage || localStorage;
+let userProvider = appStorage.getItem('focalprompt_mut_provider') || appStorage.getItem('focalprompt_provider') || 'openai';
+let userApiKey = appStorage.getItem('focalprompt_api_key') || '';
+let userModel = appStorage.getItem('focalprompt_mut_model') || appStorage.getItem('focalprompt_model') || 'gpt-4o-mini';
+let analysisProvider = appStorage.getItem('focalprompt_analysis_provider') || 'openai';
+let analysisModel = appStorage.getItem('focalprompt_analysis_model') || 'gpt-4o';
 
 // Section model settings. Role fields remain on the wire for older API clients.
 const MODEL_SECTIONS = [
@@ -37,7 +38,7 @@ function normalizeSectionModels(value) {
 
 function loadSectionModels() {
     try {
-        return normalizeSectionModels(JSON.parse(localStorage.getItem('focalprompt_section_models')));
+        return normalizeSectionModels(JSON.parse(appStorage.getItem('focalprompt_section_models')));
     } catch (_) {
         return {};
     }
@@ -50,7 +51,7 @@ function getSectionModel(section) {
 }
 
 function saveSectionModels() {
-    localStorage.setItem('focalprompt_section_models', JSON.stringify(sectionModelOverrides));
+    appStorage.setItem('focalprompt_section_models', JSON.stringify(sectionModelOverrides));
 }
 
 function collectModelSettings() {
@@ -503,15 +504,15 @@ function persistModelSelection(provider, model, role = 'mut') {
     } else if (role === 'analysis') {
         analysisProvider = provider;
         analysisModel = model;
-        localStorage.setItem('focalprompt_analysis_provider', provider);
-        localStorage.setItem('focalprompt_analysis_model', model);
+        appStorage.setItem('focalprompt_analysis_provider', provider);
+        appStorage.setItem('focalprompt_analysis_model', model);
     } else {
         userProvider = provider;
         userModel = model;
-        localStorage.setItem('focalprompt_mut_provider', provider);
-        localStorage.setItem('focalprompt_mut_model', model);
-        localStorage.setItem('focalprompt_provider', provider);
-        localStorage.setItem('focalprompt_model', model);
+        appStorage.setItem('focalprompt_mut_provider', provider);
+        appStorage.setItem('focalprompt_mut_model', model);
+        appStorage.setItem('focalprompt_provider', provider);
+        appStorage.setItem('focalprompt_model', model);
     }
     if (picker.providerSelect && picker.providerSelect.value !== provider) {
         picker.providerSelect.value = provider;
@@ -1373,12 +1374,12 @@ function savePromptAndFoci() {
         foci: foci,
         timestamp: new Date().toISOString()
     };
-    localStorage.setItem('focalprompt_saved_prompt', JSON.stringify(data));
+    appStorage.setItem('focalprompt_saved_prompt', JSON.stringify(data));
     alert('✓ Prompt and foci saved! They will be restored when you refresh the page.');
 }
 
 function loadPromptAndFoci() {
-    const saved = localStorage.getItem('focalprompt_saved_prompt');
+    const saved = appStorage.getItem('focalprompt_saved_prompt');
     if (!saved) {
         alert('No saved prompt found.');
         return;
@@ -1412,12 +1413,12 @@ function saveBatchAnalysis() {
         pairs: batchPairs,
         timestamp: new Date().toISOString()
     };
-    localStorage.setItem('focalprompt_saved_batch', JSON.stringify(data));
+    appStorage.setItem('focalprompt_saved_batch', JSON.stringify(data));
     alert('✓ Batch analysis data saved!');
 }
 
 function loadBatchAnalysis() {
-    const saved = localStorage.getItem('focalprompt_saved_batch');
+    const saved = appStorage.getItem('focalprompt_saved_batch');
     if (!saved) {
         alert('No saved batch analysis found.');
         return;
@@ -1501,7 +1502,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     initModelSearch();
     
     // Then load models dynamically from AI Gateway and update
-    const modelsLoaded = await loadModelsFromGateway();
+    const modelsLoaded = !window.FOCALPROMPT_REPLAY && await loadModelsFromGateway();
     if (modelsLoaded) {
         // Update the model search input with current selection
         updateModelSearchValue('mut');
@@ -1512,7 +1513,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     }
     
     // Load model pricing
-    await loadModelPricing();
+    if (!window.FOCALPROMPT_REPLAY) await loadModelPricing();
     updateModelDisplay();
     
     // Also add direct listeners as backup
@@ -1532,7 +1533,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     });
     
     // Auto-load saved prompt and foci
-    const savedPrompt = localStorage.getItem('focalprompt_saved_prompt');
+    const savedPrompt = appStorage.getItem('focalprompt_saved_prompt');
     if (savedPrompt) {
         try {
             const data = JSON.parse(savedPrompt);
@@ -1549,7 +1550,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     }
     
     // Auto-load saved batch analysis
-    const savedBatch = localStorage.getItem('focalprompt_saved_batch');
+    const savedBatch = appStorage.getItem('focalprompt_saved_batch');
     if (savedBatch) {
         try {
             const data = JSON.parse(savedBatch);
@@ -1661,10 +1662,10 @@ window.addEventListener('DOMContentLoaded', async () => {
                 // Legacy plain button fallback
                 toggleSettingsBtn.textContent = expanded ? 'Hide' : 'Show';
             }
-            localStorage.setItem('focalprompt_settings_expanded', expanded.toString());
+            appStorage.setItem('focalprompt_settings_expanded', expanded.toString());
         };
 
-        let isExpanded = localStorage.getItem('focalprompt_settings_expanded') === 'true';
+        let isExpanded = appStorage.getItem('focalprompt_settings_expanded') === 'true';
         setExpanded(isExpanded);
 
         toggleSettingsBtn.addEventListener('click', () => {
@@ -3047,12 +3048,29 @@ function updateLegend() {
     }
     
     legendItems.innerHTML = foci.map((focus, index) => `
-        <div class="legend-item">
-            <div class="legend-color" style="background: ${focus.color}; border-color: ${focus.colorDark};"></div>
+        <button type="button" class="legend-item" data-coverage-focus="${index}" aria-pressed="${selectedFocusIndex === index}">
+            <span class="legend-color" style="background: ${focus.color}; border-color: ${focus.colorDark};"></span>
             <span class="legend-item-name">${index + 1}. ${escapeHtml(focus.focus.substring(0, 30))}${focus.focus.length > 30 ? '...' : ''}</span>
-        </div>
+        </button>
     `).join('');
 }
+
+// The legend and recorded walkthrough use the same source-selection interaction.
+window.FocalPromptCoverage = {select(index) {
+    if (!Number.isInteger(index) || !foci[index]) return;
+    selectedFocusIndex = index;
+    updateCoverageVisualization();
+    const highlight = [...document.querySelectorAll('#prompt-highlighted [data-focus-indices]')]
+        .find(el => el.dataset.focusIndices.split(',').includes(String(index)));
+    highlight?.scrollIntoView({block:'center', behavior:'instant'});
+}};
+legendItems?.addEventListener('click', event => {
+    const button = event.target.closest('[data-coverage-focus]');
+    if (button) {
+        window.FocalPromptCoverage.select(Number(button.dataset.coverageFocus));
+        legendItems.querySelector(`[data-coverage-focus="${button.dataset.coverageFocus}"]`)?.focus({preventScroll:true});
+    }
+});
 
 // Update coverage statistics
 function updateCoverageStats() {
@@ -9014,7 +9032,7 @@ function restorePromptAnalysisWorkspace(pa) {
     window.FocalPromptSingleton?.restore(pa.singleton_experiment || null);
     if (pa.single_ablation) {
         window.singleAblationResults = pa.single_ablation;
-        const skipExperimentC = !!(pa.experiment_c && pa.experiment_c.comparison);
+        const skipExperimentC = window.FOCALPROMPT_REPLAY || !!(pa.experiment_c && pa.experiment_c.comparison);
         renderAblationResults(pa.single_ablation, { skipExperimentCRefresh: skipExperimentC });
     } else {
         window.singleAblationResults = null;

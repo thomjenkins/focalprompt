@@ -167,13 +167,13 @@
                 html += `<p class="info-text">Jev decisions: ${decisions.length} calls · Gateway-reported charge $${costs.reduce((sum, c) => sum + Number(c), 0).toFixed(6)}. Generation charges are separate.</p>`;
             }
             const shared = state.selected_preview?.shared_text_retained_for_excluded || [];
-            html += '<div class="workflow-table-wrap"><table class="workflow-table"><thead><tr><th>Focus</th><th>Include probability</th><th>Decision</th></tr></thead><tbody>'
-                + state.selection.decisions.map(d => `<tr><td>${d.focus_index + 1}. ${esc(d.focus)}</td><td>${(d.probability * 100).toFixed(1)}%</td><td>${d.included ? 'Include' : 'Exclude'}${shared.includes(d.focus_index) ? ' · shared text retained by another focus' : ''}</td></tr>`).join('') + '</tbody></table></div>';
+            html += '<div class="workflow-table-wrap jev-decisions"><table class="workflow-table"><thead><tr><th>Focus</th><th>Include probability</th><th>Decision</th></tr></thead><tbody>'
+                + state.selection.decisions.map(d => `<tr data-jev-focus="${d.focus_index}" data-included="${d.included}"><td>${d.focus_index + 1}. ${esc(d.focus)}</td><td>${(d.probability * 100).toFixed(1)}%</td><td>${d.included ? 'Include' : 'Exclude'}${shared.includes(d.focus_index) ? ' · shared text retained by another focus' : ''}</td></tr>`).join('') + '</tbody></table></div>';
             if (!state.selection.selected_indices.length) html += '<p>No foci were selected. The composed prompt still contains retained messages and unlabelled text.</p>';
             if (c.order) {
                 const groups = state.selection.order_groups;
                 html += '<p><strong>Ordering:</strong> Jev chooses the next focus from the remaining candidates, one position at a time. The final remaining focus fills the last slot.</p>';
-                html += groups.map(g => `<p>${esc(g.message_id)}: ${esc((state.orders[g.message_id] || []).map(i => `${i + 1}. ${c.foci[i].focus}`).join(' → '))}</p>`).join('');
+                html += groups.map(g => `<p class="jev-order-group" data-order-message="${esc(g.message_id)}">${esc(g.message_id)}: ${esc((state.orders[g.message_id] || []).map(i => `${i + 1}. ${c.foci[i].focus}`).join(' → '))}</p>`).join('');
                 const movable = new Set(groups.flatMap(g => g.focus_indices));
                 const fixed = state.selection.selected_indices.filter(i => !movable.has(i));
                 if (fixed.length) html += `<p class="info-text">Kept at source positions (overlap, multiple spans, or no movable peer): ${esc(fixed.map(i => c.foci[i].focus).join(', '))}.</p>`;
@@ -184,14 +184,14 @@
             html += '<p class="info-text">Outputs are independently sampled in a saved, randomized arm order. Character counts measure prompt length, not token cost. Differences in wording or length do not establish better task quality.</p>';
             for (const [id, arm] of Object.entries(state.arms)) {
                 const samples = arm.samples.filter(Boolean), chars = arm.scenario.messages.reduce((n, m) => n + m.content.length, 0);
-                html += `<h3>${titles[id]} · ${samples.length}/${c.count} outputs · ${chars.toLocaleString()} prompt characters</h3>`;
+                html += `<section class="jev-arm" data-jev-arm="${id}"><h3>${titles[id]} · ${samples.length}/${c.count} outputs · ${chars.toLocaleString()} prompt characters</h3>`;
                 html += `<details><summary>Inspect exact prompt messages</summary>${scenarioHtml(arm.scenario)}</details>`;
                 if (id !== 'full') {
                     html += `<div class="button-group" style="margin:12px 0"><button type="button" class="btn btn-primary" data-jev-analyse="${id}" ${busy ? 'disabled' : ''}>Analyse this prompt ↗</button>
                         <button type="button" class="btn btn-outline" data-jev-download="${id}" ${busy ? 'disabled' : ''}>Download analysis workspace</button></div>`;
                     html += '<p class="info-text">Opens a separate lab with this exact prompt and its selected foci. Start at step 2 with fresh predictions and outputs, then run ablation and quality evaluation. Your original analysis stays in this tab.</p>';
                 }
-                html += arm.samples.map((sample, i) => sample ? `<details><summary>Output ${i + 1}</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(sample.output)}</pre></details>` : '').join('');
+                html += global.FocalPromptSamples.render(arm.samples.map(s => s?.output), {id:'jev-' + id,title:titles[id]}) + '</section>';
             }
         }
         html += `<details style="margin-top:16px"><summary>Method and Jev request / response audit</summary><p>The complete scenario and source spans are sent to Jev, with no new generated output. Selection probabilities use the displayed threshold. There is no Jev sampling temperature. Unlabelled text is kept; excluded overlapping text may survive where a selected focus needs it. This experiment measures the behavior of constructed prompts, not internal model attention. Jev probabilities require calibration on representative labelled examples.</p><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(JSON.stringify({protocol: state.protocol, selection: state.selection, order_decisions: state.order_decisions}, null, 2))}</pre></details>`;

@@ -263,9 +263,7 @@
         if (el('prospective-results')) el('prospective-results').innerHTML = state?.prospective ? allocationTable(state.prospective) : '';
         if (el('baseline-results')) el('baseline-results').innerHTML = state ?
             (state.diagnostics ? distributionView(state.diagnostics) : '<p class="info-text">' + state.samples.filter(Boolean).length + ' baseline outputs collected.</p>')
-            + state.samples.map((sample, i) => sample ? '<details class="workflow-output"><summary>Output ' + (i + 1)
-                + (state.diagnostics ? ' · group ' + (state.diagnostics.output_distribution.membership[i] + 1) : '')
-                + '</summary><pre>' + esc(sample.content) + '</pre></details>' : '').join('') : '';
+            + global.FocalPromptSamples.render(state.samples.map(s => s?.content), {id:'baseline',title:'Baseline outputs'}) : '';
         if (el('retrospective-results')) el('retrospective-results').innerHTML = state ?
             (state.summary ? '<p class="info-text">Retrospective assessments use temperature 0.2; generation temperature is shown above.</p>'
                 + comparisonTable(state.summary) : '<p class="info-text">' + state.retrospective.filter(Boolean).length + ' outputs assessed.</p>')

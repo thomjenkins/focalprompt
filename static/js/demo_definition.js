@@ -11,14 +11,14 @@
         comparisonWorkspaces: [],
         keyFoci: {booking: 'Appointment booking', cat: 'Cat only'},
         steps: [
-            {id: 'problem', title: 'The pup at the cat-only clinic', label: 'The problem'},
-            {id: 'baseline', title: 'One prompt. Repeated behavior.', label: 'Baseline'},
-            {id: 'foci', title: 'Make the instructions addressable.', label: 'Foci'},
-            {id: 'ablation', title: 'Remove an instruction. What changes?', label: 'Ablation'},
-            {id: 'singleton', title: 'Strong alone. Different together.', label: 'Isolation'},
-            {id: 'order', title: 'Same words. Different order.', label: 'Order'},
+            {id: 'problem', title: 'Inference scenario', label: 'Scenario'},
+            {id: 'baseline', title: 'Baseline outputs', label: 'Baseline'},
+            {id: 'foci', title: 'Prompt coverage', label: 'Foci'},
+            {id: 'ablation', title: 'Leave-one-out ablation', label: 'Ablation'},
+            {id: 'singleton', title: 'Singleton focus analysis', label: 'Isolation'},
+            {id: 'order', title: 'Focus order experiment', label: 'Order'},
             {id: 'jev', title: 'Dynamic prompt composition', label: 'Compose'},
-            {id: 'end', title: 'Measure → perturb → compose', label: 'What next'}
+            {id: 'end', title: 'Explore the results', label: 'What next'}
         ],
         // Zero-based sample indices, never rewritten outputs. Each item remains inspectable.
         featured: {baseline: 0, removeCat: 0, removeBooking: 1, noFocus: 0, bookingOnly: 0,

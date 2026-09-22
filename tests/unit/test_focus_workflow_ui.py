@@ -14,6 +14,7 @@ def test_ordered_workflow_resume_reuse_and_staleness():
     script = r"""
 const assert = require('node:assert/strict');
 const window = globalThis;
+window.FocalPromptSamples = require('./static/js/recorded_samples.js');
 const elements = new Map();
 const document = {
   getElementById(id) {
