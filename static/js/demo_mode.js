@@ -6,9 +6,9 @@
     let data, nav, timeline, sourceText, exploring = false;
     const savedDetails = new Map();
     const sections = {problem:'lab-prompt', baseline:'lab-baseline', foci:'lab-prompt', ablation:'lab-experiment-b',
-        singleton:'lab-singleton', order:'lab-focus-order', jev:'lab-jev', end:'lab-experiment-b'};
+        singleton:'lab-singleton', dominance:'lab-singleton', order:'lab-focus-order', jev:'lab-jev', end:'lab-experiment-b'};
     const names = {problem:'Inference scenario',baseline:'Baseline outputs',foci:'Prompt coverage',ablation:'Ablation',
-        singleton:'Singleton analysis',order:'Focus order',jev:'Jev composition',end:'Explore the results'};
+        singleton:'Singleton analysis',dominance:'Focus vs focus',order:'Focus order',jev:'Jev composition',end:'Explore the results'};
     // Only display controls remain active in the saved workspace. The fetch guard is an independent backstop.
     const allowedButtons = '[data-recorded-sample],[data-coverage-focus],[data-singleton-chart-toggle],[data-singleton-chart-focus],[data-singleton-inspect],[data-pairwise-row],.tab-btn,'
         + '[data-action="set-view"],[data-action="select-focus"],[data-action="close-inspector"],[data-action="toggle-dumbbell-all"],[data-action="export-json"],'
@@ -49,6 +49,7 @@
             case 'foci': return `${data.foci.length} labelled source spans. Choose a focus in the coverage legend to find it in the original prompt. Appointment booking and Cat only are the instructions we will test.`;
             case 'ablation': return `Featured comparison: without Cat only, ${count('removeCat','booking')} offer booking; without Appointment booking, ${count('removeBooking','refusal')} refuse or redirect. The displayed refusal is the exception. Editorial reading; inspect all samples.`;
             case 'singleton': return `Featured singleton comparisons: no focus ${count('noFocus','booking')} progress booking; booking only ${count('bookingOnly','booking')} progress booking; cat only ${count('catOnly','refusal')} refuse or redirect. Editorial reading of saved outputs.`;
+            case 'dominance': return 'When both foci are present, which singleton do the outputs resemble? Compare the full prompt and eligible ablations. Blue favors the row; orange favors the column. Select any pair to inspect the evidence. This is behavioral resemblance, not a focus budget or proof of causal dominance.';
             case 'order': {
                 const slot = frame.phase === 'original' ? data.originalOrder.indexOf(data.cat.index) : frame.position;
                 return `${frame.phase === 'original' ? 'Original order' : 'Recorded position ' + (slot+1)}: ${count('order-' + slot,'refusal')} refuse or redirect. Same words, same message role; only the order changes. Stored LLM judgments, not ground truth; one scenario.`;
@@ -98,6 +99,14 @@
                     sample(arm.querySelector('.recorded-samples'),arm.dataset.singletonArm === 'Singleton' && focus === data.cat ? definition.featured.catOnly : 0);
                 });
             }
+        } else if (frame.id === 'dominance') {
+            target = $('singleton-results');
+            // Drive the genuine product controls; revisiting this stop resets the comparison.
+            for (const [id,value] of [['singleton-result-order','focus_index'],['pairwise-view','combined']]) {
+                const control = $(id);
+                if (control) {control.value=value;control.dispatchEvent(new Event('change',{bubbles:true}));}
+            }
+            $(`pairwise-cell-${data.booking.index}-${data.cat.index}`)?.click();
         } else if (frame.id === 'order') {
             const slot = frame.phase === 'original' ? data.originalOrder.indexOf(data.cat.index) : frame.position;
             target = $('focus-order-results');
@@ -118,7 +127,7 @@
             const indices = (el.dataset.focusIndices || el.dataset.coverageFocus || '').split(',').map(Number);
             el.classList.toggle('demo-key-focus',indices.some(i=>i===data.booking.index || i===data.cat.index));
         });
-        return target;
+        return frame.id === 'dominance' ? target.querySelector('.pairwise-results') : target;
     }
     function applyLayout() {
         document.body.classList.toggle('replay-guided', !exploring);
@@ -148,6 +157,15 @@
                 const mark = [...document.querySelectorAll('#prompt-highlighted [data-focus-indices]')].find(el=>el.dataset.focusIndices.split(',').includes(String(focus.index)));
                 const pane = mark?.closest('.coverage-message');
                 if (pane) pane.scrollTop = mark.offsetTop - pane.offsetTop - pane.clientHeight / 3;
+            }
+            if (nav.frame.id === 'dominance') {
+                const grid = document.querySelector('.pairwise-grid-wrap');
+                const cell = grid?.querySelector('[aria-pressed="true"]');
+                if (cell) {
+                    const box = grid.getBoundingClientRect(), selected = cell.getBoundingClientRect();
+                    grid.scrollTop += selected.top - box.top - grid.clientHeight / 2;
+                    grid.scrollLeft += selected.left - box.left - grid.clientWidth / 2;
+                }
             }
         });
     }
@@ -190,8 +208,9 @@
     }
     $('demo-next').addEventListener('click',()=>go(nav.index+1));
     $('demo-previous').addEventListener('click',()=>go(nav.index-1));
-    $('demo-location').addEventListener('change',event=>go(timeline.findIndex(frame=>frame.id===event.target.value)));
-    $('demo-layout').addEventListener('change',()=>go(nav.index));
+    // Guide preferences are not experiment settings: do not trigger the lab's settings listeners.
+    $('demo-location').addEventListener('change',event=>{event.stopPropagation();go(timeline.findIndex(frame=>frame.id===event.target.value));});
+    $('demo-layout').addEventListener('change',event=>{event.stopPropagation();go(nav.index);});
     $('demo-explore').addEventListener('click',()=>exploring ? go(nav.index) : explore());
     $('demo-reset').addEventListener('click',reset);
     $('demo-fullscreen').addEventListener('click',async()=>{try {if(document.fullscreenElement)await document.exitFullscreen();else await document.documentElement.requestFullscreen();}catch(_){$('demo-ready').textContent='Fullscreen unavailable · recorded workspace ready';}});
