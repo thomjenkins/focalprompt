@@ -122,7 +122,10 @@ def test_replay_routes_are_read_only_and_available_without_live_inference(monkey
         r = client.get('/demo/lisbon')
         assert r.status_code == 200
         assert b'demo_mode.js' in r.data
-        assert b'js/app.js' not in r.data  # no model discovery, restore, or active workspace mutation
+        assert b'js/app.js' in r.data  # actual lab template and renderers, isolated by replay guard
+        assert b'js/replay_guard.js' in r.data
+        assert r.data.index(b'js/replay_guard.js') < r.data.index(b'js/app.js')
+        assert b'fonts.googleapis.com' not in r.data
         fixture = client.get('/demo/lisbon/workspaces/gpt4omini.json')
         assert fixture.status_code == 200
         assert fixture.headers['Content-Encoding'] == 'gzip'
@@ -133,3 +136,42 @@ def test_replay_routes_are_read_only_and_available_without_live_inference(monkey
         assert client.get('/demo/unknown').status_code == 404
         assert client.get('/demo/lisbon/workspaces/unknown.json').status_code == 404
         assert client.post('/demo/lisbon/workspaces/gpt4omini.json').status_code == 405
+
+
+def test_shared_output_browser_preserves_text_and_escapes_untrusted_output():
+    node(r'''
+const samples = require('./static/js/recorded_samples.js');
+const raw = JSON.stringify({suggestedMessage:'Use {{tag}}.\n<script>alert(1)</script> & "quoted"', other:'kept'});
+assert.equal(samples.text(raw), JSON.parse(raw).suggestedMessage);
+assert.equal(samples.text('verbatim <text>'), 'verbatim <text>');
+const rendered = samples.render([raw, 'Second output'], {id:'test',selected:1});
+assert.ok(rendered.includes('&lt;script&gt;'));
+assert.ok(!rendered.includes('<script>'));
+assert.ok(rendered.includes('data-recorded-panel="0" hidden'));
+assert.ok(rendered.includes('data-recorded-panel="1" >'));
+assert.ok(rendered.includes('&quot;other&quot;:&quot;kept&quot;'));
+const partial = samples.render([null, 'Original sample two', null, 'Original sample four']);
+assert.ok(partial.includes('2 samples'));
+assert.ok(partial.includes('data-recorded-sample="3"'));
+assert.ok(!partial.includes('data-recorded-sample="0"'));
+assert.ok(partial.includes('data-recorded-panel="1" >'));
+''')
+
+
+def test_replay_guard_blocks_live_requests_and_keeps_preferences_in_memory():
+    node(r'''
+const vm = require('node:vm'), sent = [];
+const browserWindow = {location:{href:'https://example.test/demo/lisbon',origin:'https://example.test'},
+ fetch: (...args)=>{sent.push(args);return Promise.resolve(new Response('fixture'));}};
+vm.runInNewContext(fs.readFileSync('./static/js/replay_guard.js','utf8'), {window:browserWindow,URL,Response});
+(async()=>{
+ browserWindow.FocalPromptReplayStorage.setItem('draft','local to replay');
+ assert.equal(browserWindow.FocalPromptReplayStorage.getItem('draft'),'local to replay');
+ assert.equal((await browserWindow.fetch('/api/generate-output',{method:'POST'})).status,409);
+ assert.equal((await browserWindow.fetch('https://other.test/send')).status,409);
+ assert.equal((await browserWindow.fetch('/demo/lisbon/workspaces/gpt4omini.json',{method:'POST'})).status,409);
+ assert.equal(sent.length,0);
+ assert.equal(await (await browserWindow.fetch('/demo/lisbon/workspaces/gpt4omini.json')).text(),'fixture');
+ assert.equal(sent.length,1);
+})().catch(error=>{console.error(error);process.exit(1)});
+''')

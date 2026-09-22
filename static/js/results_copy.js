@@ -843,15 +843,15 @@
         (data.warnings || []).forEach(function (w) {
             html += '<p class="warning-text">' + escapeHtml(w) + '</p>';
         });
-        var global = (data.global_order_experiment && data.global_order_experiment.summary) || {};
-        var disp = global.displacement || {};
+        var globalOrder = (data.global_order_experiment && data.global_order_experiment.summary) || {};
+        var disp = globalOrder.displacement || {};
         html += '<h4>Global order sensitivity</h4>';
-        html += '<p>Sampled permutations: ' + escapeHtml(String(global.n_permutations || 0)) + '. ';
+        html += '<p>Sampled permutations: ' + escapeHtml(String(globalOrder.n_permutations || 0)) + '. ';
         if (disp.median != null) {
             html += 'Median semantic displacement vs baseline: ' + escapeHtml(Number(disp.median).toFixed(4)) + '. ';
         }
-        if (global.advisory_ui) {
-            html += escapeHtml(global.advisory_ui);
+        if (globalOrder.advisory_ui) {
+            html += escapeHtml(globalOrder.advisory_ui);
         }
         html += '</p>';
         var perms = (data.global_order_experiment && data.global_order_experiment.permutations) || [];
@@ -884,10 +884,17 @@
             var sum = sweep.summary || {};
             html += '<p>' + escapeHtml(sum.interpretation_note || '') + '</p>';
             (sweep.positions || []).forEach(function (pos) {
-                html += '<div class="focus-order-sweep-row">';
-                html += '<p><strong>Slot ' + escapeHtml(String(pos.slot_index)) + '</strong> — displacement ' +
-                    escapeHtml(fmtDist(pos.semantic_displacement)) + '</p>';
-                html += '</div>';
+                html += '<details class="focus-order-position" data-order-focus="' + escapeHtml(sweep.focus || '') +
+                    '" data-order-slot="' + escapeHtml(String(pos.slot_index)) + '"><summary>Position ' +
+                    escapeHtml(String(pos.slot_index + 1)) + ' · ' + (pos.outputs || []).length +
+                    ' outputs · displacement ' + escapeHtml(fmtDist(pos.semantic_displacement)) + '</summary>';
+                html += '<ol class="focus-order-sequence">' + (pos.ordered_focus_names || []).map(function (name) {
+                    return '<li data-swept-focus="' + (name === sweep.focus) + '">' + escapeHtml(name) + '</li>';
+                }).join('') + '</ol>';
+                if (global.FocalPromptSamples) html += global.FocalPromptSamples.render(pos.outputs || [], {
+                    id: 'order-' + pos.slot_index, title: sweep.focus + ' at position ' + (pos.slot_index + 1), judgments: pos.behavioral_judgments
+                });
+                html += '</details>';
             });
         });
         if (data.baseline_behavioral_judgments) {

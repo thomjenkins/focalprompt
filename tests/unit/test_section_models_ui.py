@@ -14,6 +14,7 @@ const assert = require('node:assert/strict');
 let userProvider = 'openai', userModel = 'default-model';
 const stored = new Map();
 const localStorage = { getItem: k => stored.get(k) || null, setItem: (k,v) => stored.set(k,v) };
+const appStorage = localStorage;
 """ + '// Section model settings.' + settings + '\nfunction selectedModelPayload' + payload + """
 const override = {provider: 'anthropic', model: 'section-model'};
 sectionModelOverrides.quality = override;

@@ -2,15 +2,21 @@
 
 Launch `/demo/lisbon` directly, or choose **LisbonAI demo** in the lab header. The `/experiments` index and hosted landing page show the prominent **The pup at the cat-only clinic** card. Launch links open a separate tab; no active lab data is restored, overwritten, persisted, or modified by the replay. Existing canonical experiment URLs still work.
 
-## Presenting
+## Guided lab walkthrough
 
-Wait for the first problem view: the complete workspace has then been loaded, checksum-verified, parsed, and frozen. All subsequent navigation, source inspection, and workspace download work without a network connection or API key. This guarantees offline operation of the loaded page, not an offline browser refresh or cold launch.
+The demo route renders the same `index.html`, scripts, workspace importer, and result components as `/lab`. There is no separate experiment-page renderer. The guide imports a detached copy of the checksum-verified workspace through `restoreWorkspaceSession`; the original source is separately frozen and retained for byte-identical export.
 
-Use **Next**, **Previous**, right/left arrows, or Space. There are eight conceptual sections and 15 deterministic states, including each of four order-sweep positions and each stage of Jev composition. No timed autoplay, random sampling, or animation delays block the controls. Reset restores the first state and default featured samples. Escape closes an open detail panel first, then exits presentation mode to a local paused screen. Resume preserves the position; Reset starts over. Fullscreen is optional. Reduced-motion preferences disable animation.
+Use **Next**, **Back**, right/left arrows, or Space outside native controls. The section selector jumps directly to any part of the guide. Eight sections contain 15 deterministic positions, including the four saved order-sweep positions and Jev decisions, selection, ordering and outputs.
 
-Sample buttons show exact stored responses. **Inspect** opens the decoded `suggestedMessage`, the exact raw exported output, sample index, source path, and any stored judgment. Decoding JSON is the only display transformation: response wording, literal escape sequences, and placeholders remain unchanged. Source data exposes the full original scenario, message roles, output contract, and a byte-identical workspace download. Self-reports and embedding statistics are secondary disclosures.
+**Spotlight** expands the current real lab card in place and preselects the featured results. **In context** locates the same component within the normal lab layout. **Explore workspace**, Escape, or a normal lab section link removes the guide's layout filtering. The real charts, report tabs, focus inspector, singleton sorting, raw outputs and disclosures remain interactive. **Resume guide** returns to the same recorded comparison. **Reset** reimports the source and returns to the scenario. Fullscreen is optional. Narrow displays stack the normal cards and scroll to the chosen section.
 
-Projector target sizes are 1920×1080 and 1280×720, without page or featured-response scrolling in the main walkthrough. Narrow screens use a stacked, scrollable layout.
+Prompt coverage uses the existing production highlighter and all 17 source spans. Its legend now supports selecting a focus and finding its source in both the normal lab and replay. The shared product output browser displays exact decoded `suggestedMessage` text (or verbatim plain text), numbered sample controls, and the exact exported output. Baseline, ablation Samples, singleton arms, order positions and Jev arms use that same component on both routes.
+
+The guide's short notes identify editorial behavioral counts separately from recorded LLM judgments. Spotlight selects two ablation comparisons and three singleton conditions; Explore exposes every recorded focus and arm. No outputs are regenerated, omitted from the loaded workspace, or rewritten.
+
+The replay is a read-only copy. Editing/run controls are disabled, model discovery/pricing are skipped, and a replay-only request guard blocks live requests before any network activity. Lab preferences and saved prompts use isolated in-memory storage, so restoration never touches another lab tab's local storage. **Open lab** opens the ordinary application separately for new work.
+
+All browsing works offline after the initial complete load. This does not promise offline cold launch or refresh. The normal lab and its inference/import/export controls are unchanged outside the replay route.
 
 ## Data provenance and narrative limits
 
@@ -42,51 +48,24 @@ The ordered Jev condition is **not** a clean 10/10 success: four responses inven
 
 ## Implementation map
 
-- `routes/demo_routes.py`: isolated page and allowlisted fixture routes. Serves the original export with HTTP gzip (about 392 KB transferred) to stay below serverless response-size limits. The browser receives the complete unchanged JSON.
-- `static/js/workspace_format.js`: existing workspace validation/v1 migration extracted for shared use by normal imports and the replay. It has no DOM or network effects.
-- `static/js/demo_definition.js`: title, eight conceptual steps, focus names, featured sample indices, fixture checksum, and editorial per-sample labels. No copied prompts or outputs.
-- `static/js/demo_data.js`: pure immutable adapters and deterministic navigation. Reads normal workspace fields (`focus_workflow`, `single_ablation`, `singleton_experiment`, `focus_order`, `jev_experiment`). Missing optional experiments are skipped.
-- `static/js/demo_mode.js`: sparse presentation views, keyboard controls, detail panels, preload/checksum verification, and optional comparison loading. It calls no model or embedding endpoints.
-- `templates/demo.html`, `static/css/demo.css`: separate stage layout and responsive styles; no third-party scripts or fonts.
-- `templates/_demo_card.html`: shared entry card. Normal lab workflows and old direct experiment routes remain available.
+- `routes/demo_routes.py`: serves the genuine lab template with replay controls and the allowlisted gzip-compressed, unmodified fixture.
+- `templates/index.html`, `templates/_demo_guide.html`: shared lab plus a small guide toolbar; no duplicate experiment markup.
+- `static/js/demo_mode.js`: import, section selection, actual disclosure/sample controls, spotlight classes, reset and exploration. It does not render experimental content.
+- `static/js/replay_guard.js`: memory-only preferences and a request backstop, loaded only for replay.
+- `static/js/demo_definition.js`, `static/js/demo_data.js`: source checksum, featured sample indices, explicit editorial annotations, immutable source adapter and deterministic sequence.
+- `static/js/recorded_samples.js`, `static/css/recorded_samples.css`: shared production output browser, used by baseline, report Samples, singleton, order and Jev renderers.
+- `static/js/app.js`: same import/restore and coverage rendering, with selectable legend and an isolated storage seam. Live startup is skipped only on the replay route.
+- `static/css/demo.css`: layout/spotlight styles for genuine lab nodes; removed the former full-screen presentation template.
 
-## Adding a later GPT-5.6 comparison
+## Replacing or adding a later fixture
 
-1. Add the unmodified workspace export under `examples/demos/lisbon/` and calculate its SHA-256.
-2. Add its file to `FIXTURES['lisbon']` in `routes/demo_routes.py`, using a new fixture ID.
-3. Add a descriptor to `comparisonWorkspaces` in `demo_definition.js`:
-
-```js
-{
-    id: 'gpt56',
-    modelLabel: 'GPT-5.6 Sol',
-    filename: 'your-export.json',
-    url: '/demo/lisbon/workspaces/gpt56.json',
-    sha256: 'the-actual-file-hash',
-    presentation: {
-        keyFoci: {booking: 'Appointment booking', cat: 'Cat only'},
-        featured: {baseline: 0},
-        annotations: {} // Add independently reviewed labels only for this export, if needed.
-    }
-}
-```
-
-The loader preloads all provided workspaces before the stage becomes ready. An optional comparison that fails loading/validation is omitted and reported in Source data. A comparison view is inserted before the ending for each loaded comparison: it shows each model's recorded baseline and exposes the exact focus wording and original roles. No GPT-4o mini editorial annotations are inherited by the second fixture. This avoids relabelling a strengthened system/developer instruction as if only the model changed. More elaborate comparison graphics can use the same independently prepared view data without restructuring the walkthrough.
-
-To replace the primary fixture, update its descriptor/checksum and independently review the editorial labels/featured samples. Experimental words and outputs must stay in the workspace, not in the definition. A checksum mismatch stops replay before presentation.
+Keep the raw export unmodified under `examples/demos/lisbon/`, register its route in `FIXTURES`, and update the demo definition's fixture URL and SHA-256. Review the featured samples and editorial classifications independently for that export; never reuse GPT-4o mini labels without checking. The source adapter already accepts an independent definition and validates source spans and roles, so a later model-comparison guide can load separate workspaces through the same lab importer. No second model is displayed without a supplied export.
 
 ## Verification
 
 ```sh
 .venv/bin/python -m pytest -q
-node --check static/js/demo_mode.js
-node --check static/js/demo_data.js
-```
-
-Browser path (requires Playwright and a local FocalPrompt server):
-
-```sh
 PLAYWRIGHT_MODULE=/path/to/playwright node tests/browser/lisbon_demo.cjs
 ```
 
-The browser test covers launch from the card, offline navigation through every state, exact rendered output text, source inspection, keyboard next/previous/reset/exit, fixture immutability, no inference calls, and projector-size clipping. The unit tests protect shared import validation/migration and the original workspace checksum, condition sample counts, roles, spans, actual orders, optional-result handling, and serverless gzip response.
+Browser tests cover actual lab node reuse, exact source text and saved outputs, every guided position, explore/resume, native report and sorting interactions, reset, export checksum, disabled inference, isolation from existing lab storage, offline browsing and desktop/mobile overflow. The original fixture checksum and experiment semantics remain covered by the unit suite.

@@ -8,6 +8,7 @@ def test_jev_resume_staleness_and_workspace_isolation():
     script = r"""
 const assert = require('node:assert/strict');
 const window = globalThis, elements = new Map();
+window.FocalPromptSamples = require('./static/js/recorded_samples.js');
 const document = {getElementById(id) {
   if (!elements.has(id)) elements.set(id, {value:'',checked:false,innerHTML:'',textContent:'',addEventListener(){}});
   return elements.get(id);
@@ -63,7 +64,7 @@ window.FocalPromptQuality = {retryRequest: task=>task(), fetchJson:async(path,op
  const completed=flow.collect();
  assert.equal(Object.values(completed.state.arms).flatMap(a=>a.samples.filter(Boolean)).length,6);
  assert.ok(completed.state.completed_at);
- assert.match(read('jev-results').innerHTML,/&lt;output>/);
+ assert.match(read('jev-results').innerHTML,/&lt;output&gt;/);
  assert.equal(window.singleAblationResults,main);
  scenario={...scenario,messages:[...scenario.messages,{id:'more',role:'user',content:'Changed input',analysis_mode:'retain'}]};
  await assert.rejects(flow.generate,/Inputs or settings changed/);

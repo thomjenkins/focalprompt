@@ -1,9 +1,11 @@
-"""Read-only presentation replay, independent of live inference and lab state."""
+"""Guided, isolated replay in the real analysis lab."""
 from functools import lru_cache
 import gzip
 from pathlib import Path
 
 from flask import Blueprint, Response, abort, render_template
+from utils.experiment_config import EXPERIMENT_COPY
+from utils.results_copy import COPY
 
 demo_bp = Blueprint('demo', __name__)
 FIXTURES = {'lisbon': {'gpt4omini': 'lisbon/pup4ominiFull.json'}}
@@ -14,7 +16,7 @@ FIXTURE_ROOT = Path(__file__).resolve().parents[1] / 'examples' / 'demos'
 def presentation(demo_id):
     if demo_id not in FIXTURES:
         abort(404)
-    return render_template('demo.html')
+    return render_template('index.html', results_copy={**COPY, **EXPERIMENT_COPY}, replay=demo_id)
 
 
 @lru_cache(maxsize=8)

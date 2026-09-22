@@ -846,42 +846,29 @@
             ? ablation.baseline_outputs
             : (ablation.baseline_output ? [ablation.baseline_output] : []);
 
-        var baselineHtml = baselineOutputs.length
-            ? '<details class="fp-sample-details"><summary>Baseline outputs (full prompt, ' + baselineOutputs.length + ')</summary>' +
-              baselineOutputs.map(function (t, i) {
-                  return '<pre class="fp-sample-text">Sample ' + (i + 1) + '\n' + escapeHtml(t) + '</pre>';
-              }).join('') + '</details>'
-            : '';
+        var baselineHtml = global.FocalPromptSamples
+            ? global.FocalPromptSamples.render(baselineOutputs, {id:'ablation-baseline', title:'Full prompt baseline'}) : '';
 
         var assessmentByName = STATE.bundle.meta.assessmentByName || {};
 
         var cards = rows.map(function (r) {
             var src = r.source || {};
             var ablatedOutputs = src.ablated_outputs || (src.ablated_output ? [src.ablated_output] : []);
-            var firstBaseline = baselineOutputs[0] || '';
-            var firstAblated = ablatedOutputs[0] || '';
             var assessed = assessmentByName[String(r.name).toLowerCase()];
 
-            var fullDetails = ablatedOutputs.length
-                ? '<details class="fp-sample-details"><summary>All ablated outputs (' + ablatedOutputs.length + ')</summary>' +
-                  ablatedOutputs.map(function (t, i) {
-                      return '<pre class="fp-sample-text">Sample ' + (i + 1) + '\n' + escapeHtml(t) + '</pre>';
-                  }).join('') + '</details>'
-                : '<p class="fp-empty">No ablated outputs captured for this focus.</p>';
+            var fullDetails = global.FocalPromptSamples
+                ? global.FocalPromptSamples.render(ablatedOutputs, {id:'ablation-' + src.focus_index, title:'Without ' + r.name})
+                : '<p class="fp-empty">No output browser available.</p>';
 
             var rationale = assessed && assessed.explanation
                 ? '<details class="fp-sample-rationale"><summary>Evaluator rationale</summary><p>' + escapeHtml(assessed.explanation) + '</p></details>'
                 : '';
 
             return (
-                '<div class="fp-sample-card">' +
+                '<div class="fp-sample-card" data-sample-focus="' + escapeHtml(r.name) + '">' +
                 '<div class="fp-sample-card-header">' +
                 '<button type="button" class="fp-link-btn fp-sample-focus-name" data-action="select-focus" data-focus="' +
                 escapeHtml(r.name) + '">' + escapeHtml(r.name) + '</button>' +
-                '</div>' +
-                '<div class="fp-sample-compare">' +
-                '<div class="fp-sample-col"><h6>Baseline (compact)</h6><p class="fp-sample-compact">' + escapeHtml(truncate(firstBaseline, 220)) + '</p></div>' +
-                '<div class="fp-sample-col"><h6>Ablated (compact)</h6><p class="fp-sample-compact">' + escapeHtml(truncate(firstAblated, 220)) + '</p></div>' +
                 '</div>' +
                 fullDetails +
                 rationale +
