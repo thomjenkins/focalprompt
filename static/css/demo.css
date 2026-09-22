@@ -77,7 +77,11 @@ body .recorded-sample-buttons button { min-width:36px; }
 .replay-spotlight[data-demo-step=singleton] #singleton-results { display:grid; grid-template-columns:2fr 1fr; gap:16px; }
 .replay-spotlight[data-demo-step=singleton] #singleton-results>details { border:0; min-width:0; }
 .replay-spotlight[data-demo-step=singleton] #singleton-results>details[open] { display:flex; flex-wrap:wrap; align-content:flex-start; gap:12px; }
-.replay-spotlight[data-demo-step=singleton] #singleton-results>details>summary { width:100%; }
+/* The featured no-focus arm is a shared control, not a result owned by booking. */
+.replay-spotlight[data-demo-step=singleton] #singleton-results>details>summary { display:none; }
+.replay-spotlight[data-demo-step=singleton] .singleton-arm-label { font-weight:700; color:var(--primary-color); }
+.replay-spotlight[data-demo-step=singleton] .singleton-arm-separator { display:none; }
+.replay-spotlight[data-demo-step=singleton] .singleton-arm-description { display:block; margin-top:4px; color:#647180; font-size:14px; }
 .replay-spotlight[data-demo-step=singleton] .singleton-arm:not(.demo-featured) { display:none; }
 .replay-spotlight[data-demo-step=singleton] .singleton-arm { flex:1; min-width:0; }
 .replay-spotlight[data-demo-step=singleton] .singleton-arm>.recorded-samples { margin:8px 0; }
