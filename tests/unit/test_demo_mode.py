@@ -70,7 +70,8 @@ def test_navigation_is_deterministic_bounded_reversible_and_resettable():
     node("""
 const data = adapter.prepare(workspace,definition), frames = adapter.frames(data,definition);
 const nav = adapter.navigator(frames), firstRun = [];
-assert.equal(frames.length,16); assert.equal(nav.frame.id,'problem');
+assert.equal(frames.length,13); assert.equal(nav.frame.id,'problem');
+assert.deepEqual(frames.filter(f=>f.id==='order').map(f=>f.phase),['condition-a','condition-b']);
 assert.deepEqual([...new Set(frames.map(f=>f.id))],
  ['problem','baseline','foci','singleton','dominance','ablation','order','jev','end']);
 nav.previous(); assert.equal(nav.index,0);
@@ -101,6 +102,59 @@ assert.match(data.series.baseline.evidence,/Editorial/);
 workspace.prompt_analysis.foci[15].spans[0].text_snapshot = 'Changed';
 assert.throws(()=>adapter.prepare(workspace,definition),/Source text mismatch/);
 """)
+
+
+def test_matched_global_orders_are_semantically_selected_and_preserve_all_evidence():
+    node("""
+const compare=require('./static/js/order_comparison.js');
+const source=workspace.prompt_analysis.focus_order.results;
+source.global_order_experiment.permutations.reverse(); // Not a positional lookup.
+const data=adapter.prepare(workspace,definition), [a,b]=data.matchedOrders;
+assert.equal(a.permutation_id,2);assert.equal(b.permutation_id,4);
+assert.equal(a.focus_positions['Cat only'],1);assert.equal(b.focus_positions['Cat only'],1);
+assert.deepEqual(compare.counts(a),{n:3,judged:3,complies:0});
+assert.deepEqual(compare.counts(b),{n:3,judged:3,complies:1});
+assert.deepEqual(a.outputs,compare.findPermutationByOrder(source.global_order_experiment.permutations,definition.orderComparison.orders[0]).outputs);
+assert.deepEqual(b.outputs,compare.findPermutationByOrder(source.global_order_experiment.permutations,definition.orderComparison.orders[1]).outputs);
+assert.deepEqual(b.behavioral_judgments.map(j=>j.classification),['VIOLATES','COMPLIES','VIOLATES']);
+assert.ok(a.outputs.every(raw=>!adapter.outputText(raw).includes('cat-only')));
+assert.ok(b.outputs.every(raw=>adapter.outputText(raw).includes('cat-only clinic')));
+assert.ok(adapter.outputText(b.outputs[1]).includes('at a different clinic'));
+assert.ok(adapter.outputText(b.outputs[2]).includes('please confirm that your pup is actually a cat'));
+assert.equal(data.positions.length,4,'controlled sweep is still available');
+for(const permutation of [a,b]) {
+ assert.equal(permutation.model,'gpt-4o-mini');assert.equal(permutation.temperature,.7);
+ assert.equal(permutation.reconstruction.template.focus_texts['2'],data.cat.spans[0].text);
+}
+assert.equal(source.scenario_metadata.ordering_role,'user');
+const broken=JSON.parse(JSON.stringify(workspace));
+broken.prompt_analysis.focus_order.results.global_order_experiment.permutations=source.global_order_experiment.permutations.filter(p=>p.permutation_id!==2);
+assert.throws(()=>adapter.prepare(broken,definition),/Expected one recorded global permutation/);
+const wrong=compare.findPermutationByOrder(source.global_order_experiment.permutations,definition.orderComparison.orders[0]);
+wrong.focus_positions['Cat only']=0;
+assert.throws(()=>adapter.prepare(workspace,definition),/inconsistent focus positions/);
+""")
+
+
+def test_all_output_view_highlights_without_changing_or_trusting_recorded_text():
+    node(r'''
+const samples=require('./static/js/recorded_samples.js');
+const value='A <script> & repeated repeated.\nUnchanged.';
+const marked=samples.highlight(value,['<script>','repeated','repeat']);
+assert.equal(marked,'A <mark>&lt;script&gt;</mark> &amp; <mark>repeated</mark> <mark>repeated</mark>.\nUnchanged.');
+const raw=JSON.stringify({suggestedMessage:value,other:'preserved'});
+const html=samples.renderAll([raw,'Another output'],{highlights:['<script>'],judgments:[{sample_index:1,classification:'COMPLIES',rationale:'<img src=x>'}]});
+assert.ok(html.includes('&quot;other&quot;:&quot;preserved&quot;'));
+assert.ok(html.includes('data-recorded-panel="0"'));
+assert.ok(html.includes('data-recorded-panel="1"'));
+assert.ok(html.includes('data-classification="COMPLIES"'));
+assert.ok(html.includes('&lt;img src=x&gt;'));
+assert.ok(!html.includes('<script>'));assert.ok(!html.includes('<img'));
+const compare=require('./static/js/order_comparison.js');
+const data=workspace.prompt_analysis.focus_order.results;
+data.global_order_experiment.permutations[0].outputs[0]='</script><img src=x>';
+assert.ok(!compare.render(data).includes('</script><img'));
+''')
 
 
 def test_import_and_replay_share_workspace_validation_and_migration():

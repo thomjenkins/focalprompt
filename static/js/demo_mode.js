@@ -10,10 +10,10 @@
     const names = {problem:'Inference scenario',baseline:'Baseline outputs',foci:'Prompt coverage',ablation:'Ablation',
         singleton:'Singleton analysis',dominance:'Focus vs focus',order:'Focus order',jev:'Jev composition',end:'Explore the results'};
     // Only display controls remain active in the saved workspace. The fetch guard is an independent backstop.
-    const allowedButtons = '[data-recorded-sample],[data-coverage-focus],[data-singleton-chart-toggle],[data-singleton-chart-focus],[data-singleton-inspect],[data-pairwise-row],.tab-btn,'
+    const allowedButtons = '[data-order-condition],[data-recorded-sample],[data-coverage-focus],[data-singleton-chart-toggle],[data-singleton-chart-focus],[data-singleton-inspect],[data-pairwise-row],.tab-btn,'
         + '[data-action="set-view"],[data-action="select-focus"],[data-action="close-inspector"],[data-action="toggle-dumbbell-all"],[data-action="export-json"],'
         + '#export-workspace-btn,#singleton-export-btn,#toggle-visualization,#toggle-all-outputs,#download-ablation-results,#error-modal-close,#error-modal-ok';
-    const allowedInputs = '#singleton-result-order,#pairwise-view,[data-role="dumbbell-sort"]';
+    const allowedInputs = '#singleton-result-order,#pairwise-view,[data-role="dumbbell-sort"],[data-order-choose],[data-order-anchor-select]';
     function lockRecording() {
         document.querySelectorAll('.container button').forEach(button => {
             if (!button.matches(allowedButtons) && !button.disabled) {
@@ -51,8 +51,9 @@
             case 'singleton': return `Featured singleton comparisons: no focus ${count('noFocus','booking')} progress booking; booking only ${count('bookingOnly','booking')} progress booking; cat only ${count('catOnly','refusal')} refuse or redirect. Editorial reading of saved outputs.`;
             case 'dominance': return 'When both foci are present, which singleton do the outputs resemble? Compare the full prompt and eligible ablations. Blue favors the row; orange favors the column. Select any pair to inspect the evidence. This is behavioral resemblance, not a focus budget or proof of causal dominance.';
             case 'order': {
-                const slot = frame.phase === 'original' ? data.originalOrder.indexOf(data.cat.index) : frame.position;
-                return `${frame.phase === 'original' ? 'Original order' : 'Recorded position ' + (slot+1)}: ${count('order-' + slot,'refusal')} refuse or redirect. Same words, same message role; only the order changes. Stored LLM judgments, not ground truth; one scenario.`;
+                return frame.phase === 'condition-a'
+                    ? 'Position isn’t the whole story. Cat only has a strong effect in isolation. Here it is second, yet all three outputs continue toward booking. Next: keep it second and change the surrounding order.'
+                    : 'Same model. Same words. Same position. Different context. Different behavior. The cat-only constraint appears in all three outputs, but only 1/3 is judged compliant. One scenario, three samples per condition; this does not establish a mechanism.';
             }
             case 'jev': return frame.phase === 'catalog' ? 'The actual Jev decision table: an inclusion probability for every focus, conditioned on the input. These probabilities are not focus-budget percentages.'
                 : frame.phase === 'selected' ? `${data.jev.selected.length}/${data.foci.length} foci selected. Excluded rows are dimmed. The full table and saved decision audit remain available.`
@@ -108,13 +109,12 @@
             }
             $(`pairwise-cell-${data.booking.index}-${data.cat.index}`)?.click();
         } else if (frame.id === 'order') {
-            const slot = frame.phase === 'original' ? data.originalOrder.indexOf(data.cat.index) : frame.position;
             target = $('focus-order-results');
-            target.querySelectorAll('.focus-order-position').forEach(el => {
-                const selected = el.dataset.orderFocus === data.cat.name && Number(el.dataset.orderSlot) === slot;
-                open(el, selected);if(selected)feature(el);
-                sample(el.querySelector('.recorded-samples'),definition.featured['order-' + slot]);
-            });
+            const comparison = target.querySelector('.order-comparison');
+            window.FocalPromptOrderComparison.configure(comparison, definition.orderComparison, frame.phase === 'condition-a' ? 0 : 1);
+            open(target.querySelector('.focus-order-full'),false);
+            open(comparison.querySelector('.order-comparison-settings'),false);
+            comparison.querySelectorAll('.recorded-output-card').forEach(el=>open(el));
         } else if (frame.id === 'jev') {
             target = $('jev-results');
             if (frame.phase === 'ordered') target.querySelectorAll('.jev-arm:not([data-jev-arm="full"])>details').forEach(el=>open(el));
@@ -142,7 +142,7 @@
         applyLayout();
         const target = prepareView(nav.frame);
         $('demo-location').value = nav.frame.id;
-        $('demo-step-label').textContent = nav.frame.id === 'order' ? (nav.frame.phase === 'original' ? 'Original order' : `Position ${nav.frame.position+1}`)
+        $('demo-step-label').textContent = nav.frame.id === 'order' ? (nav.frame.phase === 'condition-a' ? 'Condition A' : 'Condition B')
             : nav.frame.id === 'jev' ? ({catalog:'All decisions',selected:'Selection',ordered:'Ordering',outputs:'Outputs'}[nav.frame.phase]) : '';
         $('demo-guide-note').textContent = note(nav.frame);
         $('demo-previous').disabled = nav.index === 0;
@@ -199,7 +199,12 @@
                 document.body.style.setProperty('--demo-bottom', ($('demo-guide-controls').getBoundingClientRect().height + 14) + 'px');
             }).observe($('demo-guide-controls'));
             // Re-rendered product controls retain their normal browsing behavior but cannot launch a run.
-            new MutationObserver(lockRecording).observe(document.querySelector('.container'),{childList:true,subtree:true});
+            new MutationObserver(records=>{
+                // Text/judgment updates add no controls. Avoid rescanning the entire workspace
+                // during each animation frame; newly rendered controls still get locked.
+                const controls='button,input,select,textarea';
+                if(records.some(record=>[...record.addedNodes].some(node=>node.nodeType===1 && (node.matches(controls) || node.querySelector(controls))))) lockRecording();
+            }).observe(document.querySelector('.container'),{childList:true,subtree:true});
             go(0);
             window.FocalPromptDemo=Object.freeze({get data(){return data;},get frame(){return nav.frame;},get index(){return nav.index;},get length(){return nav.length;},get exploring(){return exploring;}});
         } catch (error) {
@@ -216,6 +221,18 @@
     $('demo-fullscreen').addEventListener('click',async()=>{try {if(document.fullscreenElement)await document.exitFullscreen();else await document.documentElement.requestFullscreen();}catch(_){$('demo-ready').textContent='Fullscreen unavailable · recorded workspace ready';}});
     // Normal navigation visibly leaves the scripted path; no duplicate product navigation.
     document.querySelector('.lab-jump-nav').addEventListener('click',event=>{if(event.target.closest('a') && nav)explore();});
+    // Native comparison toggles and the guide must describe the same recorded condition.
+    document.addEventListener('click',event=>{
+        const button=event.target.closest('#focus-order-results [data-order-condition]');
+        if(button && nav?.frame.id==='order' && !exploring) {
+            event.preventDefault();event.stopPropagation();
+            const phase=button.dataset.orderCondition==='0' ? 'condition-a' : 'condition-b';
+            go(timeline.findIndex(frame=>frame.id==='order' && frame.phase===phase));
+        }
+    },true);
+    document.addEventListener('change',event=>{
+        if(nav?.frame.id==='order' && !exploring && event.target.matches('[data-order-choose],[data-order-anchor-select]')) explore();
+    });
     document.addEventListener('keydown',event=>{
         if(!nav || event.ctrlKey || event.altKey || event.metaKey || event.repeat) return;
         if(document.querySelector('dialog[open]') || $('error-modal').style.display === 'block') return;

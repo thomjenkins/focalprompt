@@ -838,6 +838,9 @@
         }
         var copy = getCopy();
         var html = '<div class="focus-order-panel">';
+        var comparison = global.FocalPromptOrderComparison ? global.FocalPromptOrderComparison.render(data) : '';
+        html += comparison;
+        if (comparison) html += '<details class="focus-order-full"><summary>Full order experiment</summary>';
         html += '<h3>' + escapeHtml(copy.FOCUS_ORDER_TITLE || 'Focus order sensitivity') + '</h3>';
         html += '<p class="info-text">' + escapeHtml(copy.FOCUS_ORDER_DISCLAIMER || '') + '</p>';
         (data.warnings || []).forEach(function (w) {
@@ -907,6 +910,7 @@
         if (data.cost_breakdown && data.cost_breakdown.total_cost != null) {
             html += '<p class="info-text">Cost: $' + Number(data.cost_breakdown.total_cost).toFixed(4) + '</p>';
         }
+        if (comparison) html += '</details>';
         html += '</div>';
         return html;
     }

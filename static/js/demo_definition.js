@@ -10,6 +10,23 @@
         },
         comparisonWorkspaces: [],
         keyFoci: {booking: 'Appointment booking', cat: 'Cat only'},
+        // Semantic selectors into the GLOBAL permutations, not the controlled position sweep.
+        orderComparison: {
+            anchor: 'Cat only',
+            orders: [
+                ['Address', 'Cat only', 'Relevance', 'Opening hours'],
+                ['Relevance', 'Cat only', 'Opening hours', 'Address']
+            ],
+            expectedClassifications: [['VIOLATES','VIOLATES','VIOLATES'], ['VIOLATES','COMPLIES','VIOLATES']],
+            observations: [
+                'All three outputs continue toward booking. None mentions the cat-only constraint.',
+                'All three mention the cat-only constraint. Only output 2 is judged compliant.'
+            ],
+            highlights: [
+                ['help you with scheduling a booster appointment for your pup', 'help you schedule a booster appointment for your pup', 'assist you with booking a booster appointment for your pup'],
+                ['cat-only clinic', 'at a different clinic', 'please confirm that your pup is actually a cat', 'Would you like assistance in booking an appointment for the booster?', 'We would be happy to assist you in booking a booster appointment.']
+            ]
+        },
         steps: [
             {id: 'problem', title: 'Inference scenario', label: 'Scenario'},
             {id: 'baseline', title: 'Baseline outputs', label: 'Baseline'},
