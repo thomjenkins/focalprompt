@@ -127,6 +127,7 @@
             const indices = (el.dataset.focusIndices || el.dataset.coverageFocus || '').split(',').map(Number);
             el.classList.toggle('demo-key-focus',indices.some(i=>i===data.booking.index || i===data.cat.index));
         });
+        if (frame.id === 'end') return $('demo-resources');
         return frame.id === 'dominance' ? target.querySelector('.pairwise-results') : target;
     }
     function applyLayout() {
