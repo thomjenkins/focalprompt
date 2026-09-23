@@ -6,11 +6,11 @@
         primaryWorkspace: {
             id: 'gpt4omini', modelLabel: 'GPT-4o mini', filename: 'pup4ominiFull.json',
             url: '/demo/lisbon/workspaces/gpt4omini.json',
-            sha256: '1c178997a02a417dbc039d0fe117a520c31b95e95dbf0f593961c2aada244a57'
+            sha256: 'bf8271e5a361474aa3f24c062790d3ccf81045a5ce50080c967848ffbe50ae6e'
         },
         comparisonWorkspaces: [{
             id: 'astra', filename: 'Astrapup.json', url: '/demo/lisbon/workspaces/astra.json',
-            sha256: '8c8cc870960a73be4bea0aa9bdab6bc9b73640a8f16d8b3a4e4090e8390ae117',
+            sha256: '3abe3ee83d92e8da6dc5db1c025e044bce730b85697e2d926a8892981de67134',
             expectedModel: 'gpt-6-astra', // Validation only; the displayed label comes from the export.
             keyFoci: {booking: 'Offer chat booking assistance', cat: 'Cat-only clinic', hierarchy: 'Appointment-booking instruction hierarchy'},
             expectedIndices: {booking: 3, cat: 19, hierarchy: 15},

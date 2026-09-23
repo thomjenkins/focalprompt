@@ -4,7 +4,7 @@ Launch `/demo/lisbon` directly, or choose **LisbonAI demo** in the lab header. T
 
 ## Guided lab walkthrough
 
-The demo route renders the same `index.html`, scripts, workspace importer, and result components as `/lab`. There is no separate experiment-page renderer. The guide imports a detached copy of the checksum-verified workspace through `restoreWorkspaceSession`; the original source is separately frozen and retained for byte-identical export.
+The demo route renders the same `index.html`, scripts, workspace importer, and result components as `/lab`. There is no separate experiment-page renderer. The guide imports a detached copy of the checksum-verified workspace through `restoreWorkspaceSession`; the privacy-redacted source is separately frozen and retained for byte-identical export.
 
 Use **Next**, **Back**, right/left arrows, or Space outside native controls. The section selector jumps directly to any part of the guide. Ten sections contain 16 deterministic positions. After the scenario and baseline introduction, the sequence is **tagged foci → singleton outputs → focus-versus-focus grid → ablation → order → model comparison → GPT-4o mini Jev**, followed by open exploration. The order stage compares two global permutations with Cat only second in both; Jev includes decisions, selection, ordering and outputs.
 
@@ -12,7 +12,7 @@ Use **Next**, **Back**, right/left arrows, or Space outside native controls. The
 
 Prompt coverage uses the existing production highlighter and all 17 source spans. Its legend now supports selecting a focus and finding its source in both the normal lab and replay. The shared product output browser displays exact decoded `suggestedMessage` text (or verbatim plain text), numbered sample controls, and the exact exported output. Baseline, ablation Samples, singleton arms, order positions and Jev arms use that same component on both routes.
 
-The guide's short notes identify editorial behavioral counts separately from recorded LLM judgments. Spotlight selects two ablation comparisons and three singleton conditions; Explore exposes every recorded focus and arm. No outputs are regenerated, omitted from the loaded workspace, or rewritten.
+The guide's short notes identify editorial behavioral counts separately from recorded LLM judgments. Spotlight selects two ablation comparisons and three singleton conditions; Explore exposes every recorded focus and arm. No outputs are regenerated or omitted. The only changes to recorded text are the disclosed clinic-location redactions described below.
 
 The **Focus vs focus** stop uses the singleton analysis's genuine interactive pairwise table. It starts in original focus order with **Full + eligible ablations** and **Appointment booking (row) vs Cat only (column)** selected. Only contexts retaining both complete foci contribute; distinct prompt conditions have equal weight. Cells show resemblance to singleton outputs, not focus budgets or proof of causal dominance. Every pair and all three context filters remain selectable. Revisiting the stop or resuming the guide restores its initial comparison. If a future recording lacks the saved grid, this stop is skipped without making model or embedding requests.
 
@@ -28,9 +28,11 @@ All browsing works offline after the initial complete load. This does not promis
 
 ## Data provenance and narrative limits
 
-The original `examples/demos/lisbon/pup4ominiFull.json` is unchanged:
+Both published fixtures mask the clinic street address, town, postcode and nearby landmark in every occurrence, including copied scenarios, nested serialized state, output text and downloaded sources. A visible notice and the exported `demo_redaction` metadata disclose this. Each masked string retains its character count, so source-span offsets remain valid. All recorded numbers, judgments, sample counts, embeddings and result identifiers remain unchanged; they describe the original experiment, not a new run on the redacted text. Source exports reproduce the redacted fixture, not the private original. Private uploads remain outside the repository.
 
-`SHA-256 1c178997a02a417dbc039d0fe117a520c31b95e95dbf0f593961c2aada244a57`
+The published `examples/demos/lisbon/pup4ominiFull.json` has this redacted-fixture checksum:
+
+`SHA-256 bf8271e5a361474aa3f24c062790d3ccf81045a5ce50080c967848ffbe50ae6e`
 
 It is a version-2 FocalPrompt workspace with GPT-4o mini results at temperature 0.7. The main instruction role is **system**; clinic-specific instructions are **user**. Appointment booking is focus index 4, Cat only is index 15 (zero-based). Highlighted wording is sliced from their message-relative spans and checked against the stored snapshots.
 
@@ -54,9 +56,9 @@ The actual data supports these readings:
 
 The original criterion is “Refuse to book an appointment for a dog given this is a cat only clinic”. Stored LLM judgments are not ground truth. Editorial classifications are explicit per-sample annotations bound to this exact fixture, not fabricated model judgments or freshly computed scores. Counts come from these sample labels, not hard-coded headline numbers. Every sample can be inspected.
 
-The second recording is the unchanged `examples/demos/lisbon/Astrapup.json` supplied by the user:
+The second recording is the privacy-redacted copy of the supplied `examples/demos/lisbon/Astrapup.json`:
 
-`SHA-256 8c8cc870960a73be4bea0aa9bdab6bc9b73640a8f16d8b3a4e4090e8390ae117`
+`SHA-256 3abe3ee83d92e8da6dc5db1c025e044bce730b85697e2d926a8892981de67134`
 
 It records `gpt-6-astra` at temperature 0.7. Semantic focus-name lookups resolve **Offer chat booking assistance** to index 3, **Appointment-booking instruction hierarchy** to index 15, and **Cat-only clinic** to index 19 (zero-based). This export uses message-relative single-span fields with empty `spans` arrays; the adapter validates those coordinates and stored `prompt_section` text just as the production importer does, without rewriting the fixture. The booking instruction is in the system message; the hierarchy and cat-only foci are separate spans in the clinic-specific user message.
 
@@ -70,7 +72,7 @@ The ordered Jev condition is **not** a clean 10/10 success: four responses inven
 
 ## Implementation map
 
-- `routes/demo_routes.py`: serves the genuine lab template with replay controls and the allowlisted gzip-compressed, unmodified fixture.
+- `routes/demo_routes.py`: serves the genuine lab template with replay controls and the allowlisted gzip-compressed, privacy-redacted fixtures.
 - `templates/index.html`, `templates/_demo_guide.html`: shared lab plus a small guide toolbar; no duplicate experiment markup.
 - `static/js/demo_mode.js`: import, section selection, actual disclosure/sample controls, spotlight classes, reset and exploration. It does not render experimental content.
 - `static/js/replay_guard.js`: memory-only preferences and a request backstop, loaded only for replay.
@@ -82,7 +84,7 @@ The ordered Jev condition is **not** a clean 10/10 success: four responses inven
 
 ## Replacing or adding a later fixture
 
-Keep raw exports unmodified under `examples/demos/lisbon/`, register their routes in `FIXTURES`, and update the demo definition's fixture URLs and SHA-256 hashes. Review featured samples and editorial classifications independently for each export; never reuse another model's labels. Comparison recordings also require their own semantic focus selectors, exact instruction assertions, expected indices, and per-sample refusal evidence. Source and comparison adapters validate these before importing through the real lab. No model is displayed without its supplied export.
+Keep private raw exports outside the repository. Before publishing an export under `examples/demos/lisbon/`, redact identifying location text consistently across every copy, preserve source-span lengths, disclose any redactions, register its route in `FIXTURES`, and update the demo definition's fixture URLs and SHA-256 hashes. Review featured samples and editorial classifications independently for each export; never reuse another model's labels. Comparison recordings also require their own semantic focus selectors, exact instruction assertions, expected indices, and per-sample refusal evidence. Source and comparison adapters validate these before importing through the real lab. No model is displayed without its supplied export.
 
 ## Verification
 
