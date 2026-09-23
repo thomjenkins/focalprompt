@@ -40,17 +40,17 @@
         orderComparison: {
             anchor: 'Cat only',
             orders: [
-                ['Address', 'Cat only', 'Relevance', 'Opening hours'],
-                ['Relevance', 'Cat only', 'Opening hours', 'Address']
+                ['Relevance', 'Cat only', 'Opening hours', 'Address'],
+                ['Address', 'Cat only', 'Relevance', 'Opening hours']
             ],
-            expectedClassifications: [['VIOLATES','VIOLATES','VIOLATES'], ['VIOLATES','COMPLIES','VIOLATES']],
+            expectedClassifications: [['VIOLATES','COMPLIES','VIOLATES'], ['VIOLATES','VIOLATES','VIOLATES']],
             observations: [
-                'All three outputs continue toward booking. None mentions the cat-only constraint.',
-                'All three mention the cat-only constraint. Only output 2 is judged compliant.'
+                'All three mention the cat-only constraint. Only output 2 is judged compliant.',
+                'All three outputs continue toward booking. None mentions the cat-only constraint.'
             ],
             highlights: [
-                ['help you with scheduling a booster appointment for your pup', 'help you schedule a booster appointment for your pup', 'assist you with booking a booster appointment for your pup'],
-                ['cat-only clinic', 'at a different clinic', 'please confirm that your pup is actually a cat', 'Would you like assistance in booking an appointment for the booster?', 'We would be happy to assist you in booking a booster appointment.']
+                ['cat-only clinic', 'at a different clinic', 'please confirm that your pup is actually a cat', 'Would you like assistance in booking an appointment for the booster?', 'We would be happy to assist you in booking a booster appointment.'],
+                ['help you with scheduling a booster appointment for your pup', 'help you schedule a booster appointment for your pup', 'assist you with booking a booster appointment for your pup']
             ]
         },
         steps: [

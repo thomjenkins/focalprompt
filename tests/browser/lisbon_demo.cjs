@@ -51,6 +51,7 @@ const sha=value=>crypto.createHash('sha256').update(value).digest('hex');
     assert.equal(await replay.locator('.lab-jump-nav .lab-model-status').isVisible(),false,'active recording is already identified in the guide toolbar');
     for(const output of snapshot.outputs){let expected=output.raw;try{const j=JSON.parse(expected);if(typeof j.suggestedMessage==='string')expected=j.suggestedMessage;}catch(_){}assert.equal(output.text,expected);}
     const {id,phase,position}=snapshot.frame;
+    assert.equal(await replay.locator('#demo-guide-note').count(),0,'no footer commentary in the walkthrough');
     if(id==='baseline'){assert.equal(await replay.locator('#baseline-results [data-recorded-sample]').count(),10);await replay.locator('#baseline-results [data-recorded-sample="6"]').click();assert.equal(await replay.locator('#baseline-results [data-recorded-panel="6"]').isVisible(),true);}
     if(id==='foci'){
      assert.equal(await replay.locator('#legend-items [data-coverage-focus]').count(),17);
@@ -87,12 +88,12 @@ const sha=value=>crypto.createHash('sha256').update(value).digest('hex');
     if(id==='order') {
      const condition=phase==='condition-a' ? 0 : 1;
      assert.equal(snapshot.outputs.length,3,'all three actual outputs must be visible');
-     const orders=[['Address','Cat only','Relevance','Opening hours'],['Relevance','Cat only','Opening hours','Address']];
+     const orders=[['Relevance','Cat only','Opening hours','Address'],['Address','Cat only','Relevance','Opening hours']];
      const source=JSON.parse(fixture).prompt_analysis.focus_order.results;
      const permutation=source.global_order_experiment.permutations.find(p=>JSON.stringify(p.ordered_focus_names)===JSON.stringify(orders[condition]));
      assert.deepEqual(snapshot.outputs.map(o=>o.raw),permutation.outputs);
      assert.equal(await replay.locator('.order-anchor-position').textContent(),'Cat only · position 2 in both');
-     assert.match(await replay.locator(`[data-order-count="${condition}"]`).textContent(),condition ? /1 \/ 3 comply/ : /0 \/ 3 comply/);
+     assert.match(await replay.locator(`[data-order-count="${condition}"]`).textContent(),condition ? /0 \/ 3 comply/ : /1 \/ 3 comply/);
      const active=replay.locator(`[data-order-outputs="${condition}"]`);
      assert.deepEqual(await active.locator('.recorded-verdict').allTextContents(),permutation.behavioral_judgments.map(j=>j.classification));
      assert.ok(await active.locator('mark').count()>=3);
@@ -109,7 +110,6 @@ const sha=value=>crypto.createHash('sha256').update(value).digest('hex');
       for(const index of [3,15,19])assert.equal(await replay.locator(`#prompt-highlighted [data-focus-indices="${index}"]`).textContent(),astra.foci[index].prompt_section);
       assert.equal(await replay.locator('.demo-must-always').textContent(),'must always');
       assert.equal(await replay.locator('.demo-must-always').evaluate(el=>getComputedStyle(el).textTransform),'uppercase');
-      assert.match(await replay.locator('#demo-guide-note').textContent(),/not a model-only controlled comparison/);
       if(width>=1000)assert.equal(await replay.evaluate(()=>[3,15,19].every(index=>{
        const mark=document.querySelector(`#prompt-highlighted [data-focus-indices="${index}"]`),pane=mark.closest('.coverage-message');
        const box=mark.getBoundingClientRect(),outer=pane.getBoundingClientRect(),header=pane.querySelector('.coverage-message-label').getBoundingClientRect();
