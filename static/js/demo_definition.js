@@ -44,8 +44,10 @@
                 ['Address', 'Cat only', 'Relevance', 'Opening hours']
             ],
             expectedClassifications: [['VIOLATES','COMPLIES','VIOLATES'], ['VIOLATES','VIOLATES','VIOLATES']],
+            behavior: {phrase: 'cat-only clinic', label: 'acknowledge cat-only'},
+            selectedSamples: [1, 0],
             observations: [
-                'All three mention the cat-only constraint. Only output 2 is judged compliant.',
+                'All three acknowledge the cat-only constraint.',
                 'All three outputs continue toward booking. None mentions the cat-only constraint.'
             ],
             highlights: [

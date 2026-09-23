@@ -42,8 +42,10 @@
             <div class="recorded-sample-buttons" aria-label="Choose a saved output">${entries.map(({index:i}) => `<button type="button" data-recorded-sample="${i}" aria-pressed="${i === selected}" aria-label="Output ${i+1}">${i+1}</button>`).join('')}</div>
             ${entries.map(({raw,index:i}) => {
                 const judgment = options.judgments?.find(j => j.sample_index === i);
-                return `<div class="recorded-sample-panel" data-recorded-panel="${i}" ${i === selected ? '' : 'hidden'}><p class="info-text">Output ${i+1}</p><blockquote class="recorded-output">${esc(text(raw))}</blockquote>
-                    ${judgment ? `<p class="recorded-judgment"><strong>${esc(judgment.classification)}</strong> · ${esc(judgment.rationale)}<small>Stored LLM judgment · not ground truth</small></p>` : ''}
+                return `<div class="recorded-sample-panel" data-recorded-panel="${i}" ${i === selected ? '' : 'hidden'}><p class="info-text">Output ${i+1}</p><blockquote class="recorded-output">${highlight(text(raw), options.highlights)}</blockquote>
+                    ${judgment ? options.judgmentDetails
+                        ? `<details class="recorded-judgment-detail"><summary>Recorded LLM judgment: ${esc(judgment.classification)}</summary><p>${esc(judgment.rationale)}</p><small>Stored LLM judgment · not ground truth</small></details>`
+                        : `<p class="recorded-judgment"><strong>${esc(judgment.classification)}</strong> · ${esc(judgment.rationale)}<small>Stored LLM judgment · not ground truth</small></p>` : ''}
                     <details class="recorded-raw"><summary>Exact exported output</summary><pre>${esc(raw)}</pre></details></div>`;
             }).join('')}</div>`;
     }

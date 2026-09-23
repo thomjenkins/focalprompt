@@ -12,6 +12,8 @@ const base=process.env.FOCALPROMPT_TEST_URL || 'http://127.0.0.1:5014';
   await context.setOffline(true);
   await page.locator('#demo-location').selectOption('order');
   await page.waitForTimeout(800); // Let the initial native selection settle before measuring A → B.
+  assert.equal(await page.locator('[data-order-outputs="0"] [data-recorded-sample="1"]').getAttribute('aria-pressed'),'true');
+  await page.locator('[data-order-outputs="0"] [data-recorded-sample="0"]').click();
   const sampleTransition=async button=>page.evaluate(async button=>{
    const root=document.querySelector('.order-comparison');
    const cat=root.querySelector('[data-order-focus-card="Cat only"]');
@@ -38,6 +40,7 @@ const base=process.env.FOCALPROMPT_TEST_URL || 'http://127.0.0.1:5014';
    assert.ok(range>100,`the surrounding focus must visibly move through ${button}: range ${range} across ${positions.length} frames`);
    assert.ok(new Set(positions.map(y=>y.toFixed(1))).size>4,`other foci animate, not jump: ${button}`);
   }
+  assert.equal(await page.locator('[data-order-outputs="0"] [data-recorded-sample="1"]').getAttribute('aria-pressed'),'true','returning to condition A restores output 2');
   // Secondary evidence is still available directly in the same native product panel.
   await page.locator('.focus-order-full>summary').click();
   const first=page.locator('.focus-order-position[data-order-focus="Cat only"][data-order-slot="0"]');
@@ -53,6 +56,7 @@ const base=process.env.FOCALPROMPT_TEST_URL || 'http://127.0.0.1:5014';
   assert.equal(await page.locator('[data-order-shuffle="0"]').textContent(),'4');
   assert.equal(await page.locator('[data-order-shuffle="1"]').textContent(),'2');
   assert.equal(await page.locator('.order-observation').count(),2);
+  assert.equal(await page.locator('[data-order-outputs="0"] [data-recorded-sample="1"]').getAttribute('aria-pressed'),'true');
   await page.emulateMedia({reducedMotion:'reduce'});
   assert.equal(await page.locator('[data-order-focus-card="Address"]').evaluate(el=>getComputedStyle(el).transitionDuration),'0s');
   assert.equal(requests.some(url=>url.includes('/api/')),false);assert.deepEqual(errors,[]);

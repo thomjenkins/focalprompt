@@ -21,6 +21,17 @@
         if (!count.judged) return `${count.n} outputs · not judged`;
         return `${count.complies} / ${count.n} comply${count.judged < count.n ? ` · ${count.judged} judged` : ''}`;
     }
+    function behaviorSummary(permutation, config) {
+        const {phrase, label} = config.behavior || {};
+        if (!phrase || !label) return null;
+        const outputs = permutation.outputs || [];
+        const matches = outputs.filter(raw => samples.text(raw).includes(phrase)).length;
+        return `${matches} / ${outputs.length} ${label}`;
+    }
+    function judgeSummary(permutation) {
+        const count=counts(permutation);
+        return `Recorded LLM judge: ${count.complies} / ${count.n} compliant`;
+    }
     function payload(result) {
         return {model: result.model, provider: result.provider, temperature: result.temperature,
             role: result.scenario_metadata?.ordering_role, criterion: result.behavioral_criterion,
@@ -32,7 +43,10 @@
     function outputGroups(pair, config = {}) {
         return pair.map((p, i) => `<section class="order-condition-outputs" data-order-outputs="${i}" ${i ? 'hidden' : ''} aria-label="Condition ${i ? 'B' : 'A'} outputs">
             ${config.observations?.[i] ? `<p class="order-observation">${esc(config.observations[i])} <small>Reading of these stored outputs</small></p>` : ''}
-            ${samples.renderAll(p.outputs, {judgments: p.behavioral_judgments, highlights: config.highlights?.[i]})}</section>`).join('');
+            ${config.selectedSamples
+                ? samples.render(p.outputs, {id:'order-condition-'+i, title:'Recorded outputs', selected:config.selectedSamples[i],
+                    judgments:p.behavioral_judgments, highlights:config.highlights?.[i], judgmentDetails:true})
+                : samples.renderAll(p.outputs, {judgments: p.behavioral_judgments, highlights: config.highlights?.[i]})}</section>`).join('');
     }
     function render(result) {
         const data = payload(result);
@@ -47,12 +61,12 @@
                 <label>Condition A <select data-order-choose="0">${options(data,0)}</select></label><label>Condition B <select data-order-choose="1">${options(data,1)}</select></label>
                 <label>Track focus <select data-order-anchor-select>${names.map(name=>`<option ${name === anchor ? 'selected' : ''}>${esc(name)}</option>`).join('')}</select></label></details></div>
             <p class="order-recording-meta">${esc(data.provider ? data.provider + '/' : '')}${esc(data.model)} · ${esc(data.role || 'prompt')} · temperature ${esc(data.temperature)}</p>
-            <div class="order-condition-controls" aria-label="View recorded condition">${pair.map((p,i)=>`<button type="button" data-order-condition="${i}" aria-pressed="${i===0}"><span>Condition ${i ? 'B' : 'A'} · Shuffle #<b data-order-shuffle="${i}">${esc(p.permutation_id)}</b></span><strong data-order-count="${i}">${esc(summary(p))}</strong><small data-order-neighbor="${i}"></small></button>`).join('')}</div>
+            <div class="order-condition-controls" aria-label="View recorded condition">${pair.map((p,i)=>`<button type="button" data-order-condition="${i}" aria-pressed="${i===0}"><span>Condition ${i ? 'B' : 'A'} · Shuffle #<b data-order-shuffle="${i}">${esc(p.permutation_id)}</b></span><strong data-order-count="${i}">${esc(summary(p))}</strong><small data-order-neighbor="${i}"></small><small data-order-judge="${i}" hidden></small></button>`).join('')}</div>
             <div class="order-comparison-body"><div class="order-context"><p class="order-anchor-position"></p>
                 <ol class="order-moving-foci" style="--order-length:${names.length}">${names.map((name, i)=>`<li data-order-focus-card="${esc(name)}" data-pinned="${name === anchor}" style="--order-slot:${i}"><span class="order-slot-number">${i+1}</span><strong>${esc(name)}</strong></li>`).join('')}</ol>
                 <p class="order-anchor-text"></p><details class="order-focus-texts"><summary>Inspect focus text</summary><div></div></details></div>
                 <div class="order-comparison-outputs">${outputGroups(pair)}</div></div>
-            <details class="order-comparison-method"><summary>Behavioral criterion &amp; evidence</summary><p>${esc(data.criterion || 'No behavioral criterion was recorded.')}</p><p>Counts use stored COMPLIES judgments, not ground truth. They describe these sampled outputs, not estimated success rates. Ordering comparisons do not identify a mechanism.</p></details>
+            <details class="order-comparison-method"><summary>Behavioral criterion &amp; evidence</summary><p>${esc(data.criterion || 'No behavioral criterion was recorded.')}</p><p data-order-count-method>Counts use stored COMPLIES judgments, not ground truth. They describe these sampled outputs, not estimated success rates. Ordering comparisons do not identify a mechanism.</p></details>
             <p class="order-comparison-status sr-only" aria-live="polite"></p>
         </div>`;
         if (!global.document) return html;
@@ -87,13 +101,22 @@
         });
         root.querySelector('.order-moving-foci').setAttribute('aria-label',permutation.ordered_focus_names.join(' → '));
         root.querySelector('.order-anchor-position').textContent = `${s.anchor} · position ${positions[active]+1}${fixed ? ' in both' : ''}`;
-        root.querySelector('.order-comparison-status').textContent=`Condition ${active ? 'B' : 'A'}. ${permutation.ordered_focus_names.join(', ')}. ${summary(permutation)}.`;
+        const observed=behaviorSummary(permutation,s.config);
+        root.querySelector('.order-comparison-status').textContent=`Condition ${active ? 'B' : 'A'}. ${permutation.ordered_focus_names.join(', ')}. ${observed ? observed+'. '+judgeSummary(permutation) : summary(permutation)}.`;
+        root.querySelector('[data-order-count-method]').textContent=observed
+            ? `Acknowledgement counts show how many outputs contain “${s.config.behavior.phrase}”. Compliance is the recorded LLM judge’s separate assessment of the refusal criterion above. These judgments are not ground truth.`
+            : 'Counts use stored COMPLIES judgments, not ground truth. They describe these sampled outputs, not estimated success rates. Ordering comparisons do not identify a mechanism.';
         s.pair.forEach((p,i)=>{
-            root.querySelector(`[data-order-count="${i}"]`).textContent=summary(p);
+            const behavior=behaviorSummary(p,s.config);
+            root.querySelector(`[data-order-count="${i}"]`).textContent=behavior || summary(p);
+            const judge=root.querySelector(`[data-order-judge="${i}"]`);
+            judge.hidden=!behavior;
+            judge.textContent=behavior ? judgeSummary(p) : '';
             root.querySelector(`[data-order-shuffle="${i}"]`).textContent=p.permutation_id;
             const slot = p.ordered_focus_names.indexOf(s.anchor);
             root.querySelector(`[data-order-neighbor="${i}"]`).textContent=slot > 0 ? `${s.anchor} after ${p.ordered_focus_names[slot-1]}` : `${s.anchor} first`;
         });
+        if (s.config.selectedSamples) samples.select(root.querySelector(`[data-order-outputs="${active}"] .recorded-samples`),s.config.selectedSamples[active]);
         const template=permutation.reconstruction?.template;
         const textFor=name=>template?.focus_texts?.[String(permutation.assignment?.[permutation.ordered_focus_names.indexOf(name)])] || '';
         root.querySelector('.order-anchor-text').textContent=textFor(s.anchor);

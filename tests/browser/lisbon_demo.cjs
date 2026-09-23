@@ -87,15 +87,24 @@ const sha=value=>crypto.createHash('sha256').update(value).digest('hex');
     }
     if(id==='order') {
      const condition=phase==='condition-a' ? 0 : 1;
-     assert.equal(snapshot.outputs.length,3,'all three actual outputs must be visible');
+     assert.equal(snapshot.outputs.length,1,'one selected output is shown, with every original sample available');
      const orders=[['Relevance','Cat only','Opening hours','Address'],['Address','Cat only','Relevance','Opening hours']];
      const source=JSON.parse(fixture).prompt_analysis.focus_order.results;
      const permutation=source.global_order_experiment.permutations.find(p=>JSON.stringify(p.ordered_focus_names)===JSON.stringify(orders[condition]));
-     assert.deepEqual(snapshot.outputs.map(o=>o.raw),permutation.outputs);
+     const selected=condition ? 0 : 1;
+     assert.equal(snapshot.outputs[0].raw,permutation.outputs[selected]);
      assert.equal(await replay.locator('.order-anchor-position').textContent(),'Cat only · position 2 in both');
-     assert.match(await replay.locator(`[data-order-count="${condition}"]`).textContent(),condition ? /0 \/ 3 comply/ : /1 \/ 3 comply/);
+     assert.equal(await replay.locator(`[data-order-count="${condition}"]`).textContent(),`${condition ? 0 : 3} / 3 acknowledge cat-only`);
+     assert.equal(await replay.locator(`[data-order-judge="${condition}"]`).textContent(),`Recorded LLM judge: ${condition ? 0 : 1} / 3 compliant`);
      const active=replay.locator(`[data-order-outputs="${condition}"]`);
-     assert.deepEqual(await active.locator('.recorded-verdict').allTextContents(),permutation.behavioral_judgments.map(j=>j.classification));
+     assert.deepEqual(await active.locator('.recorded-raw pre').allTextContents(),permutation.outputs);
+     assert.deepEqual(await active.locator('.recorded-judgment-detail>summary').allTextContents(),permutation.behavioral_judgments.map(j=>'Recorded LLM judgment: '+j.classification));
+     assert.equal(await active.locator('.recorded-judgment-detail[open]').count(),0);
+     for(let sample=0;sample<3;sample++) {
+      await active.locator(`[data-recorded-sample="${sample}"]`).click();
+      assert.equal(await active.locator(`[data-recorded-panel="${sample}"]`).isVisible(),true);
+     }
+     await active.locator(`[data-recorded-sample="${selected}"]`).click();
      assert.ok(await active.locator('mark').count()>=3);
      assert.equal(await replay.locator('.focus-order-full').getAttribute('open'),null);
      assert.equal(await replay.locator('.focus-order-position[data-order-focus="Cat only"]').count(),4,'full position sweep retained');

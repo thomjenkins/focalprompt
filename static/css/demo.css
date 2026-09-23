@@ -183,6 +183,15 @@ body .container { overflow-x:clip; }
  .replay-spotlight .recorded-output { font-size:18px; line-height:1.4; margin:8px 0 12px; }
  .replay-spotlight[data-demo-step=singleton] .recorded-sample-buttons { gap:4px; }
  .replay-spotlight[data-demo-step=singleton] .recorded-sample-buttons button { min-width:25px; padding:2px 6px; }
+ /* Keep the selected order response visible; these labels repeat the condition cards and source list. */
+ .replay-spotlight[data-demo-step=order] .order-comparison-heading,
+ .replay-spotlight[data-demo-step=order] .order-recording-meta,
+ .replay-spotlight[data-demo-step=order] .order-observation,
+ .replay-spotlight[data-demo-step=order] .order-comparison .recorded-sample-toolbar,
+ .replay-spotlight[data-demo-step=order] [data-order-neighbor] { display:none; }
+ .replay-spotlight[data-demo-step=order] .order-comparison { --order-row-height:44px; }
+ .replay-spotlight[data-demo-step=order] .order-moving-foci li { padding:6px 10px; font-size:16px; }
+ .replay-spotlight[data-demo-step=order] .order-comparison .recorded-samples { margin-top:0; }
 }
 @media(max-width:999px) { .replay-spotlight::before { display:none; } .replay-spotlight .demo-section>.card-header { flex-wrap:wrap; } .replay-spotlight[data-demo-step=singleton] .singleton-arms { display:block; } }
 /* Keep the chosen native result in view; its normal settings remain available in context/explore. */
