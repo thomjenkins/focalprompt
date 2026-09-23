@@ -33,7 +33,7 @@
 .recorded-output-card .recorded-sample-panel { padding:0 12px 12px; }
 .recorded-output-card .recorded-output { font-size:18px; line-height:1.45; margin:12px 0; }
 .recorded-output-card .recorded-raw,.recorded-judgment-detail { font-size:13px; margin-top:10px; color:#627180; }
-.recorded-output-card mark { color:inherit; background:#fff0ba; box-decoration-break:clone; -webkit-box-decoration-break:clone; }
+.recorded-output-card mark,.order-comparison .recorded-output mark { color:inherit; background:#fff0ba; box-decoration-break:clone; -webkit-box-decoration-break:clone; }
 .recorded-verdict { display:inline-block; font-size:11px; font-weight:600; color:#9a3030; padding:2px 5px; border-radius:4px; background:#fff0ee; }
 .recorded-verdict[data-classification=COMPLIES] { color:#236345; background:#e6f5ed; }
 .recorded-verdict[data-classification=""] { color:#627180; background:#f1f4f7; }
@@ -44,3 +44,4 @@
 @media(max-width:1100px) { .order-comparison-body { grid-template-columns:220px minmax(0,1fr); } .recorded-output-grid { grid-template-columns:1fr; } }
 @media(max-width:650px) { .order-comparison-body { grid-template-columns:1fr; } .order-comparison-heading { display:block; } .order-comparison-settings { max-width:100%; margin:8px 0; } .order-condition-controls button { display:block; padding:8px; } .order-condition-controls button>* { display:block; } .order-comparison { padding:12px; } }
 @media(prefers-reduced-motion:reduce) { .order-moving-foci li { transition:none; } }
+.order-condition-controls [data-order-judge][hidden] { display:none; }

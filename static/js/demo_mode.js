@@ -149,7 +149,6 @@
             window.FocalPromptOrderComparison.configure(comparison, definition.orderComparison, frame.phase === 'condition-a' ? 0 : 1);
             open(target.querySelector('.focus-order-full'),false);
             open(comparison.querySelector('.order-comparison-settings'),false);
-            comparison.querySelectorAll('.recorded-output-card').forEach(el=>open(el));
         } else if (frame.id === 'jev') {
             target = $('jev-results');
             if (frame.phase === 'ordered') target.querySelectorAll('.jev-arm:not([data-jev-arm="full"])>details').forEach(el=>open(el));
