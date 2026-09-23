@@ -77,7 +77,7 @@
                     : `${recordings.get(definition.primaryWorkspace.id).data.modelLabel}: booking is closer. ${data.modelLabel}: Cat-only is closer. The same matrix shows the behavioral relationship flipped. These are different recorded prompts as well as different models, not evidence of an internal mechanism.`;
             case 'jev': return frame.phase === 'catalog' ? 'Back to the original GPT-4o mini workspace. Now change the prompt environment before inference: the actual Jev decision table gives an inclusion probability for every focus. These are not focus-budget percentages.'
                 : frame.phase === 'selected' ? `${data.jev.selected.length}/${data.foci.length} foci selected. Excluded rows are dimmed. The full table and saved decision audit remain available.`
-                : frame.phase === 'ordered' ? 'The recorded within-message order and exact composed prompts. Message roles, retained input and output contract are preserved.'
+                : frame.phase === 'ordered' ? 'The same selected foci, stitched together in two orders. Follow each coloured focus from the sequence into the assembled message. Compare source order with Jev order. Retained chat and output contract are unchanged.'
                 : `Selected foci: ${count('jevSelected','refusal')} clear refusals. Selected + ordered: ${count('jevOrdered','refusal')} clear refusals; ${count('jevOrdered','cat-substitution')} switch the request to a cat. Editorial reading; ordering is not an automatic improvement.`;
             default: return 'The complete research workspace is loaded. Explore the charts, focus inspector, task-quality judgments and saved outputs, or resume any part of the guide. These experiments measure behavior, not internal attention.';
         }

@@ -182,10 +182,15 @@
         }
         if (state.arms) {
             html += '<p class="info-text">Outputs are independently sampled in a saved, randomized arm order. Character counts measure prompt length, not token cost. Differences in wording or length do not establish better task quality.</p>';
+            html += '<div class="jev-composition-intro"><h3>Selected foci, stitched into a prompt</h3><p>Follow the coloured sequence into the matching text below. Focus numbers and colours match the original prompt; retained chat stays in place.</p></div>';
             for (const [id, arm] of Object.entries(state.arms)) {
                 const samples = arm.samples.filter(Boolean), chars = arm.scenario.messages.reduce((n, m) => n + m.content.length, 0);
-                html += `<section class="jev-arm" data-jev-arm="${id}"><h3>${titles[id]} · ${samples.length}/${c.count} outputs · ${chars.toLocaleString()} prompt characters</h3>`;
-                html += `<details><summary>Inspect exact prompt messages</summary>${scenarioHtml(arm.scenario)}</details>`;
+                html += `<section class="jev-arm" data-jev-arm="${id}"><h3>${titles[id]}<small class="jev-arm-meta">${samples.length}/${c.count} outputs · ${chars.toLocaleString()} prompt characters</small></h3>`;
+                const preview = id === 'selected' ? state.selected_preview : id === 'ordered' ? state.ordered_preview : null;
+                const composition = preview && global.FocalPromptJevComposition?.render(arm.scenario, preview, c.foci);
+                html += composition
+                    ? `<details class="jev-prompt-inspector"><summary>Inspect assembled prompt</summary>${composition}<p class="jev-composition-note">Selected source spans are joined without rewriting. Unlabelled text is retained; blank spacing is compressed in this view.</p><details class="jev-exact-prompt"><summary>Exact prompt messages and output contract</summary>${scenarioHtml(arm.scenario)}</details></details>`
+                    : `<details class="jev-prompt-inspector"><summary>Inspect exact prompt messages</summary>${preview ? '<p class="info-text">Focus mapping could not be verified for this saved prompt. The exact messages are shown below.</p>' : ''}${scenarioHtml(arm.scenario)}</details>`;
                 if (id !== 'full') {
                     html += `<div class="button-group" style="margin:12px 0"><button type="button" class="btn btn-primary" data-jev-analyse="${id}" ${busy ? 'disabled' : ''}>Analyse this prompt ↗</button>
                         <button type="button" class="btn btn-outline" data-jev-download="${id}" ${busy ? 'disabled' : ''}>Download analysis workspace</button></div>`;
