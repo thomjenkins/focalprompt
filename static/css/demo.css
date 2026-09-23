@@ -107,7 +107,7 @@ body .recorded-sample-buttons button { min-width:36px; }
 .replay-spotlight:is([data-demo-step=dominance],[data-demo-step=comparison][data-demo-phase=dominance]) .pairwise-results>h3 { margin:0 0 8px; }
 .replay-spotlight:is([data-demo-step=dominance],[data-demo-step=comparison][data-demo-phase=dominance]) .pairwise-results>p { margin:8px 0; font-size:14px; }
 .replay-spotlight:is([data-demo-step=dominance],[data-demo-step=comparison][data-demo-phase=dominance]) .pairwise-results>.singleton-result-controls { margin:8px 0; }
-.replay-spotlight:is([data-demo-step=dominance],[data-demo-step=comparison][data-demo-phase=dominance]) .pairwise-grid-wrap { max-height:clamp(180px,calc(100dvh - var(--demo-bottom) - 400px),610px); margin:8px 0; }
+.replay-spotlight:is([data-demo-step=dominance],[data-demo-step=comparison][data-demo-phase=dominance]) .pairwise-grid-wrap { max-height:clamp(180px,calc(100dvh - var(--demo-bottom) - var(--demo-stage-top) - 190px),610px); margin:8px 0; }
 .replay-spotlight:is([data-demo-step=dominance],[data-demo-step=comparison][data-demo-phase=dominance]) .pairwise-grid tr:has([aria-pressed=true])>th { box-shadow:inset 3px 0 var(--primary-color); }
 @media(min-width:1000px) {
  .replay-spotlight:is([data-demo-step=dominance],[data-demo-step=comparison][data-demo-phase=dominance]) .pairwise-results { display:grid; grid-template-columns:minmax(0,1fr) auto; column-gap:16px; }
@@ -200,7 +200,7 @@ body .container { overflow-x:clip; }
 .replay-spotlight[data-demo-step=comparison][data-demo-phase=prompt] .coverage-message>div:last-child { white-space:normal; font-size:clamp(12px,.8vw,14px); line-height:1.2; }
 .replay-spotlight[data-demo-step=comparison][data-demo-phase=prompt] .coverage-message-label { padding:4px 0; font-size:clamp(14px,.9vw,18px); line-height:1.2; }
 .replay-spotlight[data-demo-step=comparison][data-demo-phase=prompt] .coverage-message .demo-key-focus { display:block; margin:6px 0; font-size:clamp(16px,1.2vw,22px); line-height:1.35; }
-.replay-spotlight[data-demo-step=comparison][data-demo-phase=dominance] .pairwise-grid-wrap { max-height:clamp(220px,calc(100dvh - var(--demo-bottom) - 400px),610px); }
+.replay-spotlight[data-demo-step=comparison][data-demo-phase=dominance] .pairwise-grid-wrap { max-height:clamp(220px,calc(100dvh - var(--demo-bottom) - var(--demo-stage-top) - 190px),610px); }
 .replay-spotlight[data-demo-step=comparison][data-demo-phase=dominance] .pairwise-cell[aria-pressed=true] { font-size:18px; }
 .replay-spotlight[data-demo-step=comparison][data-demo-phase=prompt] .legend-items { grid-template-columns:repeat(3,minmax(0,1fr)); }
 @media(max-width:1500px) { .replay-spotlight[data-demo-step=comparison][data-demo-phase=prompt] .coverage-legend { display:none; } }
