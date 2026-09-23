@@ -39,6 +39,16 @@ const sha=value=>crypto.createHash('sha256').update(value).digest('hex');
       overflow:document.documentElement.scrollWidth>innerWidth+1}));
     assert.ok(snapshot.section);assert.ok(snapshot.sameNodes,'guide must manipulate native components in place');
     assert.equal(snapshot.overflow,false,`horizontal overflow at ${width}, state ${i}`);
+    if(width>=1000) {
+     await replay.waitForFunction(()=>{
+      const nav=document.querySelector('.lab-jump-nav').getBoundingClientRect(),card=document.querySelector('.demo-section').getBoundingClientRect();
+      return card.top>=nav.bottom+10;
+     });
+     assert.equal(await replay.locator('.lab-jump-nav').evaluate(nav=>[...nav.querySelectorAll('a')].every(link=>{
+      const r=link.getBoundingClientRect();return document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.closest('a')===link;
+     })),true,`every section link must remain unobscured at ${width}, state ${i}`);
+    }
+    assert.equal(await replay.locator('.lab-jump-nav .lab-model-status').isVisible(),false,'active recording is already identified in the guide toolbar');
     for(const output of snapshot.outputs){let expected=output.raw;try{const j=JSON.parse(expected);if(typeof j.suggestedMessage==='string')expected=j.suggestedMessage;}catch(_){}assert.equal(output.text,expected);}
     const {id,phase,position}=snapshot.frame;
     if(id==='baseline'){assert.equal(await replay.locator('#baseline-results [data-recorded-sample]').count(),10);await replay.locator('#baseline-results [data-recorded-sample="6"]').click();assert.equal(await replay.locator('#baseline-results [data-recorded-panel="6"]').isVisible(),true);}
