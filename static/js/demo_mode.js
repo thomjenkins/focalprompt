@@ -175,6 +175,16 @@
         document.body.classList.toggle('replay-exploring', exploring);
         $('demo-explore').textContent = exploring ? 'Resume guide' : 'Explore workspace';
     }
+    function measureLayout() {
+        const body = document.body;
+        body.style.setProperty('--demo-top', Math.ceil(document.querySelector('.demo-guide-top').getBoundingClientRect().height) + 'px');
+        body.style.setProperty('--demo-bottom', Math.ceil($('demo-guide-controls').getBoundingClientRect().height + 14) + 'px');
+        if (body.classList.contains('replay-spotlight') && innerWidth >= 1000) {
+            // Use the actual header/nav footprint, including wrapped controls and zoom.
+            const bottom = document.querySelector('.lab-jump-nav').getBoundingClientRect().bottom;
+            body.style.setProperty('--demo-stage-top', Math.ceil(bottom + 12) + 'px');
+        }
+    }
     function go(index) {
         const stayingInOrder = !exploring && nav.index !== index && nav.frame.id === 'order' && timeline[index]?.id === 'order'
             && $('lab-focus-order').classList.contains('demo-section');
@@ -206,6 +216,7 @@
             if (stayingInOrder) return;
             if (document.body.classList.contains('replay-spotlight') && innerWidth >= 1000) { window.scrollTo(0,0); document.querySelector('.demo-section').scrollTop=0; }
             else target?.scrollIntoView({block:'start',behavior:'instant'});
+            measureLayout();
             // Position both key source spans within their existing coverage message windows.
             if (nav.frame.id === 'foci' || (nav.frame.id === 'comparison' && nav.frame.phase === 'prompt')) for (const focus of [data.booking,data.cat]) {
                 const mark = [...document.querySelectorAll('#prompt-highlighted [data-focus-indices]')].find(el=>el.dataset.focusIndices.split(',').includes(String(focus.index)));
@@ -268,12 +279,9 @@
             $('demo-location').replaceChildren(...[...new Set(timeline.map(f=>f.id))].map(id=>{const option=document.createElement('option');option.value=id;option.textContent=names[id];return option;}));
             $('demo-guide-controls').hidden=false;$('demo-explore').disabled=false;$('demo-reset').disabled=false;
             document.body.classList.add('replay-ready');
-            new ResizeObserver(()=>{
-                document.body.style.setProperty('--demo-bottom', ($('demo-guide-controls').getBoundingClientRect().height + 14) + 'px');
-            }).observe($('demo-guide-controls'));
-            new ResizeObserver(()=>{
-                document.body.style.setProperty('--demo-top', document.querySelector('.demo-guide-top').getBoundingClientRect().height + 'px');
-            }).observe(document.querySelector('.demo-guide-top'));
+            const layoutObserver = new ResizeObserver(measureLayout);
+            for (const element of [$('demo-guide-controls'),document.querySelector('.demo-guide-top'),
+                document.querySelector('.app-header'),document.querySelector('.lab-jump-nav')]) layoutObserver.observe(element);
             // Re-rendered product controls retain their normal browsing behavior but cannot launch a run.
             new MutationObserver(records=>{
                 // Text/judgment updates add no controls. Avoid rescanning the entire workspace
