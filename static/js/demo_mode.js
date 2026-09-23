@@ -55,6 +55,31 @@
     function sample(root, index) {
         if (root) window.FocalPromptSamples.select(root, index || 0);
     }
+    function positionScenarioFoci() {
+        if (exploring || nav?.frame.id !== 'problem') return;
+        for (const focus of [data.booking,data.cat]) {
+            const span = focus.spans[0];
+            const input = document.querySelector(`[data-message-id="${CSS.escape(span.message_id)}"] .scenario-content`);
+            if (!input?.clientHeight) continue;
+            // Textarea selections do not reliably scroll without taking keyboard focus.
+            // Measure the saved span with the editor's current font and wrapping instead.
+            const style = getComputedStyle(input), mirror = document.createElement('div');
+            for (const property of ['font','line-height','letter-spacing','word-spacing','text-indent','text-transform',
+                'tab-size','white-space','overflow-wrap','word-break','padding-top','padding-right','padding-bottom','padding-left']) {
+                mirror.style.setProperty(property,style.getPropertyValue(property));
+            }
+            Object.assign(mirror.style,{position:'fixed',left:'0',top:'0',visibility:'hidden',pointerEvents:'none',
+                boxSizing:'border-box',width:input.clientWidth+'px'});
+            mirror.setAttribute('aria-hidden','true');
+            const text = document.createTextNode(input.value);mirror.append(text);document.body.append(mirror);
+            const range = document.createRange();
+            range.setStart(text,span.char_start);range.setEnd(text,span.char_end);
+            const bounds = range.getBoundingClientRect();
+            const top = bounds.top - mirror.getBoundingClientRect().top;
+            input.scrollTop = top - parseFloat(style.paddingTop);
+            mirror.remove();
+        }
+    }
     function feature(el) {el?.classList.add('demo-featured'); return el;}
     function note(frame) {
         const count = (key, behavior) => `${data.series[key].counts[behavior] || 0}/${data.series[key].n}`;
@@ -89,9 +114,6 @@
         let target = section;
         if (frame.id === 'problem') {
             target = $('scenario-messages');
-            // The source editor itself, scrolled to the booking instruction; no replacement excerpt.
-            const message = document.querySelector(`[data-message-id="${data.booking.spans[0].message_id}"] .scenario-content`);
-            if (message) {message.setSelectionRange(data.booking.spans[0].char_start,data.booking.spans[0].char_end);}
         } else if (frame.id === 'foci' || (frame.id === 'comparison' && frame.phase === 'prompt')) {
             $('prompt-highlighted').classList.remove('hidden');
             $('prompt-visualization').classList.remove('hidden');
@@ -217,6 +239,7 @@
             if (document.body.classList.contains('replay-spotlight') && innerWidth >= 1000) { window.scrollTo(0,0); document.querySelector('.demo-section').scrollTop=0; }
             else target?.scrollIntoView({block:'start',behavior:'instant'});
             measureLayout();
+            positionScenarioFoci();
             // Position both key source spans within their existing coverage message windows.
             if (nav.frame.id === 'foci' || (nav.frame.id === 'comparison' && nav.frame.phase === 'prompt')) for (const focus of [data.booking,data.cat]) {
                 const mark = [...document.querySelectorAll('#prompt-highlighted [data-focus-indices]')].find(el=>el.dataset.focusIndices.split(',').includes(String(focus.index)));
@@ -282,6 +305,9 @@
             const layoutObserver = new ResizeObserver(measureLayout);
             for (const element of [$('demo-guide-controls'),document.querySelector('.demo-guide-top'),
                 document.querySelector('.app-header'),document.querySelector('.lab-jump-nav')]) layoutObserver.observe(element);
+            // Reposition after width/zoom changes, but leave manual scrolling and exploration alone.
+            new ResizeObserver(()=>requestAnimationFrame(positionScenarioFoci)).observe($('scenario-messages'));
+            document.fonts.ready.then(()=>requestAnimationFrame(positionScenarioFoci));
             // Re-rendered product controls retain their normal browsing behavior but cannot launch a run.
             new MutationObserver(records=>{
                 // Text/judgment updates add no controls. Avoid rescanning the entire workspace
