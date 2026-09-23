@@ -21,7 +21,7 @@ def presentation(demo_id):
 
 @lru_cache(maxsize=8)
 def _compressed_fixture(relative_path):
-    # Original exports stay byte-for-byte intact. Compression keeps the recordings
+    # Serve the privacy-redacted fixtures verbatim. Compression keeps the recordings
     # under serverless response limits and makes initial loading quick.
     return gzip.compress((FIXTURE_ROOT / relative_path).read_bytes(), mtime=0)
 

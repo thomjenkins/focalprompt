@@ -20,7 +20,7 @@
         window.restoreWorkspaceSession(JSON.parse(sourceText));
         activeWorkspaceId = id;
         $('demo-workspace').value = id;
-        $('demo-ready').textContent = `${data.modelLabel} · recorded workspace · offline ready`;
+        $('demo-ready').textContent = `${data.modelLabel} · recorded workspace · offline ready · clinic location redacted`;
         document.body.dataset.demoWorkspace = id;
         return true;
     }

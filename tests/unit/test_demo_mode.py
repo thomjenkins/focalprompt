@@ -9,9 +9,9 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / 'examples/demos/lisbon/pup4ominiFull.json'
-SHA256 = '1c178997a02a417dbc039d0fe117a520c31b95e95dbf0f593961c2aada244a57'
+SHA256 = 'bf8271e5a361474aa3f24c062790d3ccf81045a5ce50080c967848ffbe50ae6e'
 ASTRA_FIXTURE = ROOT / 'examples/demos/lisbon/Astrapup.json'
-ASTRA_SHA256 = '8c8cc870960a73be4bea0aa9bdab6bc9b73640a8f16d8b3a4e4090e8390ae117'
+ASTRA_SHA256 = '3abe3ee83d92e8da6dc5db1c025e044bce730b85697e2d926a8892981de67134'
 
 
 def node(script):
@@ -26,19 +26,24 @@ const workspace = JSON.parse(fs.readFileSync('examples/demos/lisbon/pup4ominiFul
     assert result.returncode == 0, result.stderr
 
 
-def test_fixture_is_the_exact_supplied_workspace():
+def test_fixture_is_the_verified_privacy_redacted_workspace():
     raw = FIXTURE.read_bytes()
     assert hashlib.sha256(raw).hexdigest() == SHA256
     data = json.loads(raw)
+    assert data['demo_redaction']['version'] == 1
+    assert 'Clinic location redacted' in data['demo_redaction']['notice']
+    assert '█' in data['prompt_analysis']['scenario']['messages'][2]['content']
     assert data['focalprompt_workspace'] is True
     assert data['version'] == 2
     assert data['prompt_analysis']['scenario']['messages'][0]['role'] == 'system'
 
 
-def test_astra_recording_is_exact_and_comparison_is_grounded_in_actual_data():
+def test_redacted_astra_recording_and_comparison_are_grounded_in_actual_data():
     assert hashlib.sha256(ASTRA_FIXTURE.read_bytes()).hexdigest() == ASTRA_SHA256
     node("""
 const astra=JSON.parse(fs.readFileSync('examples/demos/lisbon/Astrapup.json','utf8'));
+assert.equal(astra.demo_redaction.version,1);
+assert.match(astra.demo_redaction.notice,/Clinic location redacted/);
 const before=JSON.stringify(astra), recording=definition.comparisonWorkspaces[0];
 const data=adapter.prepareComparison(astra,recording);
 assert.equal(data.modelLabel,astra.prompt_analysis.focus_workflow.context.model.model);
@@ -242,6 +247,7 @@ def test_replay_routes_are_read_only_and_available_without_live_inference(monkey
         r = client.get('/demo/lisbon')
         assert r.status_code == 200
         assert b'demo_mode.js' in r.data
+        assert b'Clinic location is redacted in prompts, recorded outputs and downloads.' in r.data
         assert b'js/app.js' in r.data  # actual lab template and renderers, isolated by replay guard
         assert b'js/replay_guard.js' in r.data
         assert r.data.index(b'js/replay_guard.js') < r.data.index(b'js/app.js')

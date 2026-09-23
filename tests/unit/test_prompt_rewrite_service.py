@@ -291,7 +291,7 @@ def test_looks_like_sample_completion_suggested_message():
     original = (
         'You are a veterinary clinic assistant. Always be professional. '
         'Return JSON with a suggestedMessage field for the client. '
-        'Include clinic hours Monday–Friday 9am–7pm and the address on Ambrose St. '
+        'Include clinic hours Monday–Friday 9am–7pm and the address on Example St. '
         'Parking notes and booster appointment scheduling guidance go here as well. '
         + ('Extra instruction padding. ' * 20)
     )
@@ -311,9 +311,9 @@ def test_looks_like_sample_completion_suggested_message():
 
 def _long_prompt():
     return (
-        'You are a veterinary clinic assistant for Sackets Harbor Animal Hospital. '
+        'You are a veterinary clinic assistant for Example Animal Hospital. '
         'Always respond with JSON containing suggestedMessage. Include hours, '
-        'address at 213 Ambrose St, parking guidance, and booster scheduling help. '
+        'address at 123 Example St, parking guidance, and booster scheduling help. '
         + ('Detailed policy text. ' * 25)
     )
 
