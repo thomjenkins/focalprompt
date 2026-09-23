@@ -25,7 +25,6 @@ body:not(.replay-ready)>.container { visibility:hidden; }
 body .container { padding-left:28px; padding-right:28px; }
 body .app-header { margin-bottom:10px; }
 body .app-header-top { padding:9px 0; }
-body .app-header-top .brand-logo { height:38px; }
 body .app-header-copy .subtitle { font-size:14px; }
 body .tab-navigation { margin-bottom:0; }
 body .lab-jump-nav { top:var(--demo-top); z-index:40; background:white; }
