@@ -81,32 +81,6 @@
         }
     }
     function feature(el) {el?.classList.add('demo-featured'); return el;}
-    function note(frame) {
-        const count = (key, behavior) => `${data.series[key].counts[behavior] || 0}/${data.series[key].n}`;
-        switch(frame.id) {
-            case 'problem': return 'The actual scenario: main instructions, retained pet-owner chat, and clinic instructions. The source roles and wording are unchanged.';
-            case 'baseline': return `${count('baseline','booking')} offer or progress booking. Select any stored output below. This is repeated sampling of the unchanged prompt, not one completion.`;
-            case 'foci': return `${data.foci.length} labelled source spans. Choose a focus in the coverage legend to find it in the original prompt. Appointment booking and Cat only are the instructions we will test.`;
-            case 'ablation': return `Featured comparison: without Cat only, ${count('removeCat','booking')} offer booking; without Appointment booking, ${count('removeBooking','refusal')} refuse or redirect. The displayed refusal is the exception. Editorial reading; inspect all samples.`;
-            case 'singleton': return `Featured singleton comparisons: no focus ${count('noFocus','booking')} progress booking; booking only ${count('bookingOnly','booking')} progress booking; cat only ${count('catOnly','refusal')} refuse or redirect. Editorial reading of saved outputs.`;
-            case 'dominance': return 'When both foci are present, which singleton do the outputs resemble? Compare the full prompt and eligible ablations. Blue favors the row; orange favors the column. Select any pair to inspect the evidence. This is behavioral resemblance, not a focus budget or proof of causal dominance.';
-            case 'order': {
-                return frame.phase === 'condition-a'
-                    ? 'Position isn’t the whole story. Cat only has a strong effect in isolation. Here it is second, yet all three outputs continue toward booking. Next: keep it second and change the surrounding order.'
-                    : 'Same model. Same words. Same position. Different context. Different behavior. The cat-only constraint appears in all three outputs, but only 1/3 is judged compliant. One scenario, three samples per condition; this does not establish a mechanism.';
-            }
-            case 'comparison': return frame.phase === 'prompt'
-                ? `${data.modelLabel}: stronger system-level booking instruction; an additional, explicit hierarchy focus in the clinic instructions. The cat-only constraint remains. The prompt changed too: this is not a model-only controlled comparison.`
-                : frame.phase === 'baseline'
-                    ? `${count('baseline','refusal')} refuse to book the dog at this cat-only clinic. Some offer another clinic or booking if the animal is a cat. Editorial reading of all ten stored outputs; select any sample.`
-                    : `${recordings.get(definition.primaryWorkspace.id).data.modelLabel}: booking is closer. ${data.modelLabel}: Cat-only is closer. The same matrix shows the behavioral relationship flipped. These are different recorded prompts as well as different models, not evidence of an internal mechanism.`;
-            case 'jev': return frame.phase === 'catalog' ? 'Back to the original GPT-4o mini workspace. Now change the prompt environment before inference: the actual Jev decision table gives an inclusion probability for every focus. These are not focus-budget percentages.'
-                : frame.phase === 'selected' ? `${data.jev.selected.length}/${data.foci.length} foci selected. Excluded rows are dimmed. The full table and saved decision audit remain available.`
-                : frame.phase === 'ordered' ? 'The same selected foci, stitched together in two orders. Follow each coloured focus from the sequence into the assembled message. Compare source order with Jev order. Retained chat and output contract are unchanged.'
-                : `Selected foci: ${count('jevSelected','refusal')} clear refusals. Selected + ordered: ${count('jevOrdered','refusal')} clear refusals; ${count('jevOrdered','cat-substitution')} switch the request to a cat. Editorial reading; ordering is not an automatic improvement.`;
-            default: return 'The complete research workspace is loaded. Explore the charts, focus inspector, task-quality judgments and saved outputs, or resume any part of the guide. These experiments measure behavior, not internal attention.';
-        }
-    }
     function prepareView(frame) {
         window.switchTab('prompt-analysis');
         const section = $(sectionId(frame));
@@ -225,7 +199,6 @@
         $('demo-step-label').textContent = nav.frame.id === 'order' ? (nav.frame.phase === 'condition-a' ? 'Condition A' : 'Condition B')
             : nav.frame.id === 'jev' ? ({catalog:'All decisions',selected:'Selection',ordered:'Ordering',outputs:'Outputs'}[nav.frame.phase])
             : nav.frame.id === 'comparison' ? ({prompt:'Stronger instructions',baseline:'10 recorded outputs',dominance:'Dominance flip'}[nav.frame.phase]) : '';
-        $('demo-guide-note').textContent = note(nav.frame);
         $('demo-previous').disabled = nav.index === 0;
         $('demo-next').disabled = nav.index === nav.length-1;
         const next = timeline[nav.index+1];
@@ -261,7 +234,6 @@
     }
     function explore() {
         exploring = true;applyLayout();clearSpotlight();
-        $('demo-guide-note').textContent = 'Explore the real lab: every recorded result is available. Editing and new model calls are disabled in this copy. Resume guide returns to the current comparison.';
         $(sectionId(nav.frame))?.scrollIntoView({block:'start',behavior:'instant'});
     }
     function reset() {

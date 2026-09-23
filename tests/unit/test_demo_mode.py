@@ -175,17 +175,17 @@ const compare=require('./static/js/order_comparison.js');
 const source=workspace.prompt_analysis.focus_order.results;
 source.global_order_experiment.permutations.reverse(); // Not a positional lookup.
 const data=adapter.prepare(workspace,definition), [a,b]=data.matchedOrders;
-assert.equal(a.permutation_id,2);assert.equal(b.permutation_id,4);
+assert.equal(a.permutation_id,4);assert.equal(b.permutation_id,2);
 assert.equal(a.focus_positions['Cat only'],1);assert.equal(b.focus_positions['Cat only'],1);
-assert.deepEqual(compare.counts(a),{n:3,judged:3,complies:0});
-assert.deepEqual(compare.counts(b),{n:3,judged:3,complies:1});
+assert.deepEqual(compare.counts(a),{n:3,judged:3,complies:1});
+assert.deepEqual(compare.counts(b),{n:3,judged:3,complies:0});
 assert.deepEqual(a.outputs,compare.findPermutationByOrder(source.global_order_experiment.permutations,definition.orderComparison.orders[0]).outputs);
 assert.deepEqual(b.outputs,compare.findPermutationByOrder(source.global_order_experiment.permutations,definition.orderComparison.orders[1]).outputs);
-assert.deepEqual(b.behavioral_judgments.map(j=>j.classification),['VIOLATES','COMPLIES','VIOLATES']);
-assert.ok(a.outputs.every(raw=>!adapter.outputText(raw).includes('cat-only')));
-assert.ok(b.outputs.every(raw=>adapter.outputText(raw).includes('cat-only clinic')));
-assert.ok(adapter.outputText(b.outputs[1]).includes('at a different clinic'));
-assert.ok(adapter.outputText(b.outputs[2]).includes('please confirm that your pup is actually a cat'));
+assert.deepEqual(a.behavioral_judgments.map(j=>j.classification),['VIOLATES','COMPLIES','VIOLATES']);
+assert.ok(b.outputs.every(raw=>!adapter.outputText(raw).includes('cat-only')));
+assert.ok(a.outputs.every(raw=>adapter.outputText(raw).includes('cat-only clinic')));
+assert.ok(adapter.outputText(a.outputs[1]).includes('at a different clinic'));
+assert.ok(adapter.outputText(a.outputs[2]).includes('please confirm that your pup is actually a cat'));
 assert.equal(data.positions.length,4,'controlled sweep is still available');
 for(const permutation of [a,b]) {
  assert.equal(permutation.model,'gpt-4o-mini');assert.equal(permutation.temperature,.7);
