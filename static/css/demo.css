@@ -134,7 +134,7 @@ body .recorded-sample-buttons button { min-width:36px; }
 .replay-spotlight[data-demo-step=jev][data-demo-phase=catalog] #jev-results>:not(.jev-decisions),.replay-spotlight[data-demo-step=jev][data-demo-phase=selected] #jev-results>:not(.jev-decisions) { display:none; }
 .replay-spotlight[data-demo-step=jev][data-demo-phase=selected] .jev-decisions tr[data-included=false] { opacity:.35; }
 .replay-spotlight[data-demo-step=jev] .jev-decisions { max-height:calc(100dvh - 450px); overflow:auto; }
-.replay-spotlight[data-demo-step=jev][data-demo-phase=ordered] #jev-results>:not(.jev-order-group):not(.jev-arm) { display:none; }
+.replay-spotlight[data-demo-step=jev][data-demo-phase=ordered] #jev-results>:not(.jev-composition-intro):not(.jev-arm) { display:none; }
 .replay-spotlight[data-demo-step=jev][data-demo-phase=ordered] .jev-arm[data-jev-arm=full],.replay-spotlight[data-demo-step=jev][data-demo-phase=ordered] .jev-arm>:not(h3):not(details) { display:none; }
 .replay-spotlight[data-demo-step=jev][data-demo-phase=outputs] #jev-results { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; }
 .replay-spotlight[data-demo-step=jev][data-demo-phase=outputs] #jev-results>:not(.jev-arm),.replay-spotlight[data-demo-step=jev][data-demo-phase=outputs] .jev-arm>:not(h3):not(.recorded-samples) { display:none; }
@@ -205,3 +205,28 @@ body .container { overflow-x:clip; }
 .replay-spotlight[data-demo-step=comparison][data-demo-phase=prompt] .legend-items { grid-template-columns:repeat(3,minmax(0,1fr)); }
 @media(max-width:1500px) { .replay-spotlight[data-demo-step=comparison][data-demo-phase=prompt] .coverage-legend { display:none; } }
 @media(max-width:999px) { #demo-workspace-label { font-size:12px; } #demo-workspace { max-width:150px; } .replay-spotlight[data-demo-step=comparison][data-demo-phase=prompt] .legend-items { grid-template-columns:1fr; } }
+
+/* Both recorded compositions use the product's span-backed assembly inspector. */
+.replay-spotlight[data-demo-step=jev][data-demo-phase=ordered] #jev-results { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px 20px; }
+.replay-spotlight[data-demo-step=jev][data-demo-phase=ordered] .jev-composition-intro { grid-column:1/-1; margin:0; }
+.replay-spotlight[data-demo-step=jev][data-demo-phase=ordered] .jev-composition-intro h3 { font-size:23px; }
+.replay-spotlight[data-demo-step=jev][data-demo-phase=ordered] .jev-composition-intro p { font-size:15px; }
+.replay-spotlight[data-demo-step=jev][data-demo-phase=ordered] .jev-arm { min-width:0; margin:0; }
+.replay-spotlight[data-demo-step=jev][data-demo-phase=ordered] .jev-arm>h3 { margin:0 0 10px; font-size:19px; }
+.replay-spotlight[data-demo-step=jev][data-demo-phase=ordered] .jev-prompt-inspector>summary { display:none; }
+.replay-spotlight[data-demo-step=jev][data-demo-phase=ordered] .jev-composed-scenario { max-height:clamp(230px,calc(100dvh - var(--demo-stage-top) - var(--demo-bottom) - 225px),650px); overflow:auto; overscroll-behavior:contain; padding-right:4px; }
+.replay-spotlight[data-demo-step=jev][data-demo-phase=ordered] .jev-composed-message:first-child { margin-top:0; }
+@media(max-width:999px) {
+ .replay-spotlight[data-demo-step=jev][data-demo-phase=ordered] #jev-results { grid-template-columns:1fr; }
+ .replay-spotlight[data-demo-step=jev][data-demo-phase=ordered] .jev-composed-scenario { max-height:430px; }
+}
+@media(max-height:780px) and (min-width:1000px) {
+ .replay-spotlight[data-demo-step=jev][data-demo-phase=ordered] .jev-composition-intro { display:none!important; }
+ .replay-spotlight[data-demo-step=jev][data-demo-phase=ordered] .jev-arm>h3 { font-size:17px; margin-bottom:6px; }
+ .replay-spotlight[data-demo-step=jev][data-demo-phase=ordered] .jev-arm-meta { display:none; }
+ .replay-spotlight[data-demo-step=jev][data-demo-phase=ordered] .jev-composition-note { display:none; }
+ .replay-spotlight[data-demo-step=jev][data-demo-phase=ordered] .jev-stitched-focus { padding:8px 10px; }
+ .replay-spotlight[data-demo-step=jev][data-demo-phase=ordered] .jev-focus-thread .jev-focus-name { display:none; }
+ .replay-spotlight[data-demo-step=jev][data-demo-phase=ordered] .jev-focus-thread { padding:6px 10px; }
+ .replay-spotlight[data-demo-step=jev][data-demo-phase=ordered] .jev-composed-scenario { max-height:clamp(180px,calc(100dvh - var(--demo-stage-top) - var(--demo-bottom) - 136px),400px); }
+}

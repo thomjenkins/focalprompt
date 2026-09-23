@@ -145,6 +145,22 @@ const sha=value=>crypto.createHash('sha256').update(value).digest('hex');
      assert.deepEqual(await replay.evaluate(()=>FocalPromptJev.collect().state),JSON.parse(fixture).prompt_analysis.jev_experiment.state);
     }
     if(id==='jev' && phase==='selected')assert.equal(await replay.locator('.jev-decisions [data-included="false"]').count(),6);
+    if(id==='jev' && phase==='ordered') {
+     const saved=JSON.parse(fixture).prompt_analysis.jev_experiment.state;
+     assert.equal(await replay.locator('.jev-composition-intro').isVisible(),width<1000 || height>780);
+     for(const arm of ['selected','ordered']) {
+      const root=replay.locator(`[data-jev-arm="${arm}"]`);
+      assert.equal(await root.locator('.jev-composed-scenario').isVisible(),true);
+      for(const message of saved.arms[arm].scenario.messages) {
+       const panel=root.locator(`[data-jev-message="${message.id}"]`);
+       assert.equal((await panel.locator('[data-jev-text]').allTextContents()).join(''),message.content);
+       const order=await panel.locator('.jev-focus-thread [data-jev-source-focus]').evaluateAll(els=>els.map(el=>Number(el.dataset.jevSourceFocus)));
+       assert.deepEqual(order,saved[arm+'_preview'].orders[message.id]||[]);
+      }
+      assert.equal(await root.locator('.jev-exact-prompt').getAttribute('open'),null);
+     }
+     assert.equal(await replay.locator('.jev-order-group').first().isVisible(),false,'order labels belong to their own composed prompt');
+    }
     if(id==='jev' && phase==='outputs')assert.equal(snapshot.outputs.length,3);
     states.push(snapshot.frame);
     if(i<length-1)await replay.locator('#demo-next').click();
