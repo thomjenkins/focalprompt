@@ -61,7 +61,7 @@ body {
 }
 
 .app-header-top img.brand-logo {
-    height: 44px;
+    height: 50px;
     width: auto;
     max-width: none;
     max-height: none;
@@ -1967,7 +1967,7 @@ header img {
 
 
 /* Redesign polish */
-.brand-logo { height: 44px; width: auto; display: block; }
+.brand-logo { height: 50px; width: auto; display: block; }
 .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #3d9a6a; display: inline-block; }
 .chip-action { color: var(--primary-color); font-weight: 600; }
 .tab-docs { margin-left: auto; }
